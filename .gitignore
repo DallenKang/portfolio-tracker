@@ -1,0 +1,6 @@
+# Claude Code 本地设置，不上传
+.claude/
+
+# 数据备份（含顾客资料，绝对不上传公开 repo）
+portfolio-backup-*.json
+portfolio-export-*.csv

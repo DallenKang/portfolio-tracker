@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Remisier Portfolio Tracker 投资组合追踪</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --card: #1a2129;
+    --card2: #212a35;
+    --border: #2e3a47;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --green: #2ecc71;
+    --red: #e74c3c;
+    --blue: #3498db;
+    --gold: #f1c40f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab-btn {
+    background: var(--card); color: var(--muted); border: 1px solid var(--border);
+    padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 14px;
+  }
+  .tab-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .tab { display: none; }
+  .tab.active { display: block; }
+
+  .filter-bar {
+    display: flex; gap: 10px; align-items: center; margin-bottom: 18px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
+  }
+  .filter-bar label { color: var(--muted); font-size: 13px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .card .value { font-size: 19px; font-weight: 600; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .gold { color: var(--gold); }
+
+  .form-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+  .form-card h3 { font-size: 15px; margin-bottom: 12px; }
+  .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  input, select {
+    background: var(--card2); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 10px; border-radius: 6px; font-size: 14px; min-width: 100px;
+  }
+  input.fee { border-color: #5a4a1a; min-width: 90px; }
+  input:focus, select:focus { outline: none; border-color: var(--blue); }
+  button.action {
+    background: var(--blue); color: #fff; border: none; padding: 9px 18px;
+    border-radius: 6px; cursor: pointer; font-size: 14px;
+  }
+  button.action:hover { opacity: 0.9; }
+  button.danger { background: var(--red); }
+  button.success { background: var(--green); }
+  button.small { padding: 4px 10px; font-size: 12px; }
+  button.ghost { background: var(--card2); border: 1px solid var(--border); color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); }
+  th, td { padding: 9px 11px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { background: var(--card2); color: var(--muted); font-weight: 500; }
+  td.num, th.num { text-align: right; }
+  tr:last-child td { border-bottom: none; }
+  .table-wrap { overflow-x: auto; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 10px; }
+  .empty { color: var(--muted); text-align: center; padding: 24px !important; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+  .badge.buy { background: rgba(46,204,113,0.15); color: var(--green); }
+  .badge.sell { background: rgba(231,76,60,0.15); color: var(--red); }
+
+  tr.client-header td {
+    background: var(--card2); font-weight: 600; font-size: 14px; color: var(--text);
+    border-top: 2px solid var(--border);
+  }
+  tr.subtotal td { background: rgba(52,152,219,0.07); font-weight: 600; border-bottom: 2px solid var(--border); }
+  tr.held td { background: rgba(241,196,15,0.08); }
+  tr.held td:first-child { border-left: 3px solid var(--gold); }
+
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .net-preview { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .net-preview b { color: var(--text); }
+  pre#jsonView {
+    background: var(--card2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; font-size: 12px; overflow-x: auto; max-height: 400px; overflow-y: auto;
+  }
+  h2.section { font-size: 16px; margin: 20px 0 10px; }
+</style>
+</head>
+<body>
+
+<h1>📈 Remisier Portfolio Tracker</h1>
+<p class="subtitle">按顾客管理 · Brokerage / Stamp Duty / Clearing Fee 自动计算 · 数据存浏览器 localStorage，记得定时导出备份</p>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="dashboard">📊 总览</button>
+  <button class="tab-btn" data-tab="clients">👥 顾客 Clients</button>
+  <button class="tab-btn" data-tab="holdings">💼 持仓</button>
+  <button class="tab-btn" data-tab="transactions">📝 交易 P&L</button>
+  <button class="tab-btn" data-tab="dividends">💰 股息</button>
+  <button class="tab-btn" data-tab="exdiv">📅 Ex-Dividend</button>
+  <button class="tab-btn" data-tab="database">🗄️ 数据库</button>
+</div>
+
+<div class="filter-bar">
+  <label>查看顾客 Filter:</label>
+  <select id="clientFilter" onchange="renderAll()"><option value="all">全部顾客 All Clients</option></select>
+</div>
+
+<!-- ============ DASHBOARD ============ -->
+<div class="tab active" id="tab-dashboard">
+  <div class="cards">
+    <div class="card"><div class="label">持仓成本 Open Cost (Net)</div><div class="value" id="d-cost">-</div></div>
+    <div class="card"><div class="label">市值 Market Value</div><div class="value" id="d-value">-</div></div>
+    <div class="card"><div class="label">未实现盈亏 Unrealized P&L</div><div class="value" id="d-unrealized">-</div></div>
+    <div class="card"><div class="label">已实现盈亏 Realized P/(L)</div><div class="value" id="d-realized">-</div></div>
+    <div class="card"><div class="label">累计股息 Dividends</div><div class="value gold" id="d-div-total">-</div></div>
+    <div class="card"><div class="label">今天股息 Today</div><div class="value gold" id="d-div-today">-</div></div>
+    <div class="card"><div class="label">累计 Brokerage（佣金）</div><div class="value" id="d-brokerage">-</div></div>
+    <div class="card"><div class="label">总回报 Total Return</div><div class="value" id="d-total-return">-</div></div>
+  </div>
+
+  <h2 class="section">各顾客摘要 Client Summary</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>顾客</th><th>户口</th><th class="num">持仓成本</th><th class="num">已实现 P/(L)</th><th class="num">股息</th><th class="num">Brokerage</th></tr></thead>
+      <tbody id="d-client-body"></tbody>
+    </table>
+  </div>
+
+  <h2 class="section">今天收到的股息</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>顾客</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">金额</th></tr></thead>
+      <tbody id="d-today-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ CLIENTS ============ -->
+<div class="tab" id="tab-clients">
+  <div class="form-card">
+    <h3 id="c-form-title">添加顾客 Add Client</h3>
+    <div class="form-row">
+      <div class="field"><label>Client Code</label><input type="text" id="c-code" placeholder="如 A0123" style="text-transform:uppercase"></div>
+      <div class="field"><label>姓名 Name</label><input type="text" id="c-name" placeholder="顾客姓名"></div>
+      <div class="field"><label>户口种类 Account Type</label><input type="text" id="c-account" placeholder="如 Retailer / Cash / Margin"></div>
+      <div class="field"><label>Brokerage 模式</label>
+        <select id="c-mode" onchange="toggleRateFields()">
+          <option value="tiered">分层 Tiered（按 RM100K）</option>
+          <option value="flat">Flat Rate（统一）</option>
+        </select>
+      </div>
+      <div class="field" id="f-rate-below"><label>&lt; RM100K (%)</label><input type="number" step="any" id="c-rate-below" placeholder="如 0.42"></div>
+      <div class="field" id="f-rate-above"><label>≥ RM100K (%)</label><input type="number" step="any" id="c-rate-above" placeholder="如 0.21"></div>
+      <div class="field" id="f-rate-flat" style="display:none"><label>Flat Rate (%)</label><input type="number" step="any" id="c-rate-flat" placeholder="如 0.18"></div>
+      <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="c-min" placeholder="如 8" value="8"></div>
+      <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
+      <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
+    </div>
+    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的顾客，不管金额统一一个 rate（如 0.18%）。添加交易时按 gross 自动选对的 rate，每一笔还可以手动调整。</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Client Code</th><th>姓名</th><th>户口种类</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <tbody id="c-body"></tbody>
+    </table>
+  </div>
+
+  <div class="form-card">
+    <h3>固定费用规则 Fee Rules（全 Bursa 通用）</h3>
+    <div class="form-row">
+      <div class="field"><label>Clearing Fee (%)</label><input type="number" step="any" id="s-clearing-rate"></div>
+      <div class="field"><label>Clearing Max (RM)</label><input type="number" step="any" id="s-clearing-cap"></div>
+      <div class="field"><label>Stamp Duty (RM / 每千)</label><input type="number" step="any" id="s-stamp-rate"></div>
+      <div class="field"><label>Stamp Max (RM)</label><input type="number" step="any" id="s-stamp-cap"></div>
+      <button class="action" onclick="saveSettings()">保存规则</button>
+    </div>
+    <p class="hint">默认：Clearing 0.03% (max RM1,000)、Stamp Duty RM1.00 每 RM1,000（向上取整，max RM1,000）。规则改了会影响以后新交易的自动计算，不会改动已记录的交易。</p>
+  </div>
+</div>
+
+<!-- ============ HOLDINGS ============ -->
+<div class="tab" id="tab-holdings">
+  <div class="form-card">
+    <h3>现价 Prices</h3>
+    <div class="form-row">
+      <button class="action success" onclick="fetchAllPrices()">🔄 一键抓取 Bursa 闭市价</button>
+      <span class="hint" id="p-status" style="margin:0">需要用 start-tracker.bat 开网页才能自动抓价。</span>
+    </div>
+    <div class="form-row" style="margin-top:12px">
+      <div class="field"><label>股票 Counter</label><select id="p-ticker" onchange="fillSymbol()"></select></div>
+      <div class="field"><label>Bursa 代码 Stock Code</label><input type="text" id="p-symbol" placeholder="如 1155" style="text-transform:uppercase"></div>
+      <button class="action ghost" onclick="saveSymbol()">保存代码</button>
+      <div class="field"><label>手动现价 Manual</label><input type="number" step="any" id="p-price" placeholder="0.00"></div>
+      <button class="action" onclick="updatePrice()">手动更新</button>
+    </div>
+    <p class="hint">每只 counter 填一次 Bursa 4位数代码（如 MAYBANK = 1155），以后按一下按钮就自动拿最新交易日的价。盘中抓到的是 ~15分钟延迟价，闭市后就是当天闭市价。没填代码的可以手动输入。</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>顾客</th><th>股票</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
+        <th class="num">现价</th><th class="num">市值</th><th class="num">未实现 P/(L)</th><th class="num">%</th>
+      </tr></thead>
+      <tbody id="h-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ TRANSACTIONS ============ -->
+<div class="tab" id="tab-transactions">
+  <div class="form-card">
+    <h3>添加交易 Add Transaction</h3>
+    <div class="form-row">
+      <div class="field"><label>顾客 Client</label><select id="t-client" onchange="autoFees()"></select></div>
+      <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
+      <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
+      <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase"><datalist id="tickerList"></datalist></div>
+      <div class="field"><label>股数 Qty</label><input type="number" step="any" id="t-qty" placeholder="100" oninput="autoFees()"></div>
+      <div class="field"><label>价格 Price</label><input type="number" step="any" id="t-price" placeholder="0.0000" oninput="autoFees()"></div>
+    </div>
+    <div class="form-row" style="margin-top:10px">
+      <div class="field"><label>Brokerage（可调整）</label><input type="number" step="any" id="t-brokerage" class="fee"></div>
+      <div class="field"><label>Stamp Duty</label><input type="number" step="any" id="t-stamp" class="fee"></div>
+      <div class="field"><label>Clearing Fee</label><input type="number" step="any" id="t-clearing" class="fee"></div>
+      <button class="action" onclick="addTransaction()">添加交易</button>
+    </div>
+    <p class="net-preview" id="t-preview">输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>日期</th><th>顾客</th><th>股票</th><th>类型</th><th class="num">股数</th><th class="num">价格</th>
+        <th class="num">Gross</th><th class="num">Brokerage</th><th class="num">Stamp</th><th class="num">Clearing</th>
+        <th class="num">Net Amount</th><th class="num">P/(L)</th><th></th>
+      </tr></thead>
+      <tbody id="t-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ DIVIDENDS ============ -->
+<div class="tab" id="tab-dividends">
+  <div class="form-card">
+    <h3>记录股息 Record Dividend</h3>
+    <div class="form-row">
+      <div class="field"><label>顾客 Client</label><select id="v-client" onchange="fillDivTickers()"></select></div>
+      <div class="field"><label>日期 Date</label><input type="date" id="v-date"></div>
+      <div class="field"><label>股票 Counter</label><select id="v-ticker" onchange="prefillDivQty()"></select></div>
+      <div class="field"><label>每股股息 DPS</label><input type="number" step="any" id="v-dps" placeholder="0.00" oninput="calcDivTotal()"></div>
+      <div class="field"><label>股数 Qty</label><input type="number" step="any" id="v-qty" oninput="calcDivTotal()"></div>
+      <div class="field"><label>总额 Total</label><input type="number" step="any" id="v-total"></div>
+      <button class="action success" onclick="addDividend()">记录</button>
+    </div>
+    <p class="hint">选顾客和股票后自动填入该顾客的持仓股数，输入 DPS 直接算出拿到多少钱。</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>日期</th><th>顾客</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">总额</th><th></th></tr></thead>
+      <tbody id="v-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ EX-DIVIDEND ============ -->
+<div class="tab" id="tab-exdiv">
+  <div class="form-card">
+    <h3>📅 Bursa 即将 Ex-Dividend（未来 30 天）</h3>
+    <div class="form-row">
+      <button class="action success" onclick="refreshExDiv()">🔄 刷新列表</button>
+      <span class="hint" id="x-status" style="margin:0">-</span>
+    </div>
+    <p class="hint">数据来自 i3investor。打开网页时如果数据超过 12 小时会自动刷新。<span class="gold">金色行</span> = 你的顾客有持仓的 counter，记得提醒顾客！</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Ex Date</th><th>Stock</th><th class="num">Dividend</th><th class="num">现价</th><th>公布日期</th><th>顾客持有</th></tr></thead>
+      <tbody id="x-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ DATABASE ============ -->
+<div class="tab" id="tab-database">
+  <div class="toolbar">
+    <button class="action" onclick="exportJSON()">📤 导出 JSON 备份</button>
+    <button class="action" onclick="exportCSV()">📤 导出 CSV (Excel)</button>
+    <button class="action" onclick="document.getElementById('importFile').click()">📥 导入 JSON 备份</button>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
+    <button class="action danger" onclick="clearAll()">🗑️ 清空全部数据</button>
+  </div>
+  <p class="hint" style="margin-bottom:16px">数据存在这台电脑这个浏览器。请定期导出 JSON 备份。CSV 格式跟你的 Excel 类似，每一行一笔交易（含 client、gross、三项费用、net、P/L）。</p>
+  <h2 class="section">原始数据 Raw Database</h2>
+  <pre id="jsonView"></pre>
+</div>
+
+<script>
+const STORE_KEY = "portfolio-tracker-v1";
+const CCY = "RM";
+// 放上网（GitHub Pages）时，数据改由 Cloudflare Worker 帮忙抓；本地开则用 server.py
+const WORKER_URL = ""; // 部署 Worker 后填，如 "https://portfolio-data.xxx.workers.dev"
+const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.protocol === "file:";
+const apiUrl = path => (!IS_LOCAL && WORKER_URL) ? WORKER_URL + path : path;
+const API_HINT = IS_LOCAL ? "（确认你是用 start-tracker.bat 开的网页）" : "（Worker 未设置或没响应）";
+const DEFAULT_SETTINGS = { clearingRate: 0.03, clearingCap: 1000, stampPer1000: 1.00, stampCap: 1000 };
+
+// ---------- Storage & migration ----------
+function load() {
+  let d;
+  try { d = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) {}
+  if (!d || !Array.isArray(d.transactions)) {
+    return { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], prices: {}, symbols: {}, exdiv: null };
+  }
+  if (d.version !== 2) {
+    // 旧版数据：建一个默认顾客，旧的 fees 全部当 brokerage
+    const def = { id: uid(), name: "Default", account: "Cash", brokerageRate: 0.18, minBrokerage: 8 };
+    d = {
+      version: 2,
+      clients: [def],
+      settings: { ...DEFAULT_SETTINGS },
+      transactions: (d.transactions || []).map(t => ({
+        id: t.id, clientId: def.id, date: t.date, ticker: t.ticker, type: t.type,
+        qty: t.qty, price: t.price, brokerage: t.fees || 0, stamp: 0, clearing: 0
+      })),
+      dividends: (d.dividends || []).map(v => ({ ...v, clientId: def.id })),
+      prices: d.prices || {}
+    };
+    localStorage.setItem(STORE_KEY, JSON.stringify(d));
+  }
+  if (!d.settings) d.settings = { ...DEFAULT_SETTINGS };
+  if (!d.symbols) d.symbols = {};   // counter -> Yahoo 代码 (如 MAYBANK -> 1155.KL)
+  if (!d.exdiv) d.exdiv = null;     // {fetchedAt, rows} ex-dividend 缓存
+  // 旧顾客只有单一 brokerageRate 的，转成 flat 模式
+  for (const c of d.clients || []) {
+    if (!c.brokerageMode) {
+      c.brokerageMode = "flat";
+      c.rateFlat = c.brokerageRate || 0;
+    }
+  }
+  return d;
+}
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+let db = load();
+function save() { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); }
+
+// ---------- Helpers ----------
+const fmt = n => CCY + " " + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtN = n => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pnlClass = n => n > 0 ? "pos" : n < 0 ? "neg" : "";
+const pnlFmt = n => n < 0 ? "(" + fmtN(-n) + ")" : fmtN(n);
+const today = () => new Date().toISOString().slice(0, 10);
+const clientById = id => db.clients.find(c => c.id === id);
+const clientLabel = c => c ? (c.code ? `[${c.code}] ${c.name}` : c.name) : "?";
+const r2 = x => Math.round(x * 100) / 100;
+const ceil2 = x => Math.ceil(x * 100 - 1e-7) / 100;
+
+// ---------- Fee engine（马来西亚 Bursa 规则）----------
+// Brokerage: gross × 顾客 rate%，不低于最低 brokerage（四舍五入到 cent）
+//   - flat 模式：统一 rate
+//   - tiered 模式：gross ≥ RM100K 用低 rate，< RM100K 用高 rate
+// Stamp duty: 每 RM1,000 收 stampPer1000（gross 向上取整到千），cap stampCap
+// Clearing: gross × clearingRate%（向上取整到 cent），cap clearingCap
+const TIER_THRESHOLD = 100000;
+function clientRate(client, gross) {
+  if (client.brokerageMode === "tiered")
+    return gross >= TIER_THRESHOLD ? (client.rateAbove || 0) : (client.rateBelow || 0);
+  return client.rateFlat || 0;
+}
+function rateLabel(c) {
+  return c.brokerageMode === "tiered"
+    ? `${c.rateBelow}% / ${c.rateAbove}% (< / ≥100K)`
+    : `Flat ${c.rateFlat}%`;
+}
+function calcFees(gross, client) {
+  const s = db.settings;
+  const brokerage = r2(Math.max(gross * clientRate(client, gross) / 100, client.minBrokerage || 0));
+  const stamp = Math.min(Math.ceil(gross / 1000) * s.stampPer1000, s.stampCap);
+  const clearing = Math.min(ceil2(gross * s.clearingRate / 100), s.clearingCap);
+  return { brokerage, stamp, clearing };
+}
+function netAmount(t) {
+  const gross = t.qty * t.price;
+  const fees = (t.brokerage || 0) + (t.stamp || 0) + (t.clearing || 0);
+  return t.type === "buy" ? gross + fees : gross - fees;
+}
+
+// ---------- Core: 按 (顾客, 股票) 回放交易，平均成本法（用 Net Amount）----------
+function computePortfolio() {
+  const pos = {}; // "clientId|ticker" -> {clientId, ticker, qty, cost, realized}
+  const realizedByTx = {};
+  const txs = [...db.transactions].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  for (const t of txs) {
+    const key = t.clientId + "|" + t.ticker;
+    const p = pos[key] || (pos[key] = { clientId: t.clientId, ticker: t.ticker, qty: 0, cost: 0, realized: 0 });
+    const net = netAmount(t);
+    if (t.type === "buy") {
+      p.qty += t.qty;
+      p.cost += net;
+    } else {
+      const avg = p.qty > 0 ? p.cost / p.qty : 0;
+      const realized = net - avg * t.qty;
+      p.realized += realized;
+      realizedByTx[t.id] = realized;
+      p.cost -= avg * t.qty;
+      p.qty -= t.qty;
+      if (p.qty < 1e-9) { p.qty = 0; p.cost = 0; }
+    }
+  }
+  return { pos, realizedByTx };
+}
+
+// ---------- Render ----------
+function matchFilter(clientId) {
+  const f = document.getElementById("clientFilter").value;
+  return f === "all" || f === clientId;
+}
+
+function renderAll() {
+  const { pos, realizedByTx } = computePortfolio();
+  const filterSel = document.getElementById("clientFilter");
+  const prevFilter = filterSel.value || "all";
+  filterSel.innerHTML = `<option value="all">全部顾客 All Clients</option>` +
+    db.clients.map(c => `<option value="${c.id}">${clientLabel(c)}</option>`).join("");
+  filterSel.value = [...filterSel.options].some(o => o.value === prevFilter) ? prevFilter : "all";
+
+  // 顾客下拉
+  const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)} (${rateLabel(c)})</option>`).join("");
+  const tSel = document.getElementById("t-client"), vSel = document.getElementById("v-client");
+  const tPrev = tSel.value, vPrev = vSel.value;
+  tSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
+  vSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
+  if ([...tSel.options].some(o => o.value === tPrev)) tSel.value = tPrev;
+  if ([...vSel.options].some(o => o.value === vPrev)) vSel.value = vPrev;
+
+  // 顾客表
+  const txCount = {};
+  db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
+  const cBody = document.getElementById("c-body");
+  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="7">还没有顾客，先在上面添加</td></tr>`;
+  for (const c of db.clients) {
+    cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td>
+      <td>${rateLabel(c)}</td><td class="num">${fmt(c.minBrokerage || 0)}</td>
+      <td class="num">${txCount[c.id] || 0}</td>
+      <td><button class="action small ghost" onclick="editClient('${c.id}')">编辑</button>
+          <button class="action danger small" onclick="delClient('${c.id}')">删除</button></td></tr>`;
+  }
+
+  // Settings 表单
+  document.getElementById("s-clearing-rate").value = db.settings.clearingRate;
+  document.getElementById("s-clearing-cap").value = db.settings.clearingCap;
+  document.getElementById("s-stamp-rate").value = db.settings.stampPer1000;
+  document.getElementById("s-stamp-cap").value = db.settings.stampCap;
+
+  // 持仓：按顾客分组（顾客标题行 -> 仓位 -> 小计）
+  const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId));
+  let totalCost = 0, totalValue = 0, totalUnrealized = 0, hasPrice = false;
+  const hBody = document.getElementById("h-body");
+  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="9">没有持仓</td></tr>`;
+  const byClient = {};
+  for (const p of held) (byClient[p.clientId] = byClient[p.clientId] || []).push(p);
+  const clientIds = Object.keys(byClient)
+    .sort((a, b) => (clientById(a)?.code || clientById(a)?.name || "").localeCompare(clientById(b)?.code || clientById(b)?.name || ""));
+  for (const cid of clientIds) {
+    const c = clientById(cid);
+    hBody.innerHTML += `<tr class="client-header"><td colspan="9">👤 ${clientLabel(c)}${c && c.account ? ` · ${c.account}` : ""}</td></tr>`;
+    let subCost = 0, subValue = 0, subU = 0, subHasPrice = false;
+    for (const p of byClient[cid].sort((a, b) => a.ticker.localeCompare(b.ticker))) {
+      const avg = p.cost / p.qty;
+      const pr = db.prices[p.ticker];
+      totalCost += p.cost; subCost += p.cost;
+      let valCell = "-", pnlCell = "-", pctCell = "-";
+      if (pr) {
+        hasPrice = true; subHasPrice = true;
+        const mv = pr.price * p.qty, u = mv - p.cost;
+        totalValue += mv; totalUnrealized += u;
+        subValue += mv; subU += u;
+        valCell = fmtN(mv);
+        pnlCell = `<span class="${pnlClass(u)}">${pnlFmt(u)}</span>`;
+        pctCell = `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>`;
+      }
+      hBody.innerHTML += `<tr><td></td><td><b>${p.ticker}</b></td><td class="num">${p.qty.toLocaleString()}</td>
+        <td class="num">${avg.toFixed(4)}</td><td class="num">${fmtN(p.cost)}</td>
+        <td class="num">${pr ? pr.price.toFixed(4) : "-"}</td><td class="num">${valCell}</td><td class="num">${pnlCell}</td><td class="num">${pctCell}</td></tr>`;
+    }
+    hBody.innerHTML += `<tr class="subtotal"><td></td><td>小计</td><td></td><td></td><td class="num">${fmtN(subCost)}</td><td></td>
+      <td class="num">${subHasPrice ? fmtN(subValue) : "-"}</td>
+      <td class="num">${subHasPrice ? `<span class="${pnlClass(subU)}">${pnlFmt(subU)}</span>` : "-"}</td>
+      <td class="num">${subHasPrice && subCost > 0 ? `<span class="${pnlClass(subU)}">${(subU / subCost * 100).toFixed(2)}%</span>` : "-"}</td></tr>`;
+  }
+
+  // 股票下拉（全局）
+  const allTickers = [...new Set(db.transactions.map(t => t.ticker))].sort();
+  const heldTickers = [...new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker))].sort();
+  document.getElementById("p-ticker").innerHTML = heldTickers.map(t => `<option>${t}</option>`).join("") || "<option value=''>（无持仓）</option>";
+  document.getElementById("tickerList").innerHTML = allTickers.map(t => `<option value="${t}">`).join("");
+  fillDivTickers(pos);
+  fillSymbol();
+  renderExDiv(pos);
+
+  // 交易表
+  const tBody = document.getElementById("t-body");
+  const txs = [...db.transactions].filter(t => matchFilter(t.clientId)).sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="13">没有交易记录</td></tr>`;
+  let totalBrokerage = 0;
+  for (const t of db.transactions) if (matchFilter(t.clientId)) totalBrokerage += t.brokerage || 0;
+  for (const t of txs) {
+    const c = clientById(t.clientId);
+    const gross = t.qty * t.price;
+    const r = realizedByTx[t.id];
+    tBody.innerHTML += `<tr>
+      <td>${t.date}</td><td>${clientLabel(c)}</td><td><b>${t.ticker}</b></td>
+      <td><span class="badge ${t.type}">${t.type === "buy" ? "买入" : "卖出"}</span></td>
+      <td class="num">${t.qty.toLocaleString()}</td><td class="num">${t.price.toFixed(4)}</td>
+      <td class="num">${fmtN(gross)}</td><td class="num">${fmtN(t.brokerage || 0)}</td>
+      <td class="num">${fmtN(t.stamp || 0)}</td><td class="num">${fmtN(t.clearing || 0)}</td>
+      <td class="num"><b>${fmtN(netAmount(t))}</b></td>
+      <td class="num">${r !== undefined ? `<span class="${pnlClass(r)}">${pnlFmt(r)}</span>` : "-"}</td>
+      <td><button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
+  }
+
+  // 股息表
+  const vBody = document.getElementById("v-body");
+  const dvs = [...db.dividends].filter(d => matchFilter(d.clientId)).sort((a, b) => b.date.localeCompare(a.date));
+  vBody.innerHTML = dvs.length ? "" : `<tr><td class="empty" colspan="7">没有股息记录</td></tr>`;
+  let divTotal = 0, divToday = 0;
+  const todayRows = [];
+  for (const d of dvs) {
+    const c = clientById(d.clientId);
+    divTotal += d.total;
+    if (d.date === today()) { divToday += d.total; todayRows.push(d); }
+    vBody.innerHTML += `<tr><td>${d.date}</td><td>${clientLabel(c)}</td><td><b>${d.ticker}</b></td>
+      <td class="num">${fmtN(d.perShare)}</td><td class="num">${d.qty.toLocaleString()}</td><td class="num gold">${fmtN(d.total)}</td>
+      <td><button class="action danger small" onclick="delDiv('${d.id}')">删除</button></td></tr>`;
+  }
+
+  // Dashboard cards
+  let totalRealized = 0;
+  for (const p of Object.values(pos)) if (matchFilter(p.clientId)) totalRealized += p.realized;
+  setCard("d-cost", fmt(totalCost));
+  document.getElementById("d-value").textContent = hasPrice ? fmt(totalValue) : (held.length ? "请先更新现价" : fmt(0));
+  setPnlCard("d-unrealized", hasPrice ? totalUnrealized : null);
+  setPnlCard("d-realized", totalRealized);
+  setCard("d-div-total", fmt(divTotal));
+  setCard("d-div-today", fmt(divToday));
+  setCard("d-brokerage", fmt(totalBrokerage));
+  setPnlCard("d-total-return", (hasPrice ? totalUnrealized : 0) + totalRealized + divTotal);
+
+  // 各顾客摘要
+  const dcBody = document.getElementById("d-client-body");
+  dcBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="6">还没有顾客</td></tr>`;
+  for (const c of db.clients) {
+    if (!matchFilter(c.id)) continue;
+    let cost = 0, realized = 0, divs = 0, brk = 0;
+    for (const p of Object.values(pos)) if (p.clientId === c.id) { cost += p.cost; realized += p.realized; }
+    for (const d of db.dividends) if (d.clientId === c.id) divs += d.total;
+    for (const t of db.transactions) if (t.clientId === c.id) brk += t.brokerage || 0;
+    dcBody.innerHTML += `<tr><td><b>${clientLabel(c)}</b></td><td>${c.account || "-"}</td>
+      <td class="num">${fmtN(cost)}</td><td class="num"><span class="${pnlClass(realized)}">${pnlFmt(realized)}</span></td>
+      <td class="num gold">${fmtN(divs)}</td><td class="num">${fmtN(brk)}</td></tr>`;
+  }
+
+  // 今天股息
+  const dtBody = document.getElementById("d-today-body");
+  dtBody.innerHTML = todayRows.length
+    ? todayRows.map(d => { const c = clientById(d.clientId);
+        return `<tr><td>${clientLabel(c)}</td><td><b>${d.ticker}</b></td><td class="num">${fmtN(d.perShare)}</td><td class="num">${d.qty.toLocaleString()}</td><td class="num gold">${fmtN(d.total)}</td></tr>`; }).join("")
+    : `<tr><td class="empty" colspan="5">今天没有股息记录</td></tr>`;
+
+  document.getElementById("jsonView").textContent = JSON.stringify(db, null, 2);
+}
+function setCard(id, text) { document.getElementById(id).textContent = text; }
+function setPnlCard(id, n) {
+  const el = document.getElementById(id);
+  if (n === null) { el.textContent = "-"; el.className = "value"; return; }
+  el.textContent = CCY + " " + pnlFmt(n);
+  el.className = "value " + pnlClass(n);
+}
+
+// ---------- Clients ----------
+let editingClientId = null;
+function toggleRateFields() {
+  const mode = document.getElementById("c-mode").value;
+  document.getElementById("f-rate-flat").style.display = mode === "flat" ? "" : "none";
+  document.getElementById("f-rate-below").style.display = mode === "tiered" ? "" : "none";
+  document.getElementById("f-rate-above").style.display = mode === "tiered" ? "" : "none";
+}
+function saveClient() {
+  const code = document.getElementById("c-code").value.trim().toUpperCase();
+  const name = document.getElementById("c-name").value.trim();
+  const account = document.getElementById("c-account").value.trim();
+  const mode = document.getElementById("c-mode").value;
+  const rateFlat = parseFloat(document.getElementById("c-rate-flat").value);
+  const rateBelow = parseFloat(document.getElementById("c-rate-below").value);
+  const rateAbove = parseFloat(document.getElementById("c-rate-above").value);
+  const min = parseFloat(document.getElementById("c-min").value) || 0;
+  if (!name) { alert("请填姓名"); return; }
+  if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
+  if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
+  const data = { code, name, account, brokerageMode: mode, minBrokerage: min,
+    rateFlat: mode === "flat" ? rateFlat : undefined,
+    rateBelow: mode === "tiered" ? rateBelow : undefined,
+    rateAbove: mode === "tiered" ? rateAbove : undefined };
+  if (editingClientId) {
+    Object.assign(clientById(editingClientId), data);
+    cancelEditClient();
+  } else {
+    db.clients.push({ id: uid(), ...data });
+    ["c-code", "c-name", "c-account", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
+  }
+  save();
+}
+function editClient(id) {
+  const c = clientById(id);
+  editingClientId = id;
+  document.getElementById("c-code").value = c.code || "";
+  document.getElementById("c-name").value = c.name;
+  document.getElementById("c-account").value = c.account || "";
+  document.getElementById("c-mode").value = c.brokerageMode || "flat";
+  document.getElementById("c-rate-flat").value = c.rateFlat ?? "";
+  document.getElementById("c-rate-below").value = c.rateBelow ?? "";
+  document.getElementById("c-rate-above").value = c.rateAbove ?? "";
+  document.getElementById("c-min").value = c.minBrokerage || 0;
+  toggleRateFields();
+  document.getElementById("c-form-title").textContent = "编辑顾客：" + c.name;
+  document.getElementById("c-save-btn").textContent = "保存";
+  document.getElementById("c-cancel-btn").style.display = "";
+}
+function cancelEditClient() {
+  editingClientId = null;
+  ["c-code", "c-name", "c-account", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("c-min").value = 8;
+  document.getElementById("c-mode").value = "tiered";
+  toggleRateFields();
+  document.getElementById("c-form-title").textContent = "添加顾客 Add Client";
+  document.getElementById("c-save-btn").textContent = "添加";
+  document.getElementById("c-cancel-btn").style.display = "none";
+}
+function delClient(id) {
+  const n = db.transactions.filter(t => t.clientId === id).length + db.dividends.filter(d => d.clientId === id).length;
+  if (n > 0) { alert(`这个顾客还有 ${n} 条记录，不能删除。请先删除他的交易和股息记录。`); return; }
+  if (!confirm("确定删除这个顾客？")) return;
+  db.clients = db.clients.filter(c => c.id !== id);
+  save();
+}
+function saveSettings() {
+  db.settings.clearingRate = parseFloat(document.getElementById("s-clearing-rate").value) || 0;
+  db.settings.clearingCap = parseFloat(document.getElementById("s-clearing-cap").value) || 0;
+  db.settings.stampPer1000 = parseFloat(document.getElementById("s-stamp-rate").value) || 0;
+  db.settings.stampCap = parseFloat(document.getElementById("s-stamp-cap").value) || 0;
+  save();
+  alert("费用规则已保存");
+}
+
+// ---------- Transactions ----------
+function autoFees() {
+  const c = clientById(document.getElementById("t-client").value);
+  const qty = parseFloat(document.getElementById("t-qty").value);
+  const price = parseFloat(document.getElementById("t-price").value);
+  const preview = document.getElementById("t-preview");
+  if (!c || !(qty > 0) || !(price > 0)) { preview.textContent = "输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。"; return; }
+  const gross = qty * price;
+  const f = calcFees(gross, c);
+  document.getElementById("t-brokerage").value = f.brokerage;
+  document.getElementById("t-stamp").value = f.stamp;
+  document.getElementById("t-clearing").value = f.clearing;
+  updatePreview();
+}
+function updatePreview() {
+  const qty = parseFloat(document.getElementById("t-qty").value) || 0;
+  const price = parseFloat(document.getElementById("t-price").value) || 0;
+  const type = document.getElementById("t-type").value;
+  const t = {
+    type, qty, price,
+    brokerage: parseFloat(document.getElementById("t-brokerage").value) || 0,
+    stamp: parseFloat(document.getElementById("t-stamp").value) || 0,
+    clearing: parseFloat(document.getElementById("t-clearing").value) || 0
+  };
+  const c = clientById(document.getElementById("t-client").value);
+  const gross = qty * price;
+  let rateInfo = "";
+  if (c && gross > 0) {
+    rateInfo = c.brokerageMode === "tiered"
+      ? ` &nbsp;·&nbsp; Rate: <b>${clientRate(c, gross)}%</b> (gross ${gross >= TIER_THRESHOLD ? "≥" : "<"} RM100K)`
+      : ` &nbsp;·&nbsp; Rate: <b>Flat ${clientRate(c, gross)}%</b>`;
+  }
+  document.getElementById("t-preview").innerHTML =
+    `Gross: <b>${fmt(gross)}</b>${rateInfo} &nbsp;·&nbsp; 费用合计: <b>${fmt(t.brokerage + t.stamp + t.clearing)}</b> &nbsp;·&nbsp; Net Amount: <b>${fmt(netAmount(t))}</b> ${type === "buy" ? "(付出)" : "(收到)"}`;
+}
+["t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).addEventListener("input", updatePreview));
+
+function addTransaction() {
+  const clientId = document.getElementById("t-client").value;
+  const date = document.getElementById("t-date").value;
+  const ticker = document.getElementById("t-ticker").value.trim().toUpperCase();
+  const type = document.getElementById("t-type").value;
+  const qty = parseFloat(document.getElementById("t-qty").value);
+  const price = parseFloat(document.getElementById("t-price").value);
+  const brokerage = parseFloat(document.getElementById("t-brokerage").value) || 0;
+  const stamp = parseFloat(document.getElementById("t-stamp").value) || 0;
+  const clearing = parseFloat(document.getElementById("t-clearing").value) || 0;
+  if (!clientId || !clientById(clientId)) { alert("请先在「顾客」页添加顾客"); return; }
+  if (!date || !ticker || !(qty > 0) || !(price > 0)) { alert("请填完整：日期、股票、股数、价格"); return; }
+  if (type === "sell") {
+    const { pos } = computePortfolio();
+    const p = pos[clientId + "|" + ticker];
+    const have = p ? p.qty : 0;
+    if (qty > have + 1e-9) { alert(`这个顾客的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return; }
+  }
+  db.transactions.push({ id: uid(), clientId, date, ticker, type, qty, price, brokerage, stamp, clearing });
+  ["t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("t-preview").textContent = "已添加 ✓";
+  save();
+}
+function delTx(id) {
+  if (!confirm("确定删除这笔交易？")) return;
+  db.transactions = db.transactions.filter(t => t.id !== id);
+  save();
+}
+
+function updatePrice() {
+  const tk = document.getElementById("p-ticker").value;
+  const price = parseFloat(document.getElementById("p-price").value);
+  if (!tk || !(price > 0)) { alert("请选股票并输入现价"); return; }
+  db.prices[tk] = { price, updatedAt: today() };
+  document.getElementById("p-price").value = "";
+  save();
+}
+
+// ---------- Bursa 代码 & 自动抓价 ----------
+function normalizeSymbol(s) {
+  s = s.trim().toUpperCase();
+  if (!s) return "";
+  if (/^\d{4}[A-Z0-9]*$/.test(s) && !s.endsWith(".KL")) return s + ".KL"; // Bursa 代码自动加 .KL
+  return s;
+}
+function fillSymbol() {
+  const tk = document.getElementById("p-ticker").value;
+  document.getElementById("p-symbol").value = tk && db.symbols[tk] ? db.symbols[tk].replace(/\.KL$/, "") : "";
+}
+function saveSymbol() {
+  const tk = document.getElementById("p-ticker").value;
+  const sym = normalizeSymbol(document.getElementById("p-symbol").value);
+  if (!tk) { alert("请先选股票"); return; }
+  if (sym) db.symbols[tk] = sym; else delete db.symbols[tk];
+  save();
+  document.getElementById("p-status").textContent = sym ? `已保存：${tk} = ${sym}` : `已清除 ${tk} 的代码`;
+}
+async function fetchAllPrices() {
+  const status = document.getElementById("p-status");
+  const { pos } = computePortfolio();
+  const heldTickers = [...new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker))];
+  const mapped = heldTickers.filter(tk => db.symbols[tk]);
+  const missing = heldTickers.filter(tk => !db.symbols[tk]);
+  if (!mapped.length) { status.textContent = "没有 counter 设了 Bursa 代码，先在下面逐个保存代码。"; return; }
+  status.textContent = "抓取中…";
+  try {
+    const symbols = mapped.map(tk => db.symbols[tk]).join(",");
+    const r = await fetch(apiUrl("/api/quotes?symbols=" + encodeURIComponent(symbols)));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    let ok = 0, failed = [];
+    for (const tk of mapped) {
+      const q = data[db.symbols[tk]];
+      if (q && q.price > 0) {
+        db.prices[tk] = { price: q.price, updatedAt: today(), source: "bursa" };
+        ok++;
+      } else failed.push(tk + (q && q.error ? "（代码错误?）" : ""));
+    }
+    save();
+    let msg = `✓ 更新了 ${ok} 个 counter 的最新价（${new Date().toLocaleTimeString()}）`;
+    if (failed.length) msg += ` · 失败: ${failed.join(", ")}`;
+    if (missing.length) msg += ` · 没设代码: ${missing.join(", ")}`;
+    document.getElementById("p-status").textContent = msg;
+  } catch (e) {
+    status.textContent = "抓取失败：" + e.message + API_HINT;
+  }
+}
+
+// ---------- Ex-Dividend 日历 ----------
+function parseExDate(s) { // "21-Jul-2026" -> "2026-07-21"
+  const m = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
+  const p = (s || "").split("-");
+  return p.length === 3 && m[p[1]] ? `${p[2]}-${m[p[1]]}-${p[0].padStart(2, "0")}` : "";
+}
+async function refreshExDiv() {
+  const status = document.getElementById("x-status");
+  status.textContent = "刷新中…（i3investor 有时要等 20-30 秒）";
+  try {
+    const r = await fetch(apiUrl("/api/exdividends"));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    db.exdiv = { fetchedAt: Date.now(), rows: data.rows };
+    save();
+    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 条`;
+  } catch (e) {
+    status.textContent = "刷新失败：" + e.message + API_HINT;
+  }
+}
+function renderExDiv(pos) {
+  const xBody = document.getElementById("x-body");
+  if (!db.exdiv || !db.exdiv.rows || !db.exdiv.rows.length) {
+    xBody.innerHTML = `<tr><td class="empty" colspan="6">还没有数据，按上面「刷新列表」</td></tr>`;
+    return;
+  }
+  const heldTickers = new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker));
+  const heldCodes = new Set(Object.entries(db.symbols)
+    .filter(([tk]) => heldTickers.has(tk))
+    .map(([, sym]) => sym.replace(/\.KL$/, "")));
+  const todayISO = today();
+  const rows = db.exdiv.rows
+    .map(r => ({ ann: r.annDate, stock: r.stock, price: r.price, div: r.dividend, exDate: r.exDate, code: r.code, iso: parseExDate(r.exDate) }))
+    .filter(r => r.iso >= todayISO)
+    .sort((a, b) => a.iso.localeCompare(b.iso));
+  xBody.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="6">未来没有已公布的 ex-dividend（试按刷新）</td></tr>`;
+  for (const r of rows) {
+    const heldBy = heldTickers.has(r.stock) || heldCodes.has(r.code);
+    xBody.innerHTML += `<tr class="${heldBy ? "held" : ""}">
+      <td><b>${r.exDate}</b></td><td><b>${r.stock}</b></td><td class="num gold">${r.div}</td>
+      <td class="num">${r.price}</td><td>${r.ann}</td>
+      <td>${heldBy ? '<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有顾客持有</span>' : ""}</td></tr>`;
+  }
+}
+// 打开网页时，数据超过12小时自动刷新（抓不到就静静用旧的）
+async function autoRefreshExDiv() {
+  if (db.exdiv && Date.now() - db.exdiv.fetchedAt < 12 * 3600 * 1000) {
+    document.getElementById("x-status").textContent = `上次更新：${new Date(db.exdiv.fetchedAt).toLocaleString()}`;
+    return;
+  }
+  try { await refreshExDiv(); } catch (e) {}
+}
+
+// ---------- Dividends ----------
+function fillDivTickers(posArg) {
+  const pos = posArg || computePortfolio().pos;
+  const clientId = document.getElementById("v-client").value;
+  const tks = Object.values(pos).filter(p => p.clientId === clientId && p.qty > 0).map(p => p.ticker).sort();
+  const sel = document.getElementById("v-ticker");
+  const prev = sel.value;
+  sel.innerHTML = tks.map(t => `<option>${t}</option>`).join("") || "<option value=''>（该顾客无持仓）</option>";
+  if (tks.includes(prev)) sel.value = prev;
+  prefillDivQty();
+}
+function prefillDivQty() {
+  const clientId = document.getElementById("v-client").value;
+  const tk = document.getElementById("v-ticker").value;
+  if (!clientId || !tk) return;
+  const { pos } = computePortfolio();
+  const p = pos[clientId + "|" + tk];
+  document.getElementById("v-qty").value = p ? p.qty : "";
+  calcDivTotal();
+}
+function calcDivTotal() {
+  const dps = parseFloat(document.getElementById("v-dps").value);
+  const qty = parseFloat(document.getElementById("v-qty").value);
+  if (dps > 0 && qty > 0) document.getElementById("v-total").value = r2(dps * qty).toFixed(2);
+}
+function addDividend() {
+  const clientId = document.getElementById("v-client").value;
+  const date = document.getElementById("v-date").value;
+  const ticker = document.getElementById("v-ticker").value;
+  const perShare = parseFloat(document.getElementById("v-dps").value) || 0;
+  const qty = parseFloat(document.getElementById("v-qty").value) || 0;
+  const total = parseFloat(document.getElementById("v-total").value);
+  if (!clientId || !date || !ticker || !(total > 0)) { alert("请填日期、顾客、股票，并确认总额大于 0"); return; }
+  db.dividends.push({ id: uid(), clientId, date, ticker, perShare, qty, total });
+  ["v-dps", "v-total"].forEach(id => document.getElementById(id).value = "");
+  save();
+}
+function delDiv(id) {
+  if (!confirm("确定删除这笔股息？")) return;
+  db.dividends = db.dividends.filter(d => d.id !== id);
+  save();
+}
+
+// ---------- Export / Import ----------
+function download(filename, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function exportJSON() {
+  download(`portfolio-backup-${today()}.json`, JSON.stringify(db, null, 2), "application/json");
+}
+function exportCSV() {
+  const { realizedByTx } = computePortfolio();
+  const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+  let csv = "﻿record_type,client_code,client,account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l\n";
+  for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    const c = clientById(t.clientId);
+    const r = realizedByTx[t.id];
+    csv += ["transaction", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", t.date, t.ticker, t.type, t.qty, t.price,
+      (t.qty * t.price).toFixed(2), (t.brokerage || 0).toFixed(2), (t.stamp || 0).toFixed(2), (t.clearing || 0).toFixed(2),
+      netAmount(t).toFixed(2), r !== undefined ? r.toFixed(2) : ""].map(esc).join(",") + "\n";
+  }
+  for (const d of [...db.dividends].sort((a, b) => a.date.localeCompare(b.date))) {
+    const c = clientById(d.clientId);
+    csv += ["dividend", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", d.date, d.ticker, "dividend", d.qty, d.perShare,
+      "", "", "", "", d.total.toFixed(2), d.total.toFixed(2)].map(esc).join(",") + "\n";
+  }
+  download(`portfolio-export-${today()}.csv`, csv, "text/csv");
+}
+function importJSON(ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const d = JSON.parse(reader.result);
+      if (!Array.isArray(d.transactions) || !Array.isArray(d.dividends)) throw new Error("bad format");
+      if (!confirm(`导入会覆盖现有数据（${d.clients ? d.clients.length : 0} 个顾客、${d.transactions.length} 笔交易、${d.dividends.length} 笔股息）。继续？`)) return;
+      localStorage.setItem(STORE_KEY, JSON.stringify(d));
+      db = load();
+      save();
+      alert("导入成功！");
+    } catch (e) { alert("导入失败：不是有效的备份文件"); }
+  };
+  reader.readAsText(file);
+  ev.target.value = "";
+}
+function clearAll() {
+  if (!confirm("⚠️ 确定清空全部数据（包括所有顾客和交易）？此操作不可恢复！建议先导出 JSON 备份。")) return;
+  if (!confirm("再确认一次：真的要删除所有记录？")) return;
+  db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], prices: {}, symbols: {}, exdiv: null };
+  save();
+}
+
+// ---------- Tabs & init ----------
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+  };
+});
+document.getElementById("t-date").value = today();
+document.getElementById("v-date").value = today();
+renderAll();
+autoRefreshExDiv();
+</script>
+</body>
+</html>
