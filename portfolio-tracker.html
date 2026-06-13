@@ -315,7 +315,7 @@
 const STORE_KEY = "portfolio-tracker-v1";
 const CCY = "RM";
 // 放上网（GitHub Pages）时，数据改由 Cloudflare Worker 帮忙抓；本地开则用 server.py
-const WORKER_URL = ""; // 部署 Worker 后填，如 "https://portfolio-data.xxx.workers.dev"
+const WORKER_URL = "https://portfolioworker.dallenpungzikang96.workers.dev"; // Cloudflare Worker（云端抓数据）
 const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.protocol === "file:";
 const apiUrl = path => (!IS_LOCAL && WORKER_URL) ? WORKER_URL + path : path;
 const API_HINT = IS_LOCAL ? "（确认你是用 start-tracker.bat 开的网页）" : "（Worker 未设置或没响应）";
