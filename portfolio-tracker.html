@@ -307,6 +307,25 @@
     <button class="action danger" onclick="clearAll()">🗑️ 清空全部数据</button>
   </div>
   <p class="hint" style="margin-bottom:16px">数据存在这台电脑这个浏览器。请定期导出 JSON 备份。CSV 格式跟你的 Excel 类似，每一行一笔交易（含 client、gross、三项费用、net、P/L）。</p>
+
+  <h2 class="section">☁️ Google Sheet 云端同步</h2>
+  <div class="form-card">
+    <div class="form-row">
+      <div class="field" style="flex:1;min-width:280px"><label>Web App 链接 URL</label><input type="text" id="cloud-url" placeholder="https://script.google.com/macros/s/..../exec"></div>
+      <div class="field"><label>密码 Token</label><input type="text" id="cloud-token" placeholder="贴上你的密码"></div>
+      <button class="action" onclick="saveCloudConfig()">保存设置</button>
+    </div>
+    <div class="form-row" style="margin-top:10px">
+      <button class="action success" onclick="pullCloud(false)">⬇️ 从云端载入到本机</button>
+      <button class="action" onclick="pushCloud(false)">⬆️ 把本机存到云端</button>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px">
+        <input type="checkbox" id="cloud-auto" style="min-width:auto" onchange="toggleCloudAuto()"> 自动同步（每次改动自动存云端）
+      </label>
+    </div>
+    <p class="net-preview" id="cloud-status">未连接云端。填上链接和密码后按「保存设置」。</p>
+    <p class="hint">第一次用：先在一台设备按「⬆️ 把本机存到云端」把现有数据上传；其他设备按「⬇️ 从云端载入」即可同步。⚠️ 链接和密码只存在本机，不会上传 GitHub。换设备要各自填一次。</p>
+  </div>
+
   <h2 class="section">原始数据 Raw Database</h2>
   <pre id="jsonView"></pre>
 </div>
@@ -358,7 +377,77 @@ function load() {
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 let db = load();
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); }
+function save() { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); if (cloud.auto) schedulePush(); }
+
+// ---------- Google Sheet 云端同步 ----------
+const CLOUD_KEY = "portfolio-cloud-config";
+let cloud = (() => { try { return JSON.parse(localStorage.getItem(CLOUD_KEY)) || {}; } catch (e) { return {}; } })();
+const cloudOn = () => !!(cloud.url && cloud.token);
+let pushTimer = null;
+function setCloudStatus(msg) { const el = document.getElementById("cloud-status"); if (el) el.textContent = msg; }
+function saveCloudConfig() {
+  const url = document.getElementById("cloud-url").value.trim();
+  const token = document.getElementById("cloud-token").value.trim();
+  if (!url || !token) { alert("请填上 Web App 链接和密码"); return; }
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(url))
+    if (!confirm("链接看起来不像 Google Apps Script 的 /exec 网址，确定要保存吗？")) return;
+  cloud = { url, token, auto: cloud.auto || false };
+  localStorage.setItem(CLOUD_KEY, JSON.stringify(cloud));
+  document.getElementById("cloud-auto").checked = !!cloud.auto;
+  setCloudStatus("✓ 已保存设置。第一次请按「⬆️ 把本机存到云端」。");
+}
+function toggleCloudAuto() {
+  cloud.auto = document.getElementById("cloud-auto").checked;
+  localStorage.setItem(CLOUD_KEY, JSON.stringify(cloud));
+  setCloudStatus(cloud.auto ? "✓ 自动同步已开：每次改动会自动存到云端。" : "自动同步已关。");
+}
+function cloudPayload() {
+  return { clients: db.clients, settings: db.settings, transactions: db.transactions,
+           dividends: db.dividends, prices: db.prices, symbols: db.symbols };
+}
+async function pushCloud(silent) {
+  if (!cloudOn()) { if (!silent) alert("还没设置云端：请先填链接和密码并保存"); return; }
+  setCloudStatus("⬆️ 存到云端中…");
+  try {
+    const r = await fetch(cloud.url, { method: "POST",
+      body: JSON.stringify({ token: cloud.token, action: "save", data: cloudPayload() }) });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    setCloudStatus(`✓ 已存到云端（${new Date().toLocaleString()}）`);
+  } catch (e) { setCloudStatus("⬆️ 存云端失败：" + e.message + "（检查链接/密码，或 Google 授权）"); }
+}
+function schedulePush() {
+  if (!cloudOn()) return;
+  clearTimeout(pushTimer);
+  setCloudStatus("⏳ 即将自动存到云端…");
+  pushTimer = setTimeout(() => pushCloud(true), 1500);
+}
+async function pullCloud(silent) {
+  if (!cloudOn()) { if (!silent) alert("还没设置云端：请先填链接和密码并保存"); return; }
+  setCloudStatus("⬇️ 从云端载入中…");
+  try {
+    const r = await fetch(cloud.url + "?action=load&token=" + encodeURIComponent(cloud.token));
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    const d = j.data || {};
+    db.clients = d.clients || [];
+    db.transactions = d.transactions || [];
+    db.dividends = d.dividends || [];
+    db.prices = d.prices || {};
+    db.symbols = d.symbols || {};
+    db.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+    for (const c of db.clients) if (!c.brokerageMode) { c.brokerageMode = "flat"; c.rateFlat = c.rateFlat || 0; }
+    localStorage.setItem(STORE_KEY, JSON.stringify(db));
+    renderAll();
+    setCloudStatus(`✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
+  } catch (e) { setCloudStatus("⬇️ 载入失败：" + e.message + "（检查链接/密码，或 Google 授权）"); }
+}
+function initCloudUI() {
+  if (cloud.url) document.getElementById("cloud-url").value = cloud.url;
+  if (cloud.token) document.getElementById("cloud-token").value = cloud.token;
+  document.getElementById("cloud-auto").checked = !!cloud.auto;
+  if (cloudOn()) setCloudStatus("已连接云端。按钮可手动同步" + (cloud.auto ? "（自动同步已开）" : "") + "。");
+}
 
 // ---------- Helpers ----------
 const fmt = n => CCY + " " + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -957,6 +1046,8 @@ document.getElementById("t-date").value = today();
 document.getElementById("v-date").value = today();
 renderAll();
 autoRefreshExDiv();
+initCloudUI();
+if (cloudOn()) pullCloud(true); // 打开网页时，自动从云端拿最新数据
 </script>
 </body>
 </html>

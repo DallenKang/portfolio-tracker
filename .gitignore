@@ -4,3 +4,6 @@
 # 数据备份（含顾客资料，绝对不上传公开 repo）
 portfolio-backup-*.json
 portfolio-export-*.csv
+
+# Apps Script 含 Google Sheet 密码，绝对不上传公开 repo
+apps-script.gs
