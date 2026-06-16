@@ -2,6 +2,8 @@
 # 开网页 + 帮网页抓 Bursa 数据（绕过浏览器 CORS 限制）
 #   /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 #   /api/exdividends                     -> i3investor 未来30天 ex-dividend 列表
+#   /api/ipos                            -> iSaham 即将上市 IPO（ACE / Main Market）
+import html as html_mod
 import json
 import os
 import re
@@ -15,6 +17,55 @@ EXDIV_URLS = [
     "https://klse.i3investor.com/web/entitlement/dividend/latestex",  # Ex Date next 30 days
     "https://klse.i3investor.com/web/entitlement/dividend/latest",    # fallback: announced past 3 months
 ]
+IPO_URL = "https://www.isaham.my/ipo"  # iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
+
+
+def strip_tags(s):
+    return html_mod.unescape(re.sub(r"<[^>]+>", " ", s or "")).replace("\xa0", " ")
+
+
+def squash(s):
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def parse_ipos(page):
+    # 去掉 script/style，避免里面的字干扰
+    H = re.sub(r"<script[\s\S]*?</script>", " ", page, flags=re.I)
+    H = re.sub(r"<style[\s\S]*?</style>", " ", H, flags=re.I)
+    # 每家完整 IPO 卡的卡头是 <h5> 里的「CODE | Company Name Berhad」
+    heads = []
+    for m in re.finditer(r"<h5[^>]*>([\s\S]*?)</h5>", H, re.I):
+        txt = squash(strip_tags(m.group(1)))
+        mm = re.match(r"^([A-Z0-9&]+)\s*\|\s*(.+?(?:Berhad|Bhd))\b", txt)
+        if mm:
+            heads.append((m.start(), mm.group(1).strip(), mm.group(2).strip()))
+
+    def field(t, pat):
+        x = re.search(pat, t, re.I)
+        return x.group(1).strip() if x else ""
+
+    rows = []
+    for i, (pos, code, name) in enumerate(heads):
+        end = heads[i + 1][0] if i + 1 < len(heads) else pos + 9000
+        t = squash(strip_tags(H[pos:end]))
+        market = field(t, r"Market\s*:?\s*(ACE|Main|LEAP)").upper()
+        if market not in ("ACE", "MAIN"):  # 只要 ACE / Main
+            continue
+        biz = field(t, r"Insights\s+([\s\S]+?)\s*Utilisation of Proceeds")
+        if len(biz) > 240:
+            biz = re.sub(r"\s+\S*$", "", biz[:240]) + "…"
+        rows.append({
+            "code": code,
+            "name": name,
+            "market": "Main" if market == "MAIN" else "ACE",
+            "price": field(t, r"Listing Price\s*:?\s*(?:RM\s*)?([0-9.]+)"),
+            "closeDate": field(t, r"Closing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})"),
+            "listingDate": field(t, r"Listing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})"),
+            "oversub": field(t, r"Oversubscription rate\s*:?\s*([0-9.]+\s*x)"),
+            "adviser": field(t, r"Principal Adviser\s*:?\s*(.+?)\s+(?:Issuing House|Joint|Underwriter|Shariah|Sponsor|Bumiputera|Selling)"),
+            "business": biz,
+        })
+    return rows
 
 
 def http_get(url, timeout=40):
@@ -29,6 +80,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.handle_quotes()
         elif self.path.startswith("/api/exdividends"):
             self.handle_exdividends()
+        elif self.path.startswith("/api/ipos"):
+            self.handle_ipos()
         else:
             super().do_GET()
 
@@ -80,6 +133,13 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 last_err = str(e)
         self.send_json({"error": last_err or "all sources failed"}, status=502)
+
+    def handle_ipos(self):
+        try:
+            rows = parse_ipos(http_get(IPO_URL))
+            self.send_json({"source": IPO_URL, "rows": rows})
+        except Exception as e:
+            self.send_json({"error": str(e)}, status=502)
 
     def send_json(self, obj, status=200):
         body = json.dumps(obj).encode("utf-8")

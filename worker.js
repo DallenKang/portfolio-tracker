@@ -7,6 +7,55 @@ const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
 ];
+const IPO_URL = "https://www.isaham.my/ipo"; // iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
+
+// 把 HTML 实体还原成普通文字（M &amp; A -> M & A，O&#039;G -> O'G）
+function decodeEntities(s) {
+  return (s || "")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&nbsp;/g, " ")
+    .replace(/&#0?39;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n));
+}
+const stripTags = s => decodeEntities((s || "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+
+// 从 iSaham IPO 页解析出 ACE / Main 即将上市公司
+function parseIpos(html) {
+  // 去掉 script/style，避免里面的字干扰
+  const H = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  // 每家完整 IPO 卡的卡头是 <h5> 里的「CODE | Company Name Berhad」
+  const heads = [];
+  const re = /<h5[^>]*>([\s\S]*?)<\/h5>/gi;
+  let m;
+  while ((m = re.exec(H)) !== null) {
+    const txt = stripTags(m[1]);
+    const mm = txt.match(/^([A-Z0-9&]+)\s*\|\s*(.+?(?:Berhad|Bhd))\b/);
+    if (mm) heads.push({ pos: m.index, code: mm[1].trim(), name: mm[2].trim() });
+  }
+  const field = (t, p) => { const x = t.match(p); return x ? x[1].trim() : ""; };
+  const rows = [];
+  for (let i = 0; i < heads.length; i++) {
+    const end = i + 1 < heads.length ? heads[i + 1].pos : heads[i].pos + 9000;
+    const t = stripTags(H.slice(heads[i].pos, end));
+    const market = field(t, /Market\s*:?\s*(ACE|Main|LEAP)/i).toUpperCase();
+    if (market !== "ACE" && market !== "MAIN") continue; // 只要 ACE / Main
+    let biz = field(t, /Insights\s+([\s\S]+?)\s*Utilisation of Proceeds/i);
+    if (biz.length > 240) biz = biz.slice(0, 240).replace(/\s+\S*$/, "") + "…";
+    rows.push({
+      code: heads[i].code,
+      name: heads[i].name,
+      market: market === "MAIN" ? "Main" : "ACE",
+      price: field(t, /Listing Price\s*:?\s*(?:RM\s*)?([0-9.]+)/i),
+      closeDate: field(t, /Closing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})/i),
+      listingDate: field(t, /Listing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})/i),
+      oversub: field(t, /Oversubscription rate\s*:?\s*([0-9.]+\s*x)/i),
+      adviser: field(t, /Principal Adviser\s*:?\s*(.+?)\s+(?:Issuing House|Joint|Underwriter|Shariah|Sponsor|Bumiputera|Selling)/i),
+      business: biz,
+    });
+  }
+  return rows;
+}
+
+export { parseIpos }; // 便于本地测试
 
 export default {
   async fetch(request) {
@@ -62,6 +111,16 @@ export default {
           } catch (e) { lastErr = String(e); }
         }
         return json({ error: lastErr || "all sources failed" }, 502);
+      }
+
+      if (url.pathname === "/api/ipos") {
+        try {
+          const html = await (await fetch(IPO_URL, { headers: { "User-Agent": UA } })).text();
+          const rows = parseIpos(html);
+          return json({ source: IPO_URL, rows });
+        } catch (e) {
+          return json({ error: String(e) }, 502);
+        }
       }
 
       return json({ error: "not found" }, 404);

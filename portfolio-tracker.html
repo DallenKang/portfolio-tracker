@@ -100,6 +100,21 @@
     padding: 16px; font-size: 12px; overflow-x: auto; max-height: 400px; overflow-y: auto;
   }
   h2.section { font-size: 16px; margin: 20px 0 10px; }
+
+  /* IPO 版块 */
+  .ipo-group-title { font-size: 15px; font-weight: 600; margin: 18px 0 10px; display: flex; align-items: center; gap: 8px; }
+  .ipo-group-title .when { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .ipo-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .ipo-card.soon { border-left: 3px solid var(--gold); }
+  .ipo-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .ipo-head .nm { font-size: 16px; font-weight: 600; }
+  .ipo-head .cd { color: var(--muted); font-size: 13px; }
+  .badge.ace { background: rgba(52,152,219,0.15); color: var(--blue); }
+  .badge.main { background: rgba(46,204,113,0.15); color: var(--green); }
+  .ipo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 18px; margin-bottom: 8px; }
+  .ipo-grid .k { color: var(--muted); font-size: 11px; }
+  .ipo-grid .v { font-size: 14px; font-weight: 600; margin-top: 2px; }
+  .ipo-biz { color: var(--muted); font-size: 13px; line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; }
 </style>
 </head>
 <body>
@@ -114,6 +129,7 @@
   <button class="tab-btn" data-tab="transactions">📝 交易 P&L</button>
   <button class="tab-btn" data-tab="dividends">💰 股息</button>
   <button class="tab-btn" data-tab="exdiv">📅 Ex-Dividend</button>
+  <button class="tab-btn" data-tab="ipo">🆕 IPO</button>
   <button class="tab-btn" data-tab="database">🗄️ 数据库</button>
 </div>
 
@@ -297,6 +313,19 @@
   </div>
 </div>
 
+<!-- ============ IPO ============ -->
+<div class="tab" id="tab-ipo">
+  <div class="form-card">
+    <h3>🆕 Bursa IPO 上市提醒（ACE & Main Market）</h3>
+    <div class="form-row">
+      <button class="action success" onclick="refreshIPO()">🔄 刷新列表</button>
+      <span class="hint" id="ipo-status" style="margin:0">-</span>
+    </div>
+    <p class="hint">每个星期日打开就能看到接下来要上市的公司：上市日期、IPO 价格、超额认购（oversubscribed）、业务、Principal Adviser / Underwriter。数据来自 iSaham，打开网页时超过 12 小时会自动刷新。<span class="gold">金边卡</span> = 7 天内上市。</p>
+  </div>
+  <div id="ipo-list"></div>
+</div>
+
 <!-- ============ DATABASE ============ -->
 <div class="tab" id="tab-database">
   <div class="toolbar">
@@ -366,6 +395,7 @@ function load() {
   if (!d.settings) d.settings = { ...DEFAULT_SETTINGS };
   if (!d.symbols) d.symbols = {};   // counter -> Yahoo 代码 (如 MAYBANK -> 1155.KL)
   if (!d.exdiv) d.exdiv = null;     // {fetchedAt, rows} ex-dividend 缓存
+  if (!d.ipo) d.ipo = null;         // {fetchedAt, rows} IPO 上市提醒缓存
   // 旧顾客只有单一 brokerageRate 的，转成 flat 模式
   for (const c of d.clients || []) {
     if (!c.brokerageMode) {
@@ -936,6 +966,72 @@ async function autoRefreshExDiv() {
   try { await refreshExDiv(); } catch (e) {}
 }
 
+// ---------- IPO 上市提醒 ----------
+async function refreshIPO() {
+  const status = document.getElementById("ipo-status");
+  status.textContent = "刷新中…（iSaham 有时要等 10-20 秒）";
+  try {
+    const r = await fetch(apiUrl("/api/ipos"));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    db.ipo = { fetchedAt: Date.now(), rows: data.rows };
+    save();
+    renderIPO();
+    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`;
+  } catch (e) {
+    status.textContent = "刷新失败：" + e.message + API_HINT;
+  }
+}
+function renderIPO() {
+  const box = document.getElementById("ipo-list");
+  if (!db.ipo || !db.ipo.rows || !db.ipo.rows.length) {
+    box.innerHTML = `<div class="form-card"><p class="empty">还没有数据，按上面「刷新列表」</p></div>`;
+    return;
+  }
+  const todayISO = today();
+  const weekISO = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const rows = db.ipo.rows
+    .map(r => ({ ...r, iso: parseExDate(r.listingDate) })) // "16-Jun-2026" -> "2026-06-16"
+    .filter(r => !r.iso || r.iso >= todayISO)              // 已上市的不再显示
+    .sort((a, b) => (a.iso || "9999").localeCompare(b.iso || "9999"));
+  const soon = rows.filter(r => r.iso && r.iso <= weekISO);
+  const later = rows.filter(r => r.iso && r.iso > weekISO);
+  const tba = rows.filter(r => !r.iso);
+  const esc = s => (s || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+  const card = r => {
+    const isSoon = r.iso && r.iso <= weekISO;
+    const mk = r.market === "Main" ? "main" : "ace";
+    return `<div class="ipo-card ${isSoon ? "soon" : ""}">
+      <div class="ipo-head">
+        <span class="nm">${esc(r.name)}</span>
+        <span class="cd">${esc(r.code)}</span>
+        <span class="badge ${mk}">${r.market} Market</span>
+      </div>
+      <div class="ipo-grid">
+        <div><div class="k">上市日期 Listing</div><div class="v gold">${esc(r.listingDate) || "待定"}</div></div>
+        <div><div class="k">IPO 价格 Price</div><div class="v">${r.price ? "RM " + esc(r.price) : "—"}</div></div>
+        <div><div class="k">超额认购 Oversub</div><div class="v ${r.oversub ? "gold" : ""}">${esc(r.oversub) || "待公布"}</div></div>
+        <div><div class="k">认购截止 Close</div><div class="v">${esc(r.closeDate) || "—"}</div></div>
+        <div><div class="k">Underwriter / Adviser</div><div class="v">${esc(r.adviser) || "—"}</div></div>
+      </div>
+      ${r.business ? `<div class="ipo-biz">${esc(r.business)}</div>` : ""}
+    </div>`;
+  };
+  const section = (title, list) =>
+    list.length ? `<div class="ipo-group-title">${title} <span class="when">${list.length} 家</span></div>` + list.map(card).join("") : "";
+  let html = section("📅 接下来 7 天上市", soon) + section("🔜 之后陆续上市", later) + section("📌 日期待定", tba);
+  box.innerHTML = html || `<div class="form-card"><p class="empty">未来没有 ACE / Main 的 IPO（试按刷新）</p></div>`;
+}
+async function autoRefreshIPO() {
+  if (db.ipo && Date.now() - db.ipo.fetchedAt < 12 * 3600 * 1000) {
+    document.getElementById("ipo-status").textContent = `上次更新：${new Date(db.ipo.fetchedAt).toLocaleString()}`;
+    renderIPO();
+    return;
+  }
+  try { await refreshIPO(); } catch (e) { renderIPO(); }
+}
+
 // ---------- Dividends ----------
 function fillDivTickers(posArg) {
   const pos = posArg || computePortfolio().pos;
@@ -1029,7 +1125,7 @@ function importJSON(ev) {
 function clearAll() {
   if (!confirm("⚠️ 确定清空全部数据（包括所有顾客和交易）？此操作不可恢复！建议先导出 JSON 备份。")) return;
   if (!confirm("再确认一次：真的要删除所有记录？")) return;
-  db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], prices: {}, symbols: {}, exdiv: null };
+  db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], prices: {}, symbols: {}, exdiv: null, ipo: null };
   save();
 }
 
@@ -1046,6 +1142,7 @@ document.getElementById("t-date").value = today();
 document.getElementById("v-date").value = today();
 renderAll();
 autoRefreshExDiv();
+autoRefreshIPO();
 initCloudUI();
 if (cloudOn()) pullCloud(true); // 打开网页时，自动从云端拿最新数据
 </script>
