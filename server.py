@@ -22,6 +22,24 @@ KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"  # KLSE Screener：补 Bur
 KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"  # 个股完整新闻列表（找研究行目标价）
 TARGET_KW = r"fair value|target price|\bTP\b|合理价|目标价|公平价值"  # 目标价关键词（中英）
 RESEARCH_HOUSES = r"PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Rakuten|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业"
+# 同一家研究行的中英文/全简称归一，避免重复（如 大众投资银行 = PublicInvest）
+HOUSE_ALIASES = [
+    ["PublicInvest", "Public Investment Bank", "大众投资银行", "大众投行"],
+    ["RHB", "兴业投资银行", "兴业"], ["HLIB", "Hong Leong", "丰隆投资银行", "丰隆"],
+    ["Kenanga", "肯纳格"], ["Maybank", "马银行"], ["CGS", "联昌"],
+    ["TA", "TA Securities", "达证券"], ["AmInvest", "AmInvestment", "大马投资银行", "大马投行"],
+    ["Rakuten", "乐天"], ["Malacca", "马六甲证券"], ["Affin", "艾芬"],
+]
+
+
+def canon_house(s):
+    if not s:
+        return ""
+    low = s.lower()
+    for g in HOUSE_ALIASES:
+        if any(a.lower() == low for a in g):
+            return g[0]
+    return s
 
 
 def parse_klse_codes(page):
@@ -46,8 +64,9 @@ def target_price_from(t):
     return ""
 
 
-def extract_target(page):
-    # 从个股完整新闻列表里抽研究行给的目标价（中英都认，best-effort，没有就返回 None）
+def extract_targets(page):
+    # 从个股完整新闻列表里抽出「所有」研究行给的目标价（中英都认，best-effort）
+    out, seen = [], set()
     for m in re.finditer(r'href="(/v2/news/view/[^"]+)"[^>]*>([^<]{4,200})</a>', page):
         chunk = squash(strip_tags(page[m.start():m.start() + 600]))  # 标题 + 摘要
         if not re.search(TARGET_KW, chunk, re.I):
@@ -56,10 +75,17 @@ def extract_target(page):
         if not price:
             continue
         hm = re.search(RESEARCH_HOUSES, chunk, re.I)
-        return {"price": price, "source": hm.group(0) if hm else "",
-                "headline": squash(strip_tags(m.group(2))),
-                "url": "https://www.klsescreener.com" + m.group(1)}
-    return None
+        source = canon_house(hm.group(0) if hm else "")
+        key = source or price  # 同一家研究行只取最新一篇
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"price": price, "source": source,
+                    "headline": squash(strip_tags(m.group(2))),
+                    "url": "https://www.klsescreener.com" + m.group(1)})
+        if len(out) >= 5:
+            break
+    return out
 
 
 def strip_tags(s):
@@ -187,12 +213,9 @@ class Handler(SimpleHTTPRequestHandler):
                 r["stockCode"] = codes.get(r["code"].upper(), "")
                 if r["stockCode"]:  # 个股完整新闻列表抓研究行目标价（best-effort）
                     try:
-                        t = extract_target(http_get(KLSE_NEWS_URL + r["stockCode"]))
+                        t = extract_targets(http_get(KLSE_NEWS_URL + r["stockCode"]))
                         if t:
-                            r["targetPrice"] = t["price"]
-                            r["targetSource"] = t["source"]
-                            r["targetHeadline"] = t["headline"]
-                            r["targetUrl"] = t["url"]
+                            r["targets"] = t  # [{price, source, headline, url}, ...]
                     except Exception:
                         pass
             self.send_json({"source": IPO_URL, "rows": rows})

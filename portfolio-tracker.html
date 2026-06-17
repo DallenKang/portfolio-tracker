@@ -1005,8 +1005,8 @@ function renderIPO() {
   const card = r => {
     const isSoon = r.iso && r.iso <= weekISO;
     const mk = r.market === "Main" ? "main" : "ace";
-    const tgt = r.targetPrice
-      ? `<a href="${esc(r.targetUrl)}" target="_blank" class="tgt-link" title="${esc(r.targetHeadline)}">RM ${esc(r.targetPrice)}</a>${r.targetSource ? ` <span class="tgt-src">${esc(r.targetSource)}</span>` : ""}`
+    const tgt = (r.targets && r.targets.length)
+      ? r.targets.map(t => `<a href="${esc(t.url)}" target="_blank" class="tgt-link" title="${esc(t.headline)}">RM ${esc(t.price)}</a>${t.source ? ` <span class="tgt-src">${esc(t.source)}</span>` : ""}`).join("<br>")
       : `<span class="tgt-none">暂无研报</span>`;
     return `<div class="ipo-card ${isSoon ? "soon" : ""}">
       <div class="ipo-head">

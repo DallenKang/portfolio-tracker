@@ -13,6 +13,20 @@ const KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"; // KLSE Screener：
 const KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"; // 个股完整新闻列表（找研究行目标价）
 const TARGET_KW = /fair value|target price|\bTP\b|合理价|目标价|公平价值/i; // 目标价关键词（中英）
 const RESEARCH_HOUSES = /PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Rakuten|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业/i;
+// 同一家研究行的中英文/全简称归一，避免重复（如 大众投资银行 = PublicInvest）
+const HOUSE_ALIASES = [
+  ["PublicInvest", "Public Investment Bank", "大众投资银行", "大众投行"],
+  ["RHB", "兴业投资银行", "兴业"], ["HLIB", "Hong Leong", "丰隆投资银行", "丰隆"],
+  ["Kenanga", "肯纳格"], ["Maybank", "马银行"], ["CGS", "联昌"],
+  ["TA", "TA Securities", "达证券"], ["AmInvest", "AmInvestment", "大马投资银行", "大马投行"],
+  ["Rakuten", "乐天"], ["Malacca", "马六甲证券"], ["Affin", "艾芬"],
+];
+function canonHouse(s) {
+  if (!s) return "";
+  const low = s.toLowerCase();
+  for (const g of HOUSE_ALIASES) if (g.some(a => a.toLowerCase() === low)) return g[0];
+  return s;
+}
 
 // 从 KLSE Screener IPO 页建「短名 -> 数字代码」对照表（如 SUM -> 0459）
 function parseKlseCodes(html) {
@@ -33,9 +47,10 @@ function targetPriceFrom(t) {
   if (m) return (+m[1]).toFixed(2);
   return "";
 }
-// 从个股完整新闻列表里抽研究行给的目标价（中英都认，best-effort，没有就返回 null）
-function extractTarget(html) {
+// 从个股完整新闻列表里抽出「所有」研究行给的目标价（中英都认，best-effort）
+function extractTargets(html) {
   const re = /href="(\/v2\/news\/view\/[^"]+)"[^>]*>([^<]{4,200})<\/a>/gi;
+  const out = [], seen = new Set();
   let m;
   while ((m = re.exec(html)) !== null) {
     const chunk = stripTags(html.slice(m.index, m.index + 600)); // 标题 + 摘要
@@ -43,9 +58,14 @@ function extractTarget(html) {
     const price = targetPriceFrom(chunk);
     if (!price) continue;
     const hm = chunk.match(RESEARCH_HOUSES);
-    return { price, source: hm ? hm[0] : "", headline: stripTags(m[2]), url: "https://www.klsescreener.com" + m[1] };
+    const source = canonHouse(hm ? hm[0] : "");
+    const key = source || price;           // 同一家研究行只取最新一篇
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ price, source, headline: stripTags(m[2]), url: "https://www.klsescreener.com" + m[1] });
+    if (out.length >= 5) break;
   }
-  return null;
+  return out;
 }
 
 // 把 HTML 实体还原成普通文字（M &amp; A -> M & A，O&#039;G -> O'G）
@@ -166,8 +186,8 @@ export default {
             if (!r.stockCode) return;
             try {
               const sh = await fetch(KLSE_NEWS_URL + r.stockCode, { headers: { "User-Agent": UA } }).then(x => x.text());
-              const t = extractTarget(sh);
-              if (t) { r.targetPrice = t.price; r.targetSource = t.source; r.targetHeadline = t.headline; r.targetUrl = t.url; }
+              const t = extractTargets(sh);
+              if (t.length) r.targets = t; // [{price, source, headline, url}, ...]
             } catch (e) { /* 没有就留空 */ }
           }));
           return json({ source: IPO_URL, rows });
