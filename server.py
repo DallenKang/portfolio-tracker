@@ -19,8 +19,9 @@ EXDIV_URLS = [
 ]
 IPO_URL = "https://www.isaham.my/ipo"  # iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
 KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"  # KLSE Screener：补 Bursa 数字代码（iSaham 没有）
-KLSE_STOCK_URL = "https://www.klsescreener.com/v2/stocks/view/"  # 个股页（看研究行目标价新闻）
-RESEARCH_HOUSES = r"PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvestment|Apex|BIMB|UOB|Malacca|M & A|Mercury|Phillip|Inter-Pacific|Rakuten"
+KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"  # 个股完整新闻列表（找研究行目标价）
+TARGET_KW = r"fair value|target price|\bTP\b|合理价|目标价|公平价值"  # 目标价关键词（中英）
+RESEARCH_HOUSES = r"PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Rakuten|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业"
 
 
 def parse_klse_codes(page):
@@ -31,23 +32,30 @@ def parse_klse_codes(page):
     return out
 
 
+def target_price_from(t):
+    # 从一段文字里抽目标价：RM0.38 / 38 sen / 38仙 / 0.38令吉
+    m = re.search(r"RM\s?(\d+\.\d{1,3})", t, re.I)
+    if m:
+        return "%.2f" % float(m.group(1))
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:仙|sen)(?![a-z])", t, re.I)
+    if m:
+        return "%.2f" % (float(m.group(1)) / 100)
+    m = re.search(r"(\d+\.\d+)\s*令吉", t)
+    if m:
+        return "%.2f" % float(m.group(1))
+    return ""
+
+
 def extract_target(page):
-    # 从个股页新闻里抽研究行给的目标价（best-effort：没有研报就返回 None）
-    for m in re.finditer(r'<h6><a[^>]*href="(/v2/news/view/[^"]+)"[^>]*>([^<]+)</a></h6>\s*<div class="text-justify">([\s\S]*?)</div>', page):
-        text = strip_tags(m.group(2)) + " " + strip_tags(m.group(3))
-        if not re.search(r"fair value|target price|\bTP\b", text, re.I):
+    # 从个股完整新闻列表里抽研究行给的目标价（中英都认，best-effort，没有就返回 None）
+    for m in re.finditer(r'href="(/v2/news/view/[^"]+)"[^>]*>([^<]{4,200})</a>', page):
+        chunk = squash(strip_tags(page[m.start():m.start() + 600]))  # 标题 + 摘要
+        if not re.search(TARGET_KW, chunk, re.I):
             continue
-        price = ""
-        pm = re.search(r"RM\s?(\d+\.\d{1,3})", text, re.I)
-        if pm:
-            price = "%.2f" % float(pm.group(1))
-        else:
-            pm = re.search(r"(\d+(?:\.\d+)?)\s*sen", text, re.I)
-            if pm:
-                price = "%.2f" % (float(pm.group(1)) / 100)
+        price = target_price_from(chunk)
         if not price:
             continue
-        hm = re.search(RESEARCH_HOUSES, text, re.I)
+        hm = re.search(RESEARCH_HOUSES, chunk, re.I)
         return {"price": price, "source": hm.group(0) if hm else "",
                 "headline": squash(strip_tags(m.group(2))),
                 "url": "https://www.klsescreener.com" + m.group(1)}
@@ -177,9 +185,9 @@ class Handler(SimpleHTTPRequestHandler):
                 codes = {}
             for r in rows:
                 r["stockCode"] = codes.get(r["code"].upper(), "")
-                if r["stockCode"]:  # 个股页抓研究行目标价（best-effort）
+                if r["stockCode"]:  # 个股完整新闻列表抓研究行目标价（best-effort）
                     try:
-                        t = extract_target(http_get(KLSE_STOCK_URL + r["stockCode"]))
+                        t = extract_target(http_get(KLSE_NEWS_URL + r["stockCode"]))
                         if t:
                             r["targetPrice"] = t["price"]
                             r["targetSource"] = t["source"]

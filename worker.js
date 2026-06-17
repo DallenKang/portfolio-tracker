@@ -10,8 +10,9 @@ const EXDIV_URLS = [
 const IPO_URL = "https://www.isaham.my/ipo"; // iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
 const KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"; // KLSE Screener：补 Bursa 数字代码（iSaham 没有）
 
-const KLSE_STOCK_URL = "https://www.klsescreener.com/v2/stocks/view/"; // 个股页（看研究行目标价新闻）
-const RESEARCH_HOUSES = /PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvestment|Apex|BIMB|UOB|Malacca|M & A|Mercury|Phillip|Inter-Pacific|Rakuten/i;
+const KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"; // 个股完整新闻列表（找研究行目标价）
+const TARGET_KW = /fair value|target price|\bTP\b|合理价|目标价|公平价值/i; // 目标价关键词（中英）
+const RESEARCH_HOUSES = /PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Rakuten|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业/i;
 
 // 从 KLSE Screener IPO 页建「短名 -> 数字代码」对照表（如 SUM -> 0459）
 function parseKlseCodes(html) {
@@ -22,18 +23,26 @@ function parseKlseCodes(html) {
   return map;
 }
 
-// 从个股页新闻里抽研究行给的目标价（best-effort：没有研报就返回 null）
+// 从一段文字里抽目标价：RM0.38 / 38 sen / 38仙 / 0.38令吉
+function targetPriceFrom(t) {
+  let m = t.match(/RM\s?(\d+\.\d{1,3})/i);
+  if (m) return (+m[1]).toFixed(2);
+  m = t.match(/(\d+(?:\.\d+)?)\s*(?:仙|sen)(?![a-z])/i);
+  if (m) return (+m[1] / 100).toFixed(2);
+  m = t.match(/(\d+\.\d+)\s*令吉/);
+  if (m) return (+m[1]).toFixed(2);
+  return "";
+}
+// 从个股完整新闻列表里抽研究行给的目标价（中英都认，best-effort，没有就返回 null）
 function extractTarget(html) {
-  const re = /<h6><a[^>]*href="(\/v2\/news\/view\/[^"]+)"[^>]*>([^<]+)<\/a><\/h6>\s*<div class="text-justify">([\s\S]*?)<\/div>/gi;
+  const re = /href="(\/v2\/news\/view\/[^"]+)"[^>]*>([^<]{4,200})<\/a>/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
-    const text = stripTags(m[2]) + " " + stripTags(m[3]);
-    if (!/fair value|target price|\bTP\b/i.test(text)) continue;
-    let price = "", pm = text.match(/RM\s?(\d+\.\d{1,3})/i);
-    if (pm) price = (+pm[1]).toFixed(2);
-    else { pm = text.match(/(\d+(?:\.\d+)?)\s*sen/i); if (pm) price = (+pm[1] / 100).toFixed(2); }
+    const chunk = stripTags(html.slice(m.index, m.index + 600)); // 标题 + 摘要
+    if (!TARGET_KW.test(chunk)) continue;
+    const price = targetPriceFrom(chunk);
     if (!price) continue;
-    const hm = text.match(RESEARCH_HOUSES);
+    const hm = chunk.match(RESEARCH_HOUSES);
     return { price, source: hm ? hm[0] : "", headline: stripTags(m[2]), url: "https://www.klsescreener.com" + m[1] };
   }
   return null;
@@ -156,7 +165,7 @@ export default {
           await Promise.all(rows.map(async r => {
             if (!r.stockCode) return;
             try {
-              const sh = await fetch(KLSE_STOCK_URL + r.stockCode, { headers: { "User-Agent": UA } }).then(x => x.text());
+              const sh = await fetch(KLSE_NEWS_URL + r.stockCode, { headers: { "User-Agent": UA } }).then(x => x.text());
               const t = extractTarget(sh);
               if (t) { r.targetPrice = t.price; r.targetSource = t.source; r.targetHeadline = t.headline; r.targetUrl = t.url; }
             } catch (e) { /* 没有就留空 */ }
