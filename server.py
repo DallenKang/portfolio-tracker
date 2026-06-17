@@ -18,6 +18,15 @@ EXDIV_URLS = [
     "https://klse.i3investor.com/web/entitlement/dividend/latest",    # fallback: announced past 3 months
 ]
 IPO_URL = "https://www.isaham.my/ipo"  # iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
+KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"  # KLSE Screener：补 Bursa 数字代码（iSaham 没有）
+
+
+def parse_klse_codes(page):
+    # 从 KLSE Screener IPO 页建「短名 -> 数字代码」对照表（如 SUM -> 0459）
+    out = {}
+    for code, short in re.findall(r'/v2/stocks/view/([0-9A-Z]+)">([^<]+)</a></h4>', page, re.I):
+        out[short.strip().upper()] = code
+    return out
 
 
 def strip_tags(s):
@@ -137,6 +146,12 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_ipos(self):
         try:
             rows = parse_ipos(http_get(IPO_URL))
+            try:
+                codes = parse_klse_codes(http_get(KLSE_IPO_URL))  # 短名 -> Bursa 数字代码
+            except Exception:
+                codes = {}
+            for r in rows:
+                r["stockCode"] = codes.get(r["code"].upper(), "")
             self.send_json({"source": IPO_URL, "rows": rows})
         except Exception as e:
             self.send_json({"error": str(e)}, status=502)

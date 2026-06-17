@@ -8,6 +8,16 @@ const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
 ];
 const IPO_URL = "https://www.isaham.my/ipo"; // iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
+const KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"; // KLSE Screener：补 Bursa 数字代码（iSaham 没有）
+
+// 从 KLSE Screener IPO 页建「短名 -> 数字代码」对照表（如 SUM -> 0459）
+function parseKlseCodes(html) {
+  const map = {};
+  const re = /\/v2\/stocks\/view\/([0-9A-Z]+)">([^<]+)<\/a><\/h4>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) map[m[2].trim().toUpperCase()] = m[1];
+  return map;
+}
 
 // 把 HTML 实体还原成普通文字（M &amp; A -> M & A，O&#039;G -> O'G）
 function decodeEntities(s) {
@@ -115,8 +125,13 @@ export default {
 
       if (url.pathname === "/api/ipos") {
         try {
-          const html = await (await fetch(IPO_URL, { headers: { "User-Agent": UA } })).text();
-          const rows = parseIpos(html);
+          const [ipoHtml, klseHtml] = await Promise.all([
+            fetch(IPO_URL, { headers: { "User-Agent": UA } }).then(r => r.text()),
+            fetch(KLSE_IPO_URL, { headers: { "User-Agent": UA } }).then(r => r.text()).catch(() => ""),
+          ]);
+          const rows = parseIpos(ipoHtml);
+          const codes = parseKlseCodes(klseHtml); // 短名 -> Bursa 数字代码
+          for (const r of rows) r.stockCode = codes[r.code.toUpperCase()] || "";
           return json({ source: IPO_URL, rows });
         } catch (e) {
           return json({ error: String(e) }, 502);

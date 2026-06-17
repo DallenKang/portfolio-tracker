@@ -108,7 +108,7 @@
   .ipo-card.soon { border-left: 3px solid var(--gold); }
   .ipo-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
   .ipo-head .nm { font-size: 16px; font-weight: 600; }
-  .ipo-head .cd { color: var(--muted); font-size: 13px; }
+  .ipo-head .cd { color: var(--text); font-size: 12px; font-weight: 600; letter-spacing: 0.5px; background: var(--card2); border: 1px solid var(--border); padding: 1px 7px; border-radius: 4px; }
   .badge.ace { background: rgba(52,152,219,0.15); color: var(--blue); }
   .badge.main { background: rgba(46,204,113,0.15); color: var(--green); }
   .ipo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 18px; margin-bottom: 8px; }
@@ -1005,7 +1005,7 @@ function renderIPO() {
     return `<div class="ipo-card ${isSoon ? "soon" : ""}">
       <div class="ipo-head">
         <span class="nm">${esc(r.name)}</span>
-        <span class="cd">${esc(r.code)}</span>
+        <span class="cd">${r.stockCode ? esc(r.stockCode) + " · " : ""}${esc(r.code)}</span>
         <span class="badge ${mk}">${r.market} Market</span>
       </div>
       <div class="ipo-grid">
