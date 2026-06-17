@@ -10,6 +10,9 @@ const EXDIV_URLS = [
 const IPO_URL = "https://www.isaham.my/ipo"; // iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
 const KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"; // KLSE Screener：补 Bursa 数字代码（iSaham 没有）
 
+const KLSE_STOCK_URL = "https://www.klsescreener.com/v2/stocks/view/"; // 个股页（看研究行目标价新闻）
+const RESEARCH_HOUSES = /PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvestment|Apex|BIMB|UOB|Malacca|M & A|Mercury|Phillip|Inter-Pacific|Rakuten/i;
+
 // 从 KLSE Screener IPO 页建「短名 -> 数字代码」对照表（如 SUM -> 0459）
 function parseKlseCodes(html) {
   const map = {};
@@ -17,6 +20,23 @@ function parseKlseCodes(html) {
   let m;
   while ((m = re.exec(html)) !== null) map[m[2].trim().toUpperCase()] = m[1];
   return map;
+}
+
+// 从个股页新闻里抽研究行给的目标价（best-effort：没有研报就返回 null）
+function extractTarget(html) {
+  const re = /<h6><a[^>]*href="(\/v2\/news\/view\/[^"]+)"[^>]*>([^<]+)<\/a><\/h6>\s*<div class="text-justify">([\s\S]*?)<\/div>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const text = stripTags(m[2]) + " " + stripTags(m[3]);
+    if (!/fair value|target price|\bTP\b/i.test(text)) continue;
+    let price = "", pm = text.match(/RM\s?(\d+\.\d{1,3})/i);
+    if (pm) price = (+pm[1]).toFixed(2);
+    else { pm = text.match(/(\d+(?:\.\d+)?)\s*sen/i); if (pm) price = (+pm[1] / 100).toFixed(2); }
+    if (!price) continue;
+    const hm = text.match(RESEARCH_HOUSES);
+    return { price, source: hm ? hm[0] : "", headline: stripTags(m[2]), url: "https://www.klsescreener.com" + m[1] };
+  }
+  return null;
 }
 
 // 把 HTML 实体还原成普通文字（M &amp; A -> M & A，O&#039;G -> O'G）
@@ -132,6 +152,15 @@ export default {
           const rows = parseIpos(ipoHtml);
           const codes = parseKlseCodes(klseHtml); // 短名 -> Bursa 数字代码
           for (const r of rows) r.stockCode = codes[r.code.toUpperCase()] || "";
+          // 每家个股页抓研究行目标价（并行，best-effort）
+          await Promise.all(rows.map(async r => {
+            if (!r.stockCode) return;
+            try {
+              const sh = await fetch(KLSE_STOCK_URL + r.stockCode, { headers: { "User-Agent": UA } }).then(x => x.text());
+              const t = extractTarget(sh);
+              if (t) { r.targetPrice = t.price; r.targetSource = t.source; r.targetHeadline = t.headline; r.targetUrl = t.url; }
+            } catch (e) { /* 没有就留空 */ }
+          }));
           return json({ source: IPO_URL, rows });
         } catch (e) {
           return json({ error: String(e) }, 502);

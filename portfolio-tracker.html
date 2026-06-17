@@ -115,6 +115,9 @@
   .ipo-grid .k { color: var(--muted); font-size: 11px; }
   .ipo-grid .v { font-size: 14px; font-weight: 600; margin-top: 2px; }
   .ipo-biz { color: var(--muted); font-size: 13px; line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; }
+  .tgt-link { color: var(--green); text-decoration: none; border-bottom: 1px dotted var(--green); }
+  .tgt-src { font-weight: 400; color: var(--muted); font-size: 11px; }
+  .tgt-none { font-weight: 400; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -1002,6 +1005,9 @@ function renderIPO() {
   const card = r => {
     const isSoon = r.iso && r.iso <= weekISO;
     const mk = r.market === "Main" ? "main" : "ace";
+    const tgt = r.targetPrice
+      ? `<a href="${esc(r.targetUrl)}" target="_blank" class="tgt-link" title="${esc(r.targetHeadline)}">RM ${esc(r.targetPrice)}</a>${r.targetSource ? ` <span class="tgt-src">${esc(r.targetSource)}</span>` : ""}`
+      : `<span class="tgt-none">暂无研报</span>`;
     return `<div class="ipo-card ${isSoon ? "soon" : ""}">
       <div class="ipo-head">
         <span class="nm">${esc(r.name)}</span>
@@ -1011,6 +1017,7 @@ function renderIPO() {
       <div class="ipo-grid">
         <div><div class="k">上市日期 Listing</div><div class="v gold">${esc(r.listingDate) || "待定"}</div></div>
         <div><div class="k">IPO 价格 Price</div><div class="v">${r.price ? "RM " + esc(r.price) : "—"}</div></div>
+        <div><div class="k">目标价 Target Price</div><div class="v">${tgt}</div></div>
         <div><div class="k">超额认购 Oversub</div><div class="v ${r.oversub ? "gold" : ""}">${esc(r.oversub) || "待公布"}</div></div>
         <div><div class="k">认购截止 Close</div><div class="v">${esc(r.closeDate) || "—"}</div></div>
         <div><div class="k">Underwriter / Adviser</div><div class="v">${esc(r.adviser) || "—"}</div></div>

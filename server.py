@@ -19,6 +19,8 @@ EXDIV_URLS = [
 ]
 IPO_URL = "https://www.isaham.my/ipo"  # iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
 KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"  # KLSE Screener：补 Bursa 数字代码（iSaham 没有）
+KLSE_STOCK_URL = "https://www.klsescreener.com/v2/stocks/view/"  # 个股页（看研究行目标价新闻）
+RESEARCH_HOUSES = r"PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|AmInvestment|Apex|BIMB|UOB|Malacca|M & A|Mercury|Phillip|Inter-Pacific|Rakuten"
 
 
 def parse_klse_codes(page):
@@ -27,6 +29,29 @@ def parse_klse_codes(page):
     for code, short in re.findall(r'/v2/stocks/view/([0-9A-Z]+)">([^<]+)</a></h4>', page, re.I):
         out[short.strip().upper()] = code
     return out
+
+
+def extract_target(page):
+    # 从个股页新闻里抽研究行给的目标价（best-effort：没有研报就返回 None）
+    for m in re.finditer(r'<h6><a[^>]*href="(/v2/news/view/[^"]+)"[^>]*>([^<]+)</a></h6>\s*<div class="text-justify">([\s\S]*?)</div>', page):
+        text = strip_tags(m.group(2)) + " " + strip_tags(m.group(3))
+        if not re.search(r"fair value|target price|\bTP\b", text, re.I):
+            continue
+        price = ""
+        pm = re.search(r"RM\s?(\d+\.\d{1,3})", text, re.I)
+        if pm:
+            price = "%.2f" % float(pm.group(1))
+        else:
+            pm = re.search(r"(\d+(?:\.\d+)?)\s*sen", text, re.I)
+            if pm:
+                price = "%.2f" % (float(pm.group(1)) / 100)
+        if not price:
+            continue
+        hm = re.search(RESEARCH_HOUSES, text, re.I)
+        return {"price": price, "source": hm.group(0) if hm else "",
+                "headline": squash(strip_tags(m.group(2))),
+                "url": "https://www.klsescreener.com" + m.group(1)}
+    return None
 
 
 def strip_tags(s):
@@ -152,6 +177,16 @@ class Handler(SimpleHTTPRequestHandler):
                 codes = {}
             for r in rows:
                 r["stockCode"] = codes.get(r["code"].upper(), "")
+                if r["stockCode"]:  # 个股页抓研究行目标价（best-effort）
+                    try:
+                        t = extract_target(http_get(KLSE_STOCK_URL + r["stockCode"]))
+                        if t:
+                            r["targetPrice"] = t["price"]
+                            r["targetSource"] = t["source"]
+                            r["targetHeadline"] = t["headline"]
+                            r["targetUrl"] = t["url"]
+                    except Exception:
+                        pass
             self.send_json({"source": IPO_URL, "rows": rows})
         except Exception as e:
             self.send_json({"error": str(e)}, status=502)
