@@ -119,6 +119,7 @@
   .tgt-src { font-weight: 400; color: var(--muted); font-size: 11px; }
   .tgt-none { font-weight: 400; color: var(--muted); }
 </style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -348,20 +349,27 @@
 
   <h2 class="section">☁️ Google Sheet 云端同步</h2>
   <div class="form-card">
-    <div class="form-row">
-      <div class="field" style="flex:1;min-width:280px"><label>Web App 链接 URL</label><input type="text" id="cloud-url" placeholder="https://script.google.com/macros/s/..../exec"></div>
-      <div class="field"><label>密码 Token</label><input type="text" id="cloud-token" placeholder="贴上你的密码"></div>
-      <button class="action" onclick="saveCloudConfig()">保存设置</button>
+    <div class="form-row" style="align-items:center">
+      <div id="gsi-button"></div>
+      <span class="hint" id="cloud-signin-hint" style="margin:0">用你的 Gmail 登入即可同步，不用填任何东西。</span>
+      <button class="action ghost small" id="gsi-signout" style="display:none" onclick="googleSignOut()">登出</button>
     </div>
-    <div class="form-row" style="margin-top:10px">
+    <div class="form-row" style="margin-top:12px">
       <button class="action success" onclick="pullCloud(false)">⬇️ 从云端载入到本机</button>
       <button class="action" onclick="pushCloud(false)">⬆️ 把本机存到云端</button>
       <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px">
         <input type="checkbox" id="cloud-auto" style="min-width:auto" onchange="toggleCloudAuto()"> 自动同步（每次改动自动存云端）
       </label>
     </div>
-    <p class="net-preview" id="cloud-status">未连接云端。填上链接和密码后按「保存设置」。</p>
-    <p class="hint">第一次用：先在一台设备按「⬆️ 把本机存到云端」把现有数据上传；其他设备按「⬇️ 从云端载入」即可同步。⚠️ 链接和密码只存在本机，不会上传 GitHub。换设备要各自填一次。</p>
+    <p class="net-preview" id="cloud-status">请先用 Gmail 登入。</p>
+    <details style="margin-top:8px">
+      <summary class="hint" style="cursor:pointer">进阶：手动填链接 + 密码（一般不用）</summary>
+      <div class="form-row" style="margin-top:10px">
+        <div class="field" style="flex:1;min-width:280px"><label>Web App 链接 URL</label><input type="text" id="cloud-url" placeholder="留空 = 用内建的"></div>
+        <div class="field"><label>密码 Token</label><input type="text" id="cloud-token" placeholder="留空 = 用 Gmail 登入"></div>
+        <button class="action" onclick="saveCloudConfig()">保存设置</button>
+      </div>
+    </details>
   </div>
 
   <h2 class="section">原始数据 Raw Database</h2>
@@ -376,6 +384,9 @@ const WORKER_URL = "https://portfolioworker.dallenpungzikang96.workers.dev"; // 
 const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.protocol === "file:";
 const apiUrl = path => (!IS_LOCAL && WORKER_URL) ? WORKER_URL + path : path;
 const API_HINT = IS_LOCAL ? "（确认你是用 start-tracker.bat 开的网页）" : "（Worker 未设置或没响应）";
+// Google Sheet 后台（内建，靠 Gmail 登入把关，所以网址可公开）
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbxwWrL-dezPDeQhUfA50p0FAUifqirXwr3WofQeUL0Ofgaqd5wCYNptIoWs39KFpfiE/exec";
+const GOOGLE_CLIENT_ID = "352178220130-7lg44vhcqq9q3earb7501jh76mrtg149.apps.googleusercontent.com";
 const DEFAULT_SETTINGS = { clearingRate: 0.03, clearingCap: 1000, stampPer1000: 1.00, stampCap: 1000 };
 
 // ---------- Storage & migration ----------
@@ -419,22 +430,66 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 let db = load();
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); if (cloud.auto) schedulePush(); }
 
-// ---------- Google Sheet 云端同步 ----------
+// ---------- Google Sheet 云端同步（Gmail 登入认证）----------
 const CLOUD_KEY = "portfolio-cloud-config";
 let cloud = (() => { try { return JSON.parse(localStorage.getItem(CLOUD_KEY)) || {}; } catch (e) { return {}; } })();
-const cloudOn = () => !!(cloud.url && cloud.token);
+let googleIdToken = null, googleEmail = null;
 let pushTimer = null;
+
+const cloudUrl = () => cloud.url || SHEET_URL;               // 内建网址，进阶可覆盖
+const cloudReady = () => !!cloudUrl() && (!!googleIdToken || !!cloud.token); // 登入或有密码
+function authGetParam() {
+  return googleIdToken ? "&idtoken=" + encodeURIComponent(googleIdToken)
+       : cloud.token   ? "&token=" + encodeURIComponent(cloud.token) : "";
+}
+function authPostFields() {
+  return googleIdToken ? { idToken: googleIdToken } : cloud.token ? { token: cloud.token } : {};
+}
 function setCloudStatus(msg) { const el = document.getElementById("cloud-status"); if (el) el.textContent = msg; }
+function parseJwt(t) { try { return JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch (e) { return {}; } }
+
+// --- Google Sign-In ---
+function onGoogleCredential(resp) {
+  googleIdToken = resp.credential;
+  googleEmail = parseJwt(googleIdToken).email || "";
+  document.getElementById("cloud-signin-hint").textContent = "已登入：" + googleEmail;
+  document.getElementById("gsi-signout").style.display = "";
+  setCloudStatus("✓ 已用 Gmail 登入，正在从云端载入…");
+  pullCloud(true);
+}
+function initGoogleSignIn() {
+  if (typeof google === "undefined" || !google.accounts || !google.accounts.id) return false;
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential, auto_select: true });
+  const btn = document.getElementById("gsi-button");
+  if (btn) google.accounts.id.renderButton(btn, { theme: "filled_blue", size: "large", text: "signin_with" });
+  google.accounts.id.prompt(); // 尝试自动登入
+  return true;
+}
+function googleSignOut() {
+  googleIdToken = null; googleEmail = null;
+  if (typeof google !== "undefined" && google.accounts) google.accounts.id.disableAutoSelect();
+  document.getElementById("gsi-signout").style.display = "none";
+  document.getElementById("cloud-signin-hint").textContent = "已登出。用 Gmail 登入即可同步。";
+  setCloudStatus("已登出。");
+}
+function handleCloudErr(e, prefix) {
+  const msg = String((e && e.message) || e);
+  if (/unauthorized/i.test(msg) && googleIdToken) {
+    googleIdToken = null;
+    setCloudStatus(prefix + "：登入过期，请重新用 Gmail 登入");
+    if (typeof google !== "undefined" && google.accounts) google.accounts.id.prompt();
+    return;
+  }
+  setCloudStatus(prefix + "：" + msg);
+}
+
+// --- 进阶：手动填链接+密码 ---
 function saveCloudConfig() {
   const url = document.getElementById("cloud-url").value.trim();
   const token = document.getElementById("cloud-token").value.trim();
-  if (!url || !token) { alert("请填上 Web App 链接和密码"); return; }
-  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(url))
-    if (!confirm("链接看起来不像 Google Apps Script 的 /exec 网址，确定要保存吗？")) return;
-  cloud = { url, token, auto: cloud.auto || false };
+  cloud = { url: url || "", token: token || "", auto: cloud.auto || false };
   localStorage.setItem(CLOUD_KEY, JSON.stringify(cloud));
-  document.getElementById("cloud-auto").checked = !!cloud.auto;
-  setCloudStatus("✓ 已保存设置。第一次请按「⬆️ 把本机存到云端」。");
+  setCloudStatus("✓ 已保存进阶设置。");
 }
 function toggleCloudAuto() {
   cloud.auto = document.getElementById("cloud-auto").checked;
@@ -446,27 +501,27 @@ function cloudPayload() {
            dividends: db.dividends, prices: db.prices, symbols: db.symbols };
 }
 async function pushCloud(silent) {
-  if (!cloudOn()) { if (!silent) alert("还没设置云端：请先填链接和密码并保存"); return; }
+  if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
   setCloudStatus("⬆️ 存到云端中…");
   try {
-    const r = await fetch(cloud.url, { method: "POST",
-      body: JSON.stringify({ token: cloud.token, action: "save", data: cloudPayload() }) });
+    const r = await fetch(cloudUrl(), { method: "POST",
+      body: JSON.stringify({ action: "save", data: cloudPayload(), ...authPostFields() }) });
     const j = await r.json();
     if (j.error) throw new Error(j.error);
     setCloudStatus(`✓ 已存到云端（${new Date().toLocaleString()}）`);
-  } catch (e) { setCloudStatus("⬆️ 存云端失败：" + e.message + "（检查链接/密码，或 Google 授权）"); }
+  } catch (e) { handleCloudErr(e, "⬆️ 存云端失败"); }
 }
 function schedulePush() {
-  if (!cloudOn()) return;
+  if (!cloudReady()) return;
   clearTimeout(pushTimer);
   setCloudStatus("⏳ 即将自动存到云端…");
   pushTimer = setTimeout(() => pushCloud(true), 1500);
 }
 async function pullCloud(silent) {
-  if (!cloudOn()) { if (!silent) alert("还没设置云端：请先填链接和密码并保存"); return; }
+  if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
   setCloudStatus("⬇️ 从云端载入中…");
   try {
-    const r = await fetch(cloud.url + "?action=load&token=" + encodeURIComponent(cloud.token));
+    const r = await fetch(cloudUrl() + "?action=load" + authGetParam());
     const j = await r.json();
     if (j.error) throw new Error(j.error);
     const d = j.data || {};
@@ -480,13 +535,18 @@ async function pullCloud(silent) {
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
     renderAll();
     setCloudStatus(`✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
-  } catch (e) { setCloudStatus("⬇️ 载入失败：" + e.message + "（检查链接/密码，或 Google 授权）"); }
+  } catch (e) { handleCloudErr(e, "⬇️ 载入失败"); }
 }
 function initCloudUI() {
   if (cloud.url) document.getElementById("cloud-url").value = cloud.url;
   if (cloud.token) document.getElementById("cloud-token").value = cloud.token;
   document.getElementById("cloud-auto").checked = !!cloud.auto;
-  if (cloudOn()) setCloudStatus("已连接云端。按钮可手动同步" + (cloud.auto ? "（自动同步已开）" : "") + "。");
+  // 等 Google 登入库加载好再初始化
+  (function waitGsi(n) {
+    if (initGoogleSignIn()) return;
+    if (n > 0) setTimeout(() => waitGsi(n - 1), 300);
+    else setCloudStatus("Google 登入库没加载到（检查网络），可改用「进阶」手动填密码。");
+  })(25);
 }
 
 // ---------- Helpers ----------
@@ -1210,8 +1270,8 @@ document.getElementById("v-date").value = today();
 renderAll();
 autoRefreshExDiv();
 autoRefreshIPO();
-initCloudUI();
-if (cloudOn()) pullCloud(true); // 打开网页时，自动从云端拿最新数据
+initCloudUI(); // Google 登入后会自动从云端载入；进阶填了密码则在登入回调外也可手动同步
+if (!googleIdToken && cloud.token) pullCloud(true); // 进阶密码模式：打开就拉
 </script>
 </body>
 </html>
