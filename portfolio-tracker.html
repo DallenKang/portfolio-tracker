@@ -475,9 +475,9 @@ function googleSignOut() {
 function handleCloudErr(e, prefix) {
   const msg = String((e && e.message) || e);
   if (/unauthorized/i.test(msg) && googleIdToken) {
-    googleIdToken = null;
-    setCloudStatus(prefix + "：登入过期，请重新用 Gmail 登入");
-    if (typeof google !== "undefined" && google.accounts) google.accounts.id.prompt();
+    const p = parseJwt(googleIdToken);
+    const audMatch = p.aud === GOOGLE_CLIENT_ID ? "✓" : "✗不匹配";
+    setCloudStatus("诊断｜aud:" + audMatch + " email:" + p.email + " verified:" + p.email_verified + " exp:" + (p.exp ? new Date(p.exp * 1000).toLocaleTimeString() : "?"));
     return;
   }
   setCloudStatus(prefix + "：" + msg);
