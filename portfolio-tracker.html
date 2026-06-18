@@ -189,15 +189,21 @@
       <div class="field" id="f-rate-above"><label>≥ RM100K (%)</label><input type="number" step="any" id="c-rate-above" placeholder="如 0.21"></div>
       <div class="field" id="f-rate-flat" style="display:none"><label>Flat Rate (%)</label><input type="number" step="any" id="c-rate-flat" placeholder="如 0.18"></div>
       <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="c-min" placeholder="如 8" value="8"></div>
+      <div class="field"><label>成本算法 Cost Method</label>
+        <select id="c-costmethod">
+          <option value="average">Average（平均成本）</option>
+          <option value="fifo">FIFO（先进先出）</option>
+        </select>
+      </div>
       <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
-    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的顾客，不管金额统一一个 rate（如 0.18%）。添加交易时按 gross 自动选对的 rate，每一笔还可以手动调整。</p>
+    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的顾客，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出），每个顾客可不同。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
   </div>
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Client Code</th><th>姓名</th><th>户口种类</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <thead><tr><th>Client Code</th><th>姓名</th><th>户口种类</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
       <tbody id="c-body"></tbody>
     </table>
   </div>
@@ -405,6 +411,7 @@ function load() {
       c.brokerageMode = "flat";
       c.rateFlat = c.brokerageRate || 0;
     }
+    if (!c.costMethod) c.costMethod = "average";
   }
   return d;
 }
@@ -469,7 +476,7 @@ async function pullCloud(silent) {
     db.prices = d.prices || {};
     db.symbols = d.symbols || {};
     db.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
-    for (const c of db.clients) if (!c.brokerageMode) { c.brokerageMode = "flat"; c.rateFlat = c.rateFlat || 0; }
+    for (const c of db.clients) { if (!c.brokerageMode) { c.brokerageMode = "flat"; c.rateFlat = c.rateFlat || 0; } if (!c.costMethod) c.costMethod = "average"; }
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
     renderAll();
     setCloudStatus(`✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
@@ -523,29 +530,78 @@ function netAmount(t) {
   return t.type === "buy" ? gross + fees : gross - fees;
 }
 
-// ---------- Core: 按 (顾客, 股票) 回放交易，平均成本法（用 Net Amount）----------
+// ---------- Core: 按 (顾客, 股票) 回放交易（用 Net Amount）----------
+// 步骤：1) 先做 Intraday（同股同日买卖）配对，算即日盈亏，不碰过夜持仓
+//       2) 剩下的过夜股数，按该顾客的成本法（average / fifo）算
+function clientCostMethod(clientId) {
+  const c = clientById(clientId);
+  return (c && c.costMethod === "fifo") ? "fifo" : "average";
+}
 function computePortfolio() {
-  const pos = {}; // "clientId|ticker" -> {clientId, ticker, qty, cost, realized}
-  const realizedByTx = {};
-  const txs = [...db.transactions].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
-  for (const t of txs) {
+  const pos = {};            // "clientId|ticker" -> {clientId, ticker, qty, cost, realized}
+  const realizedByTx = {};   // 卖出交易 -> 已实现盈亏
+  const intradayTx = {};     // 交易 id -> true（即日配对的，用来打标签）
+  const groups = {};
+  for (const t of db.transactions) {
     const key = t.clientId + "|" + t.ticker;
-    const p = pos[key] || (pos[key] = { clientId: t.clientId, ticker: t.ticker, qty: 0, cost: 0, realized: 0 });
-    const net = netAmount(t);
-    if (t.type === "buy") {
-      p.qty += t.qty;
-      p.cost += net;
-    } else {
-      const avg = p.qty > 0 ? p.cost / p.qty : 0;
-      const realized = net - avg * t.qty;
-      p.realized += realized;
-      realizedByTx[t.id] = realized;
-      p.cost -= avg * t.qty;
-      p.qty -= t.qty;
-      if (p.qty < 1e-9) { p.qty = 0; p.cost = 0; }
+    (groups[key] = groups[key] || []).push(t);
+  }
+  for (const key in groups) {
+    const first = groups[key][0];
+    const method = clientCostMethod(first.clientId);
+    const p = pos[key] = { clientId: first.clientId, ticker: first.ticker, qty: 0, cost: 0, realized: 0 };
+    let lots = []; // FIFO 批次：{qty, cps（每股净成本）}
+    const byDate = {};
+    for (const t of groups[key]) (byDate[t.date] = byDate[t.date] || []).push(t);
+    for (const date of Object.keys(byDate).sort()) {
+      const dayTxs = byDate[date];
+      let buyQty = 0, buyNet = 0, sellQty = 0, sellNet = 0;
+      const sells = [];
+      for (const t of dayTxs) {
+        const net = netAmount(t);
+        if (t.type === "buy") { buyQty += t.qty; buyNet += net; }
+        else { sellQty += t.qty; sellNet += net; sells.push(t); }
+      }
+      const buyCps = buyQty > 0 ? buyNet / buyQty : 0;   // 当天每股买入净成本
+      const sellPps = sellQty > 0 ? sellNet / sellQty : 0; // 当天每股卖出净收
+      const intradayQty = Math.min(buyQty, sellQty);
+      let dayRealized = 0;
+      // 1) Intraday 配对
+      if (intradayQty > 0) {
+        dayRealized += intradayQty * (sellPps - buyCps);
+        for (const t of dayTxs) intradayTx[t.id] = true;
+      }
+      // 2) 当天净买/净卖进出过夜持仓
+      const netBuy = buyQty - sellQty;
+      if (netBuy > 1e-9) {
+        if (method === "fifo") lots.push({ qty: netBuy, cps: buyCps });
+        p.qty += netBuy; p.cost += netBuy * buyCps;
+      } else if (netBuy < -1e-9) {
+        let q = -netBuy, cost = 0, taken = 0;
+        if (method === "fifo") {
+          let rem = q;
+          while (rem > 1e-9 && lots.length) {
+            const lot = lots[0];
+            const take = Math.min(rem, lot.qty);
+            cost += take * lot.cps; taken += take;
+            lot.qty -= take; rem -= take;
+            if (lot.qty < 1e-9) lots.shift();
+          }
+        } else {
+          const avg = p.qty > 0 ? p.cost / p.qty : 0;
+          taken = Math.min(q, p.qty);
+          cost = avg * taken;
+        }
+        p.qty -= taken; p.cost -= cost;
+        dayRealized += q * sellPps - cost;
+      }
+      p.realized += dayRealized;
+      // 当天盈亏按股数比例分到当天的卖出交易上（多数情况一天一笔）
+      if (sellQty > 0) for (const t of sells) realizedByTx[t.id] = dayRealized * (t.qty / sellQty);
+      if (p.qty < 1e-9) { p.qty = 0; p.cost = 0; lots = []; }
     }
   }
-  return { pos, realizedByTx };
+  return { pos, realizedByTx, intradayTx };
 }
 
 // ---------- Render ----------
@@ -555,7 +611,7 @@ function matchFilter(clientId) {
 }
 
 function renderAll() {
-  const { pos, realizedByTx } = computePortfolio();
+  const { pos, realizedByTx, intradayTx } = computePortfolio();
   const filterSel = document.getElementById("clientFilter");
   const prevFilter = filterSel.value || "all";
   filterSel.innerHTML = `<option value="all">全部顾客 All Clients</option>` +
@@ -575,10 +631,11 @@ function renderAll() {
   const txCount = {};
   db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
   const cBody = document.getElementById("c-body");
-  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="7">还没有顾客，先在上面添加</td></tr>`;
+  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="8">还没有顾客，先在上面添加</td></tr>`;
   for (const c of db.clients) {
     cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td>
       <td>${rateLabel(c)}</td><td class="num">${fmt(c.minBrokerage || 0)}</td>
+      <td>${c.costMethod === "fifo" ? "FIFO" : "Average"}</td>
       <td class="num">${txCount[c.id] || 0}</td>
       <td><button class="action small ghost" onclick="editClient('${c.id}')">编辑</button>
           <button class="action danger small" onclick="delClient('${c.id}')">删除</button></td></tr>`;
@@ -648,7 +705,7 @@ function renderAll() {
     const r = realizedByTx[t.id];
     tBody.innerHTML += `<tr>
       <td>${t.date}</td><td>${clientLabel(c)}</td><td><b>${t.ticker}</b></td>
-      <td><span class="badge ${t.type}">${t.type === "buy" ? "买入" : "卖出"}</span></td>
+      <td><span class="badge ${t.type}">${t.type === "buy" ? "买入" : "卖出"}</span>${intradayTx[t.id] ? ` <span class="badge" style="background:rgba(155,89,182,0.18);color:#bb8fce">即日</span>` : ""}</td>
       <td class="num">${t.qty.toLocaleString()}</td><td class="num">${t.price.toFixed(4)}</td>
       <td class="num">${fmtN(gross)}</td><td class="num">${fmtN(t.brokerage || 0)}</td>
       <td class="num">${fmtN(t.stamp || 0)}</td><td class="num">${fmtN(t.clearing || 0)}</td>
@@ -732,10 +789,11 @@ function saveClient() {
   const rateBelow = parseFloat(document.getElementById("c-rate-below").value);
   const rateAbove = parseFloat(document.getElementById("c-rate-above").value);
   const min = parseFloat(document.getElementById("c-min").value) || 0;
+  const costMethod = document.getElementById("c-costmethod").value;
   if (!name) { alert("请填姓名"); return; }
   if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
   if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
-  const data = { code, name, account, brokerageMode: mode, minBrokerage: min,
+  const data = { code, name, account, brokerageMode: mode, minBrokerage: min, costMethod,
     rateFlat: mode === "flat" ? rateFlat : undefined,
     rateBelow: mode === "tiered" ? rateBelow : undefined,
     rateAbove: mode === "tiered" ? rateAbove : undefined };
@@ -759,6 +817,7 @@ function editClient(id) {
   document.getElementById("c-rate-below").value = c.rateBelow ?? "";
   document.getElementById("c-rate-above").value = c.rateAbove ?? "";
   document.getElementById("c-min").value = c.minBrokerage || 0;
+  document.getElementById("c-costmethod").value = c.costMethod === "fifo" ? "fifo" : "average";
   toggleRateFields();
   document.getElementById("c-form-title").textContent = "编辑顾客：" + c.name;
   document.getElementById("c-save-btn").textContent = "保存";
@@ -769,6 +828,7 @@ function cancelEditClient() {
   ["c-code", "c-name", "c-account", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("c-min").value = 8;
   document.getElementById("c-mode").value = "tiered";
+  document.getElementById("c-costmethod").value = "average";
   toggleRateFields();
   document.getElementById("c-form-title").textContent = "添加顾客 Add Client";
   document.getElementById("c-save-btn").textContent = "添加";
