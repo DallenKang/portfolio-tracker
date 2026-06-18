@@ -472,14 +472,12 @@ function googleSignOut() {
   document.getElementById("cloud-signin-hint").textContent = "已登出。用 Gmail 登入即可同步。";
   setCloudStatus("已登出。");
 }
-async function handleCloudErr(e, prefix) {
+function handleCloudErr(e, prefix) {
   const msg = String((e && e.message) || e);
-  if (/unauthorized/i.test(msg) && (googleIdToken || cloud.token)) {
-    try {
-      const r = await fetch(cloudUrl(), { method: "POST", body: JSON.stringify({ action: "load", debug: 1, ...authPostFields() }) });
-      const d = (await r.json()).debug || {};
-      setCloudStatus("诊断｜后台原因:" + (d.reason || "?") + " http:" + (d.httpCode || "") + " audMatch:" + d.audMatch + " email:" + (d.email || "") + " " + (d.detail || ""));
-    } catch (err) { setCloudStatus("诊断失败：" + err.message); }
+  if (/unauthorized/i.test(msg) && googleIdToken) {
+    googleIdToken = null;
+    setCloudStatus(prefix + "：登入过期，请重新用 Gmail 登入");
+    if (typeof google !== "undefined" && google.accounts) google.accounts.id.prompt();
     return;
   }
   setCloudStatus(prefix + "：" + msg);
