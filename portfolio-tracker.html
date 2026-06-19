@@ -132,6 +132,7 @@
   <button class="tab-btn" data-tab="transactions">📝 交易 P&L</button>
   <button class="tab-btn" data-tab="holdings">💼 持仓</button>
   <button class="tab-btn" data-tab="dividends">💰 股息</button>
+  <button class="tab-btn" data-tab="cashflow">💵 现金账</button>
   <button class="tab-btn" data-tab="exdiv">📅 Ex-Dividend</button>
   <button class="tab-btn" data-tab="ipo">🆕 IPO</button>
   <button class="tab-btn" data-tab="database">🗄️ 数据库</button>
@@ -305,6 +306,41 @@
   </div>
 </div>
 
+<!-- ============ CASH FLOW 现金账 ============ -->
+<div class="tab" id="tab-cashflow">
+  <div class="form-card">
+    <h3>记录出入金 Deposit / Withdraw</h3>
+    <div class="form-row">
+      <div class="field"><label>顾客 Client</label><select id="cf-client"></select></div>
+      <div class="field"><label>日期 Date</label><input type="date" id="cf-date"></div>
+      <div class="field"><label>类型 Type</label><select id="cf-type"><option value="deposit">入金 Deposit</option><option value="withdraw">出金 Withdraw</option></select></div>
+      <div class="field"><label>金额 Amount (RM)</label><input type="number" step="any" id="cf-amount" placeholder="0.00"></div>
+      <div class="field" style="flex:1;min-width:160px"><label>备注 Note（可空）</label><input type="text" id="cf-note" placeholder="如 现金 / 支票"></div>
+      <button class="action success" onclick="addCashflow()">记录</button>
+    </div>
+    <p class="hint">只需手动记「入金」和「出金」。买卖、股息会自动算进账本（不用重复输入）。买卖盈亏、户口总值会一起显示。</p>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="label">总入金 Deposits</div><div class="value" id="cf-dep">-</div></div>
+    <div class="card"><div class="label">总出金 Withdrawals</div><div class="value" id="cf-wd">-</div></div>
+    <div class="card"><div class="label">已实现盈亏 Realised P/L</div><div class="value" id="cf-realised">-</div></div>
+    <div class="card"><div class="label">股息 Dividends</div><div class="value gold" id="cf-div">-</div></div>
+    <div class="card"><div class="label">现金余额 Cash Balance</div><div class="value" id="cf-cash">-</div></div>
+    <div class="card"><div class="label">持仓市值 Holdings Value</div><div class="value" id="cf-mv">-</div></div>
+    <div class="card"><div class="label">户口总值 Account Equity</div><div class="value" id="cf-equity">-</div></div>
+    <div class="card"><div class="label">真正赚亏 True P/L（总值−净入金）</div><div class="value" id="cf-true">-</div></div>
+  </div>
+
+  <h2 class="section">账本 Passbook <span class="hint" id="cf-ledger-hint" style="font-weight:400"></span></h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>日期</th><th>项目</th><th class="num">入 (+)</th><th class="num">出 (−)</th><th class="num">余额 Balance</th><th></th></tr></thead>
+      <tbody id="cf-body"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ============ EX-DIVIDEND ============ -->
 <div class="tab" id="tab-exdiv">
   <div class="form-card">
@@ -394,7 +430,7 @@ function load() {
   let d;
   try { d = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) {}
   if (!d || !Array.isArray(d.transactions)) {
-    return { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], prices: {}, symbols: {}, exdiv: null };
+    return { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null };
   }
   if (d.version !== 2) {
     // 旧版数据：建一个默认顾客，旧的 fees 全部当 brokerage
@@ -414,6 +450,7 @@ function load() {
   }
   if (!d.settings) d.settings = { ...DEFAULT_SETTINGS };
   if (!d.symbols) d.symbols = {};   // counter -> Yahoo 代码 (如 MAYBANK -> 1155.KL)
+  if (!d.cashflows) d.cashflows = []; // 出入金 [{id,clientId,date,type,amount,note}]
   if (!d.exdiv) d.exdiv = null;     // {fetchedAt, rows} ex-dividend 缓存
   if (!d.ipo) d.ipo = null;         // {fetchedAt, rows} IPO 上市提醒缓存
   // 旧顾客只有单一 brokerageRate 的，转成 flat 模式
@@ -498,7 +535,7 @@ function toggleCloudAuto() {
 }
 function cloudPayload() {
   return { clients: db.clients, settings: db.settings, transactions: db.transactions,
-           dividends: db.dividends, prices: db.prices, symbols: db.symbols };
+           dividends: db.dividends, cashflows: db.cashflows, prices: db.prices, symbols: db.symbols };
 }
 async function pushCloud(silent) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
@@ -530,6 +567,7 @@ async function pullCloud(silent) {
     db.clients = d.clients || [];
     db.transactions = d.transactions || [];
     db.dividends = d.dividends || [];
+    db.cashflows = d.cashflows || [];
     db.prices = d.prices || {};
     db.symbols = d.symbols || {};
     db.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
@@ -682,12 +720,14 @@ function renderAll() {
 
   // 顾客下拉
   const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)} (${rateLabel(c)})</option>`).join("");
-  const tSel = document.getElementById("t-client"), vSel = document.getElementById("v-client");
-  const tPrev = tSel.value, vPrev = vSel.value;
+  const tSel = document.getElementById("t-client"), vSel = document.getElementById("v-client"), cfSel = document.getElementById("cf-client");
+  const tPrev = tSel.value, vPrev = vSel.value, cfPrev = cfSel.value;
   tSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
   vSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
+  cfSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
   if ([...tSel.options].some(o => o.value === tPrev)) tSel.value = tPrev;
   if ([...vSel.options].some(o => o.value === vPrev)) vSel.value = vPrev;
+  if ([...cfSel.options].some(o => o.value === cfPrev)) cfSel.value = cfPrev;
 
   // 顾客表
   const txCount = {};
@@ -754,6 +794,7 @@ function renderAll() {
   fillDivTickers(pos);
   fillSymbol();
   renderExDiv(pos);
+  renderCashflow(pos, realizedByTx);
 
   // 交易表
   const tBody = document.getElementById("t-body");
@@ -1204,6 +1245,79 @@ function delDiv(id) {
   save();
 }
 
+// ---------- Cash Flow 现金账 ----------
+function addCashflow() {
+  const clientId = document.getElementById("cf-client").value;
+  const date = document.getElementById("cf-date").value;
+  const type = document.getElementById("cf-type").value;
+  const amount = parseFloat(document.getElementById("cf-amount").value);
+  const note = document.getElementById("cf-note").value.trim();
+  if (!clientId || !date || !(amount > 0)) { alert("请填顾客、日期，金额要大于 0"); return; }
+  db.cashflows.push({ id: uid(), clientId, date, type, amount, note });
+  document.getElementById("cf-amount").value = "";
+  document.getElementById("cf-note").value = "";
+  save();
+}
+function delCashflow(id) {
+  if (!confirm("确定删除这笔出入金？")) return;
+  db.cashflows = db.cashflows.filter(c => c.id !== id);
+  save();
+}
+function renderCashflow(pos, realizedByTx) {
+  // 汇总（按上方 filter 范围）
+  let dep = 0, wd = 0, buyNet = 0, sellNet = 0, div = 0, realised = 0, mv = 0, mvKnown = true;
+  for (const cf of db.cashflows) if (matchFilter(cf.clientId)) { if (cf.type === "deposit") dep += cf.amount; else wd += cf.amount; }
+  for (const t of db.transactions) if (matchFilter(t.clientId)) { const n = netAmount(t); if (t.type === "buy") buyNet += n; else sellNet += n; }
+  for (const dv of db.dividends) if (matchFilter(dv.clientId)) div += dv.total;
+  for (const p of Object.values(pos)) if (matchFilter(p.clientId)) { realised += p.realized; if (p.qty > 0) { const pr = db.prices[p.ticker]; if (pr) mv += pr.price * p.qty; else mvKnown = false; } }
+  const cash = dep - wd - buyNet + sellNet + div;
+  const equity = cash + mv;
+  const netDep = dep - wd;
+  const trueP = equity - netDep;
+  document.getElementById("cf-dep").textContent = fmt(dep);
+  document.getElementById("cf-wd").textContent = fmt(wd);
+  setPnlCard("cf-realised", realised);
+  document.getElementById("cf-div").textContent = fmt(div);
+  document.getElementById("cf-cash").textContent = fmt(cash);
+  document.getElementById("cf-mv").textContent = mvKnown ? fmt(mv) : fmt(mv) + " ⚠";
+  document.getElementById("cf-equity").textContent = (mvKnown ? "" : "≈ ") + fmt(equity);
+  setPnlCard("cf-true", trueP);
+  if (!mvKnown) document.getElementById("cf-true").textContent = "≈ " + document.getElementById("cf-true").textContent;
+
+  // 账本：只有选单一顾客才显示流水（全部顾客时混在一起没意义）
+  const f = document.getElementById("clientFilter").value;
+  const body = document.getElementById("cf-body");
+  const hint = document.getElementById("cf-ledger-hint");
+  if (f === "all") {
+    hint.textContent = "（在上方「查看顾客」选一个顾客，看他的明细账本）";
+    body.innerHTML = `<tr><td class="empty" colspan="6">选一个顾客查看流水账</td></tr>`;
+    return;
+  }
+  hint.textContent = "";
+  const ev = [];
+  for (const cf of db.cashflows) if (cf.clientId === f)
+    ev.push({ date: cf.date, k: cf.type === "deposit" ? 0 : 5, label: (cf.type === "deposit" ? "入金 Deposit" : "出金 Withdraw") + (cf.note ? ` · ${cf.note}` : ""), in: cf.type === "deposit" ? cf.amount : 0, out: cf.type === "withdraw" ? cf.amount : 0, del: cf.id });
+  for (const t of db.transactions) if (t.clientId === f) {
+    const n = netAmount(t);
+    if (t.type === "buy") ev.push({ date: t.date, k: 1, label: `买入 ${t.ticker} ${t.qty.toLocaleString()}`, in: 0, out: n });
+    else { const r = realizedByTx[t.id]; ev.push({ date: t.date, k: 2, label: `卖出 ${t.ticker} ${t.qty.toLocaleString()}` + (r !== undefined ? `（已实现 ${pnlFmt(r)}）` : ""), in: n, out: 0 }); }
+  }
+  for (const dv of db.dividends) if (dv.clientId === f)
+    ev.push({ date: dv.date, k: 3, label: `股息 ${dv.ticker}`, in: dv.total, out: 0 });
+  ev.sort((a, b) => a.date.localeCompare(b.date) || a.k - b.k);
+  body.innerHTML = ev.length ? "" : `<tr><td class="empty" colspan="6">这个顾客还没有任何记录</td></tr>`;
+  let bal = 0;
+  for (const e of ev) {
+    bal += (e.in || 0) - (e.out || 0);
+    body.innerHTML += `<tr>
+      <td>${e.date}</td><td>${e.label}</td>
+      <td class="num pos">${e.in ? fmtN(e.in) : ""}</td>
+      <td class="num neg">${e.out ? fmtN(e.out) : ""}</td>
+      <td class="num"><b>${fmtN(bal)}</b></td>
+      <td>${e.del ? `<button class="action danger small" onclick="delCashflow('${e.del}')">删除</button>` : ""}</td></tr>`;
+  }
+}
+
 // ---------- Export / Import ----------
 function download(filename, text, type) {
   const a = document.createElement("a");
@@ -1254,7 +1368,7 @@ function importJSON(ev) {
 function clearAll() {
   if (!confirm("⚠️ 确定清空全部数据（包括所有顾客和交易）？此操作不可恢复！建议先导出 JSON 备份。")) return;
   if (!confirm("再确认一次：真的要删除所有记录？")) return;
-  db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], prices: {}, symbols: {}, exdiv: null, ipo: null };
+  db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null, ipo: null };
   save();
 }
 
@@ -1269,6 +1383,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 });
 document.getElementById("t-date").value = today();
 document.getElementById("v-date").value = today();
+document.getElementById("cf-date").value = today();
 renderAll();
 autoRefreshExDiv();
 autoRefreshIPO();
