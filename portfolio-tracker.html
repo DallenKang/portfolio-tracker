@@ -259,7 +259,8 @@
       <div class="field"><label>顾客 Client</label><select id="t-client" onchange="autoFees()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
       <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
-      <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase"><datalist id="tickerList"></datalist></div>
+      <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()"><datalist id="tickerList"></datalist></div>
+      <div class="field"><label>Bursa 代码 Code</label><input type="text" id="t-code" placeholder="如 9407" style="text-transform:uppercase"></div>
       <div class="field"><label>股数 Qty</label><input type="number" step="any" id="t-qty" placeholder="100" oninput="autoFees()"></div>
       <div class="field"><label>价格 Price</label><input type="number" step="any" id="t-price" placeholder="0.0000" oninput="autoFees()"></div>
     </div>
@@ -994,6 +995,7 @@ function addTransaction() {
   const clientId = document.getElementById("t-client").value;
   const date = document.getElementById("t-date").value;
   const ticker = document.getElementById("t-ticker").value.trim().toUpperCase();
+  const code = document.getElementById("t-code").value.trim().toUpperCase();
   const type = document.getElementById("t-type").value;
   const qty = parseFloat(document.getElementById("t-qty").value);
   const price = parseFloat(document.getElementById("t-price").value);
@@ -1008,10 +1010,17 @@ function addTransaction() {
     const have = p ? p.qty : 0;
     if (qty > have + 1e-9) { alert(`这个顾客的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return; }
   }
+  if (code) db.symbols[ticker] = normalizeSymbol(code); // 存代码给抓价用
   db.transactions.push({ id: uid(), clientId, date, ticker, type, qty, price, brokerage, stamp, clearing });
-  ["t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
+  ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("t-preview").textContent = "已添加 ✓";
   save();
+}
+// 打名字时，若该股已有代码，自动带出
+function prefillCode() {
+  const tk = document.getElementById("t-ticker").value.trim().toUpperCase();
+  const el = document.getElementById("t-code");
+  if (tk && db.symbols[tk] && !el.value) el.value = db.symbols[tk].replace(/\.KL$/, "");
 }
 function delTx(id) {
   if (!confirm("确定删除这笔交易？")) return;
