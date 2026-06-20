@@ -28,6 +28,16 @@ function canonHouse(s) {
   return s;
 }
 
+// Yahoo 抓不到时的后备：从 KLSE Screener 个股页抓现价（用数字代码）
+async function klseQuote(code) {
+  const html = await (await fetch("https://www.klsescreener.com/v2/stocks/view/" + encodeURIComponent(code),
+    { headers: { "User-Agent": UA } })).text();
+  const m = html.match(/id="price-fixed"[^>]*data-value="([\d.]+)"/i);
+  if (!m) return null;
+  const nm = html.match(/<title>\s*([^:<]+?)\s*:/i);
+  return { price: parseFloat(m[1]), name: nm ? nm[1].trim() : undefined, source: "klse" };
+}
+
 // 从 KLSE Screener IPO 页建「短名 -> 数字代码」对照表（如 SUM -> 0459）
 function parseKlseCodes(html) {
   const map = {};
@@ -153,17 +163,28 @@ export default {
         await Promise.all(symbols.map(async raw => {
           const s = raw.trim().toUpperCase();
           if (!s) return;
+          // 1) 先试 Yahoo
           try {
             const r = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(s),
               { headers: { "User-Agent": UA } });
             const meta = (await r.json()).chart.result[0].meta;
-            out[s] = {
-              price: meta.regularMarketPrice,
-              prevClose: meta.chartPreviousClose,
-              name: meta.longName || meta.shortName,
-              time: meta.regularMarketTime,
-            };
-          } catch (e) { out[s] = { error: String(e) }; }
+            if (meta && meta.regularMarketPrice > 0) {
+              out[s] = {
+                price: meta.regularMarketPrice,
+                prevClose: meta.chartPreviousClose,
+                name: meta.longName || meta.shortName,
+                time: meta.regularMarketTime,
+                source: "yahoo",
+              };
+              return;
+            }
+          } catch (e) {}
+          // 2) Yahoo 没有 -> 自动转 KLSE Screener（窝轮/新股等）
+          try {
+            const q = await klseQuote(s.replace(/\.KL$/i, ""));
+            if (q && q.price > 0) { out[s] = q; return; }
+          } catch (e) {}
+          out[s] = { error: "no price from Yahoo or KLSE" };
         }));
         return json(out);
       }

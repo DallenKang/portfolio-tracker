@@ -42,6 +42,16 @@ def canon_house(s):
     return s
 
 
+def klse_quote(code):
+    # Yahoo 抓不到时的后备：从 KLSE Screener 个股页抓现价（用数字代码）
+    html = http_get("https://www.klsescreener.com/v2/stocks/view/" + urllib.parse.quote(code), timeout=20)
+    m = re.search(r'id="price-fixed"[^>]*data-value="([\d.]+)"', html, re.I)
+    if not m:
+        return None
+    nm = re.search(r"<title>\s*([^:<]+?)\s*:", html, re.I)
+    return {"price": float(m.group(1)), "name": nm.group(1).strip() if nm else None, "source": "klse"}
+
+
 def parse_klse_codes(page):
     # 从 KLSE Screener IPO 页建「短名 -> 数字代码」对照表（如 SUM -> 0459）
     out = {}
@@ -179,17 +189,31 @@ class Handler(SimpleHTTPRequestHandler):
             s = s.strip().upper()
             if not s:
                 continue
+            # 1) 先试 Yahoo
             try:
                 url = "https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(s)
                 meta = json.loads(http_get(url, timeout=20))["chart"]["result"][0]["meta"]
-                out[s] = {
-                    "price": meta.get("regularMarketPrice"),
-                    "prevClose": meta.get("chartPreviousClose"),
-                    "name": meta.get("longName") or meta.get("shortName"),
-                    "time": meta.get("regularMarketTime"),
-                }
-            except Exception as e:
-                out[s] = {"error": str(e)}
+                price = meta.get("regularMarketPrice")
+                if price and price > 0:
+                    out[s] = {
+                        "price": price,
+                        "prevClose": meta.get("chartPreviousClose"),
+                        "name": meta.get("longName") or meta.get("shortName"),
+                        "time": meta.get("regularMarketTime"),
+                        "source": "yahoo",
+                    }
+                    continue
+            except Exception:
+                pass
+            # 2) Yahoo 没有 -> 自动转 KLSE Screener
+            try:
+                q = klse_quote(s.replace(".KL", "").replace(".kl", ""))
+                if q:
+                    out[s] = q
+                    continue
+            except Exception:
+                pass
+            out[s] = {"error": "no price from Yahoo or KLSE"}
         self.send_json(out)
 
     def handle_exdividends(self):
