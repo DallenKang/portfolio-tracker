@@ -69,8 +69,18 @@ function targetFromBody(t) {
   }
   return "";
 }
-// 抓某只股「所有」研究行目标价：扫个股新闻列表 -> 对提到研究行/目标价的文章点进正文 -> 抽价（best-effort）
-async function collectTargets(stockCode) {
+// 从新闻标题抓超额认购倍数（iSaham 字段更新慢/不更新，新闻先有），优先精确小数
+function oversubFromNews(list) {
+  const titles = stripTags((list.match(/<h2 class="figcaption"><a[^>]*>([^<]+)<\/a>/gi) || []).join(" || "));
+  for (const p of [/oversubscribed\s*(?:by\s*)?(\d+\.\d+)\s*times/i, /超额认购\s*(\d+\.\d+)\s*倍/,
+                   /oversubscribed\s*(?:by\s*)?(\d+)\s*times/i, /超额认购\s*(?:近|逾|约)?\s*(\d+)\s*倍/]) {
+    const m = titles.match(p);
+    if (m) return m[1] + "x";
+  }
+  return "";
+}
+// 抓某只股的新闻：所有研究行目标价（点进正文）+ 超额认购倍数（从标题）。best-effort
+async function collectNews(stockCode) {
   // 抓 2 页新闻：IPO 上市当天大量新闻会把几天前的研报挤到第 2 页
   const ua = { headers: { "User-Agent": UA } };
   const list = (await fetch(KLSE_NEWS_URL + stockCode, ua).then(r => r.text()))
@@ -95,7 +105,7 @@ async function collectTargets(stockCode) {
     seen.add(key);
     out.push({ price, source, headline: stripTags(m[2]), url: "https://www.klsescreener.com" + m[1] });
   }
-  return out;
+  return { targets: out, oversub: oversubFromNews(list) };
 }
 
 // 把 HTML 实体还原成普通文字（M &amp; A -> M & A，O&#039;G -> O'G）
@@ -226,8 +236,9 @@ export default {
           await Promise.all(rows.map(async r => {
             if (!r.stockCode) return;
             try {
-              const t = await collectTargets(r.stockCode);
-              if (t.length) r.targets = t; // [{price, source, headline, url}, ...]
+              const n = await collectNews(r.stockCode);
+              if (n.targets.length) r.targets = n.targets;     // [{price, source, headline, url}, ...]
+              if (!r.oversub && n.oversub) r.oversub = n.oversub; // iSaham 字段空时用新闻的真实倍数
             } catch (e) { /* 没有就留空 */ }
           }));
           return json({ source: IPO_URL, rows });

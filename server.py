@@ -81,8 +81,19 @@ def target_from_body(t):
     return ""
 
 
-def collect_targets(stock_code):
-    # 抓某只股「所有」研究行目标价：扫个股新闻列表 -> 对提到研究行/目标价的文章点进正文 -> 抽价
+def oversub_from_news(page):
+    # 从新闻标题抓超额认购倍数（iSaham 字段更新慢/不更新，新闻先有），优先精确小数
+    titles = squash(strip_tags(" || ".join(re.findall(r'<h2 class="figcaption"><a[^>]*>([^<]+)</a>', page))))
+    for p in (r"oversubscribed\s*(?:by\s*)?(\d+\.\d+)\s*times", r"超额认购\s*(\d+\.\d+)\s*倍",
+              r"oversubscribed\s*(?:by\s*)?(\d+)\s*times", r"超额认购\s*(?:近|逾|约)?\s*(\d+)\s*倍"):
+        m = re.search(p, titles, re.I)
+        if m:
+            return m.group(1) + "x"
+    return ""
+
+
+def collect_news(stock_code):
+    # 抓某只股的新闻：所有研究行目标价（点进正文）+ 超额认购倍数（从标题）。best-effort
     # 抓 2 页：IPO 上市当天大量新闻会把几天前的研报挤到第 2 页
     page = http_get(KLSE_NEWS_URL + stock_code)
     try:
@@ -113,7 +124,7 @@ def collect_targets(stock_code):
         out.append({"price": price, "source": source,
                     "headline": squash(strip_tags(m.group(2))),
                     "url": "https://www.klsescreener.com" + m.group(1)})
-    return out
+    return {"targets": out, "oversub": oversub_from_news(page)}
 
 
 def strip_tags(s):
@@ -253,11 +264,13 @@ class Handler(SimpleHTTPRequestHandler):
                 codes = {}
             for r in rows:
                 r["stockCode"] = codes.get(r["code"].upper(), "")
-                if r["stockCode"]:  # 逐篇研报正文抓研究行目标价（best-effort）
+                if r["stockCode"]:  # 从新闻抓目标价 + 超额认购（best-effort）
                     try:
-                        t = collect_targets(r["stockCode"])
-                        if t:
-                            r["targets"] = t  # [{price, source, headline, url}, ...]
+                        n = collect_news(r["stockCode"])
+                        if n["targets"]:
+                            r["targets"] = n["targets"]  # [{price, source, headline, url}, ...]
+                        if not r.get("oversub") and n["oversub"]:
+                            r["oversub"] = n["oversub"]  # iSaham 字段空时用新闻的真实倍数
                     except Exception:
                         pass
             self.send_json({"source": IPO_URL, "rows": rows})
