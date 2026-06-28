@@ -93,6 +93,12 @@ def oversub_from_news(page):
     return nums[0] + "x"
 
 
+def fmt_oversub(s):
+    # 超额认购统一成两位小数：7.8x -> 7.80x，26.92x -> 26.92x，空的保持空
+    m = re.search(r"(\d+(?:\.\d+)?)", s or "")
+    return "%.2fx" % float(m.group(1)) if m else ""
+
+
 def collect_news(stock_code):
     # 抓某只股的新闻：所有研究行目标价（点进正文）+ 超额认购倍数（从标题）。best-effort
     # 抓 2 页：IPO 上市当天大量新闻会把几天前的研报挤到第 2 页
@@ -274,6 +280,8 @@ class Handler(SimpleHTTPRequestHandler):
                             r["oversub"] = n["oversub"]  # iSaham 字段空时用新闻的真实倍数
                     except Exception:
                         pass
+                if r.get("oversub"):
+                    r["oversub"] = fmt_oversub(r["oversub"])  # 统一两位小数
             self.send_json({"source": IPO_URL, "rows": rows})
         except Exception as e:
             self.send_json({"error": str(e)}, status=502)

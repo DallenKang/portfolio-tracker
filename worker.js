@@ -83,6 +83,11 @@ function oversubFromNews(list) {
   nums.sort((a, b) => ((b.split(".")[1] || "").length) - ((a.split(".")[1] || "").length));
   return nums[0] + "x";
 }
+// 超额认购统一成两位小数：7.8x -> 7.80x，26.92x -> 26.92x，空的保持空
+function fmtOversub(s) {
+  const m = (s || "").match(/(\d+(?:\.\d+)?)/);
+  return m ? (+m[1]).toFixed(2) + "x" : "";
+}
 // 抓某只股的新闻：所有研究行目标价（点进正文）+ 超额认购倍数（从标题）。best-effort
 async function collectNews(stockCode) {
   // 抓 2 页新闻：IPO 上市当天大量新闻会把几天前的研报挤到第 2 页
@@ -245,6 +250,7 @@ export default {
               if (!r.oversub && n.oversub) r.oversub = n.oversub; // iSaham 字段空时用新闻的真实倍数
             } catch (e) { /* 没有就留空 */ }
           }));
+          for (const r of rows) if (r.oversub) r.oversub = fmtOversub(r.oversub); // 统一两位小数
           return json({ source: IPO_URL, rows });
         } catch (e) {
           return json({ error: String(e) }, 502);
