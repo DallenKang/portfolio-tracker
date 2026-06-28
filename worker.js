@@ -69,15 +69,19 @@ function targetFromBody(t) {
   }
   return "";
 }
-// 从新闻标题抓超额认购倍数（iSaham 字段更新慢/不更新，新闻先有），优先精确小数
+// 从新闻标题抓超额认购倍数（iSaham 字段更新慢/不更新，新闻先有）
+// 同一只股不同标题可能写 7.77 或圆整的 7.8 —— 取「小数位最多」那个（最精确）
 function oversubFromNews(list) {
   const titles = stripTags((list.match(/<h2 class="figcaption"><a[^>]*>([^<]+)<\/a>/gi) || []).join(" || "));
-  for (const p of [/oversubscribed\s*(?:by\s*)?(\d+\.\d+)\s*times/i, /超额认购\s*(\d+\.\d+)\s*倍/,
-                   /oversubscribed\s*(?:by\s*)?(\d+)\s*times/i, /超额认购\s*(?:近|逾|约)?\s*(\d+)\s*倍/]) {
-    const m = titles.match(p);
-    if (m) return m[1] + "x";
-  }
-  return "";
+  const nums = [];
+  let m;
+  const re1 = /(?:oversubscribed\s*(?:by\s*)?|超额认购\s*(?:近|逾|约)?\s*)(\d+(?:\.\d+)?)\s*(?:times|倍)/gi;
+  while ((m = re1.exec(titles)) !== null) nums.push(m[1]);
+  const re2 = /(\d+(?:\.\d+)?)\s*(?:times|倍)\s*(?:的)?(?:oversubscrib\w*|超额认购|超购)/gi;
+  while ((m = re2.exec(titles)) !== null) nums.push(m[1]);
+  if (!nums.length) return "";
+  nums.sort((a, b) => ((b.split(".")[1] || "").length) - ((a.split(".")[1] || "").length));
+  return nums[0] + "x";
 }
 // 抓某只股的新闻：所有研究行目标价（点进正文）+ 超额认购倍数（从标题）。best-effort
 async function collectNews(stockCode) {

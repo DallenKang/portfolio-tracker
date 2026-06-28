@@ -82,14 +82,15 @@ def target_from_body(t):
 
 
 def oversub_from_news(page):
-    # 从新闻标题抓超额认购倍数（iSaham 字段更新慢/不更新，新闻先有），优先精确小数
+    # 从新闻标题抓超额认购倍数（iSaham 字段更新慢/不更新，新闻先有）
+    # 同一只股不同标题可能写 7.77 或圆整的 7.8 —— 取「小数位最多」那个（最精确）
     titles = squash(strip_tags(" || ".join(re.findall(r'<h2 class="figcaption"><a[^>]*>([^<]+)</a>', page))))
-    for p in (r"oversubscribed\s*(?:by\s*)?(\d+\.\d+)\s*times", r"超额认购\s*(\d+\.\d+)\s*倍",
-              r"oversubscribed\s*(?:by\s*)?(\d+)\s*times", r"超额认购\s*(?:近|逾|约)?\s*(\d+)\s*倍"):
-        m = re.search(p, titles, re.I)
-        if m:
-            return m.group(1) + "x"
-    return ""
+    nums = re.findall(r"(?:oversubscribed\s*(?:by\s*)?|超额认购\s*(?:近|逾|约)?\s*)(\d+(?:\.\d+)?)\s*(?:times|倍)", titles, re.I)
+    nums += re.findall(r"(\d+(?:\.\d+)?)\s*(?:times|倍)\s*(?:的)?(?:oversubscrib\w*|超额认购|超购)", titles, re.I)
+    if not nums:
+        return ""
+    nums.sort(key=lambda n: len(n.split(".")[1]) if "." in n else 0, reverse=True)
+    return nums[0] + "x"
 
 
 def collect_news(stock_code):
