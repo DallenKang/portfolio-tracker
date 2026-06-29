@@ -315,7 +315,7 @@
       <div class="field"><label>顾客 Client</label><select id="cf-client"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="cf-date"></div>
       <div class="field"><label>类型 Type</label><select id="cf-type"><option value="deposit">入金 Deposit</option><option value="withdraw">出金 Withdraw</option></select></div>
-      <div class="field"><label>金额 Amount (RM)</label><input type="number" step="any" id="cf-amount" placeholder="0.00"></div>
+      <div class="field"><label>金额 Amount (RM)</label><input type="text" inputmode="decimal" id="cf-amount" placeholder="1,000.00" oninput="fmtMoney(this)"></div>
       <div class="field" style="flex:1;min-width:160px"><label>备注 Note（可空）</label><input type="text" id="cf-note" placeholder="如 现金 / 支票"></div>
       <button class="action success" onclick="addCashflow()">记录</button>
     </div>
@@ -1033,6 +1033,21 @@ function fmtQty(el) {
   while (pos < out.length && n < digitsBefore) { if (out[pos] >= "0" && out[pos] <= "9") n++; pos++; }
   el.setSelectionRange(pos, pos);
 }
+// 金额输入加千分位、保留小数（1000.5 -> 1,000.5），并保持光标
+function fmtMoney(el) {
+  let v = el.value.replace(/[^\d.]/g, "");
+  const dot = v.indexOf(".");
+  if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, ""); // 只留第一个小数点
+  if (v === "") { el.value = ""; return; }
+  const keptBefore = el.value.slice(0, el.selectionStart).replace(/[^\d.]/g, "").length;
+  const parts = v.split(".");
+  const intFmt = parts[0] ? Number(parts[0]).toLocaleString("en-US") : (parts.length > 1 ? "0" : "");
+  const out = parts.length > 1 ? intFmt + "." + parts[1] : intFmt;
+  el.value = out;
+  let pos = 0, n = 0;
+  while (pos < out.length && n < keptBefore) { if (/[\d.]/.test(out[pos])) n++; pos++; }
+  el.setSelectionRange(pos, pos);
+}
 function delTx(id) {
   if (!confirm("确定删除这笔交易？")) return;
   db.transactions = db.transactions.filter(t => t.id !== id);
@@ -1270,7 +1285,7 @@ function addCashflow() {
   const clientId = document.getElementById("cf-client").value;
   const date = document.getElementById("cf-date").value;
   const type = document.getElementById("cf-type").value;
-  const amount = parseFloat(document.getElementById("cf-amount").value);
+  const amount = parseFloat(document.getElementById("cf-amount").value.replace(/,/g, ""));
   const note = document.getElementById("cf-note").value.trim();
   if (!clientId || !date || !(amount > 0)) { alert("请填顾客、日期，金额要大于 0"); return; }
   db.cashflows.push({ id: uid(), clientId, date, type, amount, note });
