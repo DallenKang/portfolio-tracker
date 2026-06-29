@@ -261,7 +261,7 @@
       <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
       <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()"><datalist id="tickerList"></datalist></div>
       <div class="field"><label>Bursa 代码 Code</label><input type="text" id="t-code" placeholder="如 9407" style="text-transform:uppercase"></div>
-      <div class="field"><label>股数 Qty</label><input type="number" step="any" id="t-qty" placeholder="100" oninput="autoFees()"></div>
+      <div class="field"><label>股数 Qty</label><input type="text" inputmode="numeric" id="t-qty" placeholder="1,000" oninput="fmtQty(this); autoFees()"></div>
       <div class="field"><label>价格 Price</label><input type="number" step="any" id="t-price" placeholder="0.0000" oninput="autoFees()"></div>
     </div>
     <div class="form-row" style="margin-top:10px">
@@ -957,7 +957,7 @@ function saveSettings() {
 // ---------- Transactions ----------
 function autoFees() {
   const c = clientById(document.getElementById("t-client").value);
-  const qty = parseFloat(document.getElementById("t-qty").value);
+  const qty = parseFloat(document.getElementById("t-qty").value.replace(/,/g, ""));
   const price = parseFloat(document.getElementById("t-price").value);
   const preview = document.getElementById("t-preview");
   if (!c || !(qty > 0) || !(price > 0)) { preview.textContent = "输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。"; return; }
@@ -969,7 +969,7 @@ function autoFees() {
   updatePreview();
 }
 function updatePreview() {
-  const qty = parseFloat(document.getElementById("t-qty").value) || 0;
+  const qty = parseFloat(document.getElementById("t-qty").value.replace(/,/g, "")) || 0;
   const price = parseFloat(document.getElementById("t-price").value) || 0;
   const type = document.getElementById("t-type").value;
   const t = {
@@ -997,7 +997,7 @@ function addTransaction() {
   const ticker = document.getElementById("t-ticker").value.trim().toUpperCase();
   const code = document.getElementById("t-code").value.trim().toUpperCase();
   const type = document.getElementById("t-type").value;
-  const qty = parseFloat(document.getElementById("t-qty").value);
+  const qty = parseFloat(document.getElementById("t-qty").value.replace(/,/g, ""));
   const price = parseFloat(document.getElementById("t-price").value);
   const brokerage = parseFloat(document.getElementById("t-brokerage").value) || 0;
   const stamp = parseFloat(document.getElementById("t-stamp").value) || 0;
@@ -1021,6 +1021,17 @@ function prefillCode() {
   const tk = document.getElementById("t-ticker").value.trim().toUpperCase();
   const el = document.getElementById("t-code");
   if (tk && db.symbols[tk] && !el.value) el.value = db.symbols[tk].replace(/\.KL$/, "");
+}
+// 股数输入加千分位（1000 -> 1,000），并保持光标位置
+function fmtQty(el) {
+  const raw = el.value.replace(/[^\d]/g, "");
+  if (!raw) { el.value = ""; return; }
+  const digitsBefore = el.value.slice(0, el.selectionStart).replace(/[^\d]/g, "").length;
+  const out = Number(raw).toLocaleString("en-US");
+  el.value = out;
+  let pos = 0, n = 0;
+  while (pos < out.length && n < digitsBefore) { if (out[pos] >= "0" && out[pos] <= "9") n++; pos++; }
+  el.setSelectionRange(pos, pos);
 }
 function delTx(id) {
   if (!confirm("确定删除这笔交易？")) return;
