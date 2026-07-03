@@ -144,7 +144,7 @@
 
 <div class="filter-bar">
   <label>查看顾客 Filter:</label>
-  <select id="clientFilter" onchange="renderAll()"><option value="all">全部顾客 All Clients</option></select>
+  <select id="clientFilter" onchange="filterChanged()"><option value="all">全部顾客 All Clients</option></select>
 </div>
 
 <!-- ============ DASHBOARD ============ -->
@@ -260,7 +260,7 @@
   <div class="form-card">
     <h3>添加交易 Add Transaction</h3>
     <div class="form-row">
-      <div class="field"><label>顾客 Client</label><select id="t-client" onchange="autoFees()"></select></div>
+      <div class="field"><label>顾客 Client</label><select id="t-client" onchange="autoFees(); clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
       <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
       <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()"><datalist id="tickerList"></datalist></div>
@@ -309,7 +309,7 @@
   <div class="form-card">
     <h3>记录股息 Record Dividend</h3>
     <div class="form-row">
-      <div class="field"><label>顾客 Client</label><select id="v-client" onchange="fillDivTickers()"></select></div>
+      <div class="field"><label>顾客 Client</label><select id="v-client" onchange="fillDivTickers(); clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="v-date"></div>
       <div class="field"><label>股票 Counter</label><select id="v-ticker" onchange="prefillDivQty()"></select></div>
       <div class="field"><label>每股股息 DPS</label><input type="number" step="any" id="v-dps" placeholder="0.00" oninput="calcDivTotal()"></div>
@@ -332,7 +332,7 @@
   <div class="form-card">
     <h3>记录出入金 Deposit / Withdraw</h3>
     <div class="form-row">
-      <div class="field"><label>顾客 Client</label><select id="cf-client"></select></div>
+      <div class="field"><label>顾客 Client</label><select id="cf-client" onchange="clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="cf-date"></div>
       <div class="field"><label>类型 Type</label><select id="cf-type"><option value="deposit">入金 Deposit</option><option value="withdraw">出金 Withdraw</option></select></div>
       <div class="field"><label>金额 Amount (RM)</label><input type="text" inputmode="decimal" id="cf-amount" placeholder="1,000.00" oninput="fmtMoney(this)"></div>
@@ -731,6 +731,26 @@ function matchFilter(clientId) {
   return f === "all" || f === clientId;
 }
 
+// 「查看顾客」换人时，交易/股息/Cashflow 表单的顾客自动跟着换（选 All 则不动）
+function filterChanged() {
+  const f = document.getElementById("clientFilter").value;
+  if (f !== "all") {
+    for (const id of ["t-client", "v-client", "cf-client"]) document.getElementById(id).value = f;
+  }
+  renderAll();
+  autoFees(); // 顾客换了，rate 不同，重算表单里的费用
+}
+// 表单顾客跟上方「查看顾客」不同 -> 金色边框提醒（避免入错人）
+function clientMismatchCheck() {
+  const f = document.getElementById("clientFilter").value;
+  for (const id of ["t-client", "v-client", "cf-client"]) {
+    const el = document.getElementById(id);
+    const mismatch = f !== "all" && el.value && el.value !== f;
+    el.style.borderColor = mismatch ? "var(--gold)" : "";
+    el.title = mismatch ? "⚠ 跟上面「查看顾客」选的不是同一个人，小心入错账" : "";
+  }
+}
+
 function renderAll() {
   const { pos, realizedByTx, intradayTx } = computePortfolio();
   const filterSel = document.getElementById("clientFilter");
@@ -749,6 +769,7 @@ function renderAll() {
   if ([...tSel.options].some(o => o.value === tPrev)) tSel.value = tPrev;
   if ([...vSel.options].some(o => o.value === vPrev)) vSel.value = vPrev;
   if ([...cfSel.options].some(o => o.value === cfPrev)) cfSel.value = cfPrev;
+  clientMismatchCheck();
 
   // 顾客表
   const txCount = {};
