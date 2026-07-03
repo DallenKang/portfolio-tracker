@@ -83,6 +83,10 @@
   .badge.buy { background: rgba(46,204,113,0.15); color: var(--green); }
   .badge.sell { background: rgba(231,76,60,0.15); color: var(--red); }
 
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--text); }
+  th.sortable .arrow { color: var(--blue); font-size: 11px; }
+
   tr.client-header td {
     background: var(--card2); font-weight: 600; font-size: 14px; color: var(--text);
     border-top: 2px solid var(--border);
@@ -279,10 +283,21 @@
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr>
-        <th>日期</th><th>顾客</th><th>股票</th><th>类型</th><th class="num">股数</th><th class="num">累计持仓</th><th class="num">价格</th>
-        <th class="num">Gross</th><th class="num">Brokerage</th><th class="num">Stamp</th><th class="num">Clearing</th>
-        <th class="num">Net Amount</th><th class="num">P/(L)</th><th></th>
+      <thead><tr id="t-head">
+        <th class="sortable" data-key="date" data-label="日期" onclick="setTxSort('date')">日期</th>
+        <th class="sortable" data-key="client" data-label="顾客" onclick="setTxSort('client')">顾客</th>
+        <th class="sortable" data-key="ticker" data-label="股票" onclick="setTxSort('ticker')">股票</th>
+        <th class="sortable" data-key="type" data-label="类型" onclick="setTxSort('type')">类型</th>
+        <th class="num sortable" data-key="qty" data-label="股数" onclick="setTxSort('qty')">股数</th>
+        <th class="num sortable" data-key="run" data-label="累计持仓" onclick="setTxSort('run')">累计持仓</th>
+        <th class="num sortable" data-key="price" data-label="价格" onclick="setTxSort('price')">价格</th>
+        <th class="num sortable" data-key="gross" data-label="Gross" onclick="setTxSort('gross')">Gross</th>
+        <th class="num sortable" data-key="brokerage" data-label="Brokerage" onclick="setTxSort('brokerage')">Brokerage</th>
+        <th class="num sortable" data-key="stamp" data-label="Stamp" onclick="setTxSort('stamp')">Stamp</th>
+        <th class="num sortable" data-key="clearing" data-label="Clearing" onclick="setTxSort('clearing')">Clearing</th>
+        <th class="num sortable" data-key="net" data-label="Net Amount" onclick="setTxSort('net')">Net Amount</th>
+        <th class="num sortable" data-key="pl" data-label="P/(L)" onclick="setTxSort('pl')">P/(L)</th>
+        <th></th>
       </tr></thead>
       <tbody id="t-body"></tbody>
     </table>
@@ -823,10 +838,31 @@ function renderAll() {
       runAfter[t.id] = run[k];
     }
   }
-  // 选单一股票 -> 旧到新（像对账单，顺着看）；全部 -> 新到旧（最新在上）
-  txs.sort(stockF === "all"
-    ? (a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)
-    : (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  // 排序：点了栏目标题就按那栏排；否则默认（单一股票=旧到新，全部=新到旧）
+  const txSortVal = {
+    date: t => t.date, client: t => clientLabel(clientById(t.clientId)), ticker: t => t.ticker,
+    type: t => t.type, qty: t => t.qty, run: t => runAfter[t.id] ?? 0, price: t => t.price,
+    gross: t => t.qty * t.price, brokerage: t => t.brokerage || 0, stamp: t => t.stamp || 0,
+    clearing: t => t.clearing || 0, net: t => netAmount(t),
+    pl: t => (realizedByTx[t.id] !== undefined ? realizedByTx[t.id] : -Infinity),
+  };
+  if (txSort) {
+    const f = txSortVal[txSort.key];
+    txs.sort((a, b) => {
+      const va = f(a), vb = f(b);
+      const c = (typeof va === "string" || typeof vb === "string") ? String(va).localeCompare(String(vb)) : va - vb;
+      return txSort.dir * c || a.date.localeCompare(b.date) || a.id.localeCompare(b.id);
+    });
+  } else {
+    txs.sort(stockF === "all"
+      ? (a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)
+      : (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  }
+  // 栏目标题显示 ▲/▼
+  document.querySelectorAll("#t-head th.sortable").forEach(th => {
+    const active = txSort && txSort.key === th.dataset.key;
+    th.innerHTML = th.dataset.label + (active ? ` <span class="arrow">${txSort.dir === 1 ? "▲" : "▼"}</span>` : "");
+  });
   // 汇总（选单一股票时显示）
   const sumEl = document.getElementById("stock-summary");
   if (stockF === "all") { sumEl.textContent = ""; }
@@ -1090,6 +1126,13 @@ function delTx(id) {
   if (!confirm("确定删除这笔交易？")) return;
   db.transactions = db.transactions.filter(t => t.id !== id);
   save();
+}
+// 点栏目标题排序：第1下升序▲，第2下降序▼，第3下恢复默认
+let txSort = null;
+function setTxSort(key) {
+  if (txSort && txSort.key === key) txSort = txSort.dir === 1 ? { key, dir: -1 } : null;
+  else txSort = { key, dir: 1 };
+  renderAll();
 }
 
 function updatePrice() {
