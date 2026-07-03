@@ -740,13 +740,14 @@ function filterChanged() {
   renderAll();
   autoFees(); // 顾客换了，rate 不同，重算表单里的费用
 }
-// 表单顾客跟上方「查看顾客」不同 -> 金色边框提醒（避免入错人）
+// 表单顾客跟上方「查看顾客」不同 -> 红色警告（避免入错人）
 function clientMismatchCheck() {
   const f = document.getElementById("clientFilter").value;
   for (const id of ["t-client", "v-client", "cf-client"]) {
     const el = document.getElementById(id);
     const mismatch = f !== "all" && el.value && el.value !== f;
-    el.style.borderColor = mismatch ? "var(--gold)" : "";
+    el.style.borderColor = mismatch ? "var(--red)" : "";
+    el.style.background = mismatch ? "rgba(231,76,60,0.45)" : "";
     el.title = mismatch ? "⚠ 跟上面「查看顾客」选的不是同一个人，小心入错账" : "";
   }
 }
