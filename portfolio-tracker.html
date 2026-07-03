@@ -272,10 +272,15 @@
     </div>
     <p class="net-preview" id="t-preview">输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。</p>
   </div>
+  <div class="filter-bar">
+    <label>股票 Filter:</label>
+    <select id="stockFilter" onchange="renderAll()"><option value="all">全部股票 All</option></select>
+    <span class="hint" id="stock-summary" style="margin:0"></span>
+  </div>
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>日期</th><th>顾客</th><th>股票</th><th>类型</th><th class="num">股数</th><th class="num">价格</th>
+        <th>日期</th><th>顾客</th><th>股票</th><th>类型</th><th class="num">股数</th><th class="num">累计持仓</th><th class="num">价格</th>
         <th class="num">Gross</th><th class="num">Brokerage</th><th class="num">Stamp</th><th class="num">Clearing</th>
         <th class="num">Net Amount</th><th class="num">P/(L)</th><th></th>
       </tr></thead>
@@ -798,19 +803,52 @@ function renderAll() {
   renderCashflow(pos, realizedByTx);
 
   // 交易表
+  // 股票筛选下拉（跟随顾客 filter 的范围）
+  const stockSel = document.getElementById("stockFilter");
+  const stockPrev = stockSel.value || "all";
+  const stockList = [...new Set(db.transactions.filter(t => matchFilter(t.clientId)).map(t => t.ticker))].sort();
+  stockSel.innerHTML = `<option value="all">全部股票 All</option>` + stockList.map(t => `<option>${t}</option>`).join("");
+  stockSel.value = [...stockSel.options].some(o => o.value === stockPrev) ? stockPrev : "all";
+  const stockF = stockSel.value;
+
   const tBody = document.getElementById("t-body");
-  const txs = [...db.transactions].filter(t => matchFilter(t.clientId)).sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
-  tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="13">没有交易记录</td></tr>`;
+  const txs = db.transactions.filter(t => matchFilter(t.clientId) && (stockF === "all" || t.ticker === stockF));
+  // 按时间顺序先算「每笔之后的累计持仓」（按 顾客+股票 各自算）
+  const runAfter = {};
+  {
+    const run = {};
+    for (const t of [...txs].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))) {
+      const k = t.clientId + "|" + t.ticker;
+      run[k] = (run[k] || 0) + (t.type === "buy" ? t.qty : -t.qty);
+      runAfter[t.id] = run[k];
+    }
+  }
+  // 选单一股票 -> 旧到新（像对账单，顺着看）；全部 -> 新到旧（最新在上）
+  txs.sort(stockF === "all"
+    ? (a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)
+    : (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  // 汇总（选单一股票时显示）
+  const sumEl = document.getElementById("stock-summary");
+  if (stockF === "all") { sumEl.textContent = ""; }
+  else {
+    let bq = 0, sq = 0;
+    for (const t of txs) t.type === "buy" ? bq += t.qty : sq += t.qty;
+    sumEl.textContent = `${stockF}: 总买 ${bq.toLocaleString()} · 总卖 ${sq.toLocaleString()} · 净持仓 ${(bq - sq).toLocaleString()}`;
+  }
+  tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="14">没有交易记录</td></tr>`;
   let totalBrokerage = 0;
   for (const t of db.transactions) if (matchFilter(t.clientId)) totalBrokerage += t.brokerage || 0;
   for (const t of txs) {
     const c = clientById(t.clientId);
     const gross = t.qty * t.price;
     const r = realizedByTx[t.id];
+    const runQ = runAfter[t.id];
     tBody.innerHTML += `<tr>
       <td>${t.date}</td><td>${clientLabel(c)}</td><td><b>${t.ticker}</b></td>
       <td><span class="badge ${t.type}">${t.type === "buy" ? "买入" : "卖出"}</span>${intradayTx[t.id] ? ` <span class="badge" style="background:rgba(155,89,182,0.18);color:#bb8fce">即日</span>` : ""}</td>
-      <td class="num">${t.qty.toLocaleString()}</td><td class="num">${t.price.toFixed(4)}</td>
+      <td class="num">${t.qty.toLocaleString()}</td>
+      <td class="num">${runQ < 0 ? `<span class="neg">⚠ ${runQ.toLocaleString()}</span>` : runQ.toLocaleString()}</td>
+      <td class="num">${t.price.toFixed(4)}</td>
       <td class="num">${fmtN(gross)}</td><td class="num">${fmtN(t.brokerage || 0)}</td>
       <td class="num">${fmtN(t.stamp || 0)}</td><td class="num">${fmtN(t.clearing || 0)}</td>
       <td class="num"><b>${fmtN(netAmount(t))}</b></td>
