@@ -83,6 +83,18 @@
   .badge.buy { background: rgba(46,204,113,0.15); color: var(--green); }
   .badge.sell { background: rgba(231,76,60,0.15); color: var(--red); }
 
+  /* T-Account 视图 */
+  .tacct-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .tacct-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tacct-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; gap: 8px; }
+  .tacct-badge { font-size: 12px; padding: 2px 10px; border-radius: 10px; white-space: nowrap; }
+  .tacct-cols { display: grid; grid-template-columns: 1fr 1fr; border-top: 2px solid var(--muted); font-size: 12.5px; }
+  .tacct-col { padding: 8px 10px 8px 0; border-right: 2px solid var(--muted); }
+  .tacct-col.right { border-right: none; padding: 8px 0 8px 10px; }
+  .tacct-row { display: flex; justify-content: space-between; padding: 1px 0; gap: 6px; }
+  .tacct-total { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); font-size: 12.5px; font-weight: 600; }
+  .tacct-foot { text-align: center; font-size: 12.5px; color: var(--muted); padding-top: 8px; }
+
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
   th.sortable .arrow { color: var(--blue); font-size: 11px; }
@@ -277,11 +289,14 @@
     <p class="net-preview" id="t-preview">输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。</p>
   </div>
   <div class="filter-bar">
-    <label>股票 Filter:</label>
+    <label>视图:</label>
+    <button class="action small" id="btn-view-journal" onclick="setTxView('journal')">📃 流水</button>
+    <button class="action small ghost" id="btn-view-tacct" onclick="setTxView('taccount')">📒 T-Account</button>
+    <label style="margin-left:10px">股票 Filter:</label>
     <select id="stockFilter" onchange="renderAll()"><option value="all">全部股票 All</option></select>
     <span class="hint" id="stock-summary" style="margin:0"></span>
   </div>
-  <div class="table-wrap">
+  <div class="table-wrap" id="journal-wrap">
     <table>
       <thead><tr id="t-head">
         <th class="sortable" data-key="date" data-label="日期" onclick="setTxSort('date')">日期</th>
@@ -302,6 +317,7 @@
       <tbody id="t-body"></tbody>
     </table>
   </div>
+  <div id="tacct-view" class="tacct-grid" style="display:none"></div>
 </div>
 
 <!-- ============ DIVIDENDS ============ -->
@@ -914,6 +930,13 @@ function renderAll() {
       <td><button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
   }
 
+  // 视图切换：流水 / T-Account
+  document.getElementById("journal-wrap").style.display = txView === "journal" ? "" : "none";
+  document.getElementById("tacct-view").style.display = txView === "taccount" ? "" : "none";
+  document.getElementById("btn-view-journal").className = "action small" + (txView === "journal" ? "" : " ghost");
+  document.getElementById("btn-view-tacct").className = "action small" + (txView === "taccount" ? "" : " ghost");
+  if (txView === "taccount") renderTAccount(pos);
+
   // 股息表
   const vBody = document.getElementById("v-body");
   const dvs = [...db.dividends].filter(d => matchFilter(d.clientId)).sort((a, b) => b.date.localeCompare(a.date));
@@ -1155,6 +1178,67 @@ function setTxSort(key) {
   if (txSort && txSort.key === key) txSort = txSort.dir === 1 ? { key, dir: -1 } : null;
   else txSort = { key, dir: 1 };
   renderAll();
+}
+// 交易页视图：流水 journal（输入/明细）或 T-Account（对账）
+let txView = localStorage.getItem("tx-view") || "journal";
+function setTxView(v) {
+  txView = v;
+  localStorage.setItem("tx-view", v);
+  renderAll();
+}
+// T-Account 视图：每只股一张 T 卡（左买右卖），一眼看漏记/已平仓/还在手
+function renderTAccount(pos) {
+  const wrap = document.getElementById("tacct-view");
+  const stockF = document.getElementById("stockFilter").value;
+  const showClient = document.getElementById("clientFilter").value === "all";
+  const groups = {};
+  for (const t of db.transactions) {
+    if (!matchFilter(t.clientId)) continue;
+    if (stockF !== "all" && t.ticker !== stockF) continue;
+    const k = t.clientId + "|" + t.ticker;
+    (groups[k] = groups[k] || []).push(t);
+  }
+  const keys = Object.keys(groups).sort((a, b) => {
+    const openA = (pos[a] && pos[a].qty > 0) ? 0 : 1;
+    const openB = (pos[b] && pos[b].qty > 0) ? 0 : 1;
+    return openA - openB || a.split("|")[1].localeCompare(b.split("|")[1]);
+  });
+  if (!keys.length) { wrap.innerHTML = `<div class="form-card" style="text-align:center;color:var(--muted)">没有交易记录</div>`; return; }
+  let html = "";
+  for (const k of keys) {
+    const list = groups[k].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+    const p = pos[k] || { qty: 0, cost: 0, realized: 0 };
+    const c = clientById(k.split("|")[0]);
+    const ticker = k.split("|")[1];
+    let bQty = 0, bNet = 0, sQty = 0, sNet = 0, bRows = "", sRows = "";
+    for (const t of list) {
+      const row = `<div class="tacct-row"><span style="color:var(--muted)">${t.date}</span><span>${t.qty.toLocaleString()} @${t.price.toFixed(4)}</span></div>`;
+      if (t.type === "buy") { bQty += t.qty; bNet += netAmount(t); bRows += row; }
+      else { sQty += t.qty; sNet += netAmount(t); sRows += row; }
+    }
+    const open = p.qty > 0;
+    const badge = open
+      ? `<span class="tacct-badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">持仓中 · ${p.qty.toLocaleString()} 股</span>`
+      : (p.realized >= 0
+        ? `<span class="tacct-badge" style="background:rgba(46,204,113,0.15);color:var(--green)">已平仓 · P/L +${fmtN(p.realized)}</span>`
+        : `<span class="tacct-badge" style="background:rgba(231,76,60,0.15);color:var(--red)">已平仓 · P/L (${fmtN(-p.realized)})</span>`);
+    const foot = open
+      ? `结余 ${p.qty.toLocaleString()} 股 · 平均成本 ${(p.cost / p.qty).toFixed(4)}${p.realized ? ` · 已实现 ${pnlFmt(p.realized)}` : ""}`
+      : `结余 0 股 ✓ 平仓`;
+    html += `<div class="tacct-card">
+      <div class="tacct-head"><span style="font-weight:600;font-size:15px"><b>${ticker}</b>${showClient ? ` <span class="hint">${clientLabel(c)}</span>` : ""}</span>${badge}</div>
+      <div class="tacct-cols">
+        <div class="tacct-col"><div style="color:var(--green);font-weight:600;margin-bottom:5px">买入 Buy</div>${bRows || `<div style="color:var(--muted)">—</div>`}</div>
+        <div class="tacct-col right"><div style="color:var(--red);font-weight:600;margin-bottom:5px">卖出 Sell</div>${sRows || `<div style="color:var(--muted)">—</div>`}</div>
+      </div>
+      <div class="tacct-total">
+        <div class="tacct-col" style="padding-top:6px;padding-bottom:2px"><div class="tacct-row"><span style="color:var(--muted)">总买</span><span>${bQty.toLocaleString()}</span></div><div class="tacct-row"><span style="color:var(--muted)">净额</span><span>${fmtN(bNet)}</span></div></div>
+        <div class="tacct-col right" style="padding-top:6px;padding-bottom:2px"><div class="tacct-row"><span style="color:var(--muted)">总卖</span><span>${sQty.toLocaleString()}</span></div><div class="tacct-row"><span style="color:var(--muted)">净额</span><span>${fmtN(sNet)}</span></div></div>
+      </div>
+      <div class="tacct-foot">${foot}</div>
+    </div>`;
+  }
+  wrap.innerHTML = html;
 }
 
 function updatePrice() {
