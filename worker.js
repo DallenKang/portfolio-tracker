@@ -12,14 +12,15 @@ const KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"; // KLSE Screener：
 
 const KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"; // 个股完整新闻列表（找研究行目标价）
 const TARGET_KW = /fair value|target price|\bTP\b|合理价|目标价|公平价值/i; // 目标价关键词（中英）
-const RESEARCH_HOUSES = /PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|TA Research|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Rakuten|Tradeview|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业/i;
+const RESEARCH_HOUSES = /PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|TA Research|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Malacca Securities|Malacca|Rakuten|Tradeview|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业/i;
+const MULTI_STOCK_TITLE = /trading idea|交易灵感|交易点子/i; // 一次讲多只股的文章，跳过以免张冠李戴
 // 同一家研究行的中英文/全简称归一，避免重复（如 大众投资银行 = PublicInvest）
 const HOUSE_ALIASES = [
   ["PublicInvest", "Public Investment Bank", "大众投资银行", "大众投行"],
   ["RHB", "兴业投资银行", "兴业"], ["HLIB", "Hong Leong", "丰隆投资银行", "丰隆"],
   ["Kenanga", "肯纳格"], ["Maybank", "马银行"], ["CGS", "联昌"],
   ["TA", "TA Securities", "TA Research", "达证券"], ["AmInvest", "AmInvestment", "大马投资银行", "大马投行"],
-  ["Rakuten", "乐天"], ["Malacca", "马六甲证券"], ["Affin", "艾芬"], ["Tradeview"],
+  ["Rakuten", "乐天"], ["Malacca", "Malacca Securities", "马六甲证券"], ["Affin", "艾芬"], ["Tradeview"],
 ];
 function canonHouse(s) {
   if (!s) return "";
@@ -99,6 +100,7 @@ async function collectNews(stockCode) {
   const re = /<h2 class="figcaption"><a[^>]*href="(\/v2\/news\/view\/[^"]+)"[^>]*>([^<]+)<\/a>/gi;
   while ((m = re.exec(list)) !== null) {
     if (fetched >= 6) break;
+    if (MULTI_STOCK_TITLE.test(stripTags(m[2]))) continue; // 跳过一次讲多只股的文章
     const chunk = stripTags(list.slice(m.index, m.index + 500)); // 标题 + 摘要，判断要不要点进去
     if (!RESEARCH_HOUSES.test(chunk) && !TARGET_KW.test(chunk)) continue;
     fetched++;
