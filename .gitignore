@@ -10,3 +10,6 @@ portfolio-export-*.csv
 
 # Apps Script 含 Google Sheet 密码，绝对不上传公开 repo
 apps-script.gs
+
+# Claude Code institutional files - keep out of public repo
+CLAUDE.md
