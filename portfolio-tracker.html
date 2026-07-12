@@ -1355,6 +1355,7 @@ async function autoRefreshExDiv() {
 }
 
 // ---------- IPO 上市提醒 ----------
+const IPO_CACHE_V = 2; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后用户看到旧格式）
 async function refreshIPO() {
   const status = document.getElementById("ipo-status");
   status.textContent = "刷新中…（iSaham 有时要等 10-20 秒）";
@@ -1363,7 +1364,7 @@ async function refreshIPO() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
-    db.ipo = { fetchedAt: Date.now(), rows: data.rows };
+    db.ipo = { fetchedAt: Date.now(), rows: data.rows, v: IPO_CACHE_V };
     save();
     renderIPO();
     status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`;
@@ -1416,7 +1417,7 @@ function renderIPO() {
   box.innerHTML = html || `<div class="form-card"><p class="empty">未来没有 ACE / Main 的 IPO（试按刷新）</p></div>`;
 }
 async function autoRefreshIPO() {
-  if (db.ipo && Date.now() - db.ipo.fetchedAt < 12 * 3600 * 1000) {
+  if (db.ipo && db.ipo.v === IPO_CACHE_V && Date.now() - db.ipo.fetchedAt < 12 * 3600 * 1000) {
     document.getElementById("ipo-status").textContent = `上次更新：${new Date(db.ipo.fetchedAt).toLocaleString()}`;
     renderIPO();
     return;
