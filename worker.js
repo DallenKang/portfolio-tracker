@@ -13,7 +13,7 @@ const KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"; // KLSE Screener：
 const KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"; // 个股完整新闻列表（找研究行目标价）
 const TARGET_KW = /fair value|target price|\bTP\b|合理价|目标价|公平价值/i; // 目标价关键词（中英）
 const RESEARCH_HOUSES = /PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|TA Research|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Malacca Securities|Malacca|Rakuten|Tradeview|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业/i;
-const MULTI_STOCK_TITLE = /trading idea|交易灵感|交易点子/i; // 一次讲多只股的文章，跳过以免张冠李戴
+const MULTI_STOCK_TITLE = /trading idea|stocks? (to|on|in) watch|stocks? on radar|market roundup|交易灵感|交易点子|焦点股|每日焦点|热门股/i; // 一次讲多只股的文章，跳过以免张冠李戴
 // 同一家研究行的中英文/全简称归一，避免重复（如 大众投资银行 = PublicInvest）
 const HOUSE_ALIASES = [
   ["PublicInvest", "Public Investment Bank", "大众投资银行", "大众投行"],
