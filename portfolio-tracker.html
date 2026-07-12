@@ -1355,7 +1355,7 @@ async function autoRefreshExDiv() {
 }
 
 // ---------- IPO 上市提醒 ----------
-const IPO_CACHE_V = 2; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后用户看到旧格式）
+const IPO_CACHE_V = 3; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后用户看到旧格式）
 async function refreshIPO() {
   const status = document.getElementById("ipo-status");
   status.textContent = "刷新中…（iSaham 有时要等 10-20 秒）";

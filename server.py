@@ -23,6 +23,7 @@ KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"  # 个股完整新
 TARGET_KW = r"fair value|target price|\bTP\b|合理价|目标价|公平价值"  # 目标价关键词（中英）
 RESEARCH_HOUSES = r"PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|TA Research|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Malacca Securities|Malacca|Rakuten|Tradeview|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业"
 MULTI_STOCK_TITLE = r"trading idea|stocks? (to|on|in) watch|stocks? on radar|market roundup|交易灵感|交易点子|焦点股|每日焦点|热门股"  # 一次讲多只股的文章，跳过以免张冠李戴
+RESEARCHY_TITLE = r"poised|prospects?|outlook|upside|undervalu|initiat|coverage|fair value|target price|合理价|目标价|看好|前景|潜在涨"  # 研报式标题也当候选（投行名字可能藏在文章后段）
 # 同一家研究行的中英文/全简称归一，避免重复（如 大众投资银行 = PublicInvest）
 HOUSE_ALIASES = [
     ["PublicInvest", "Public Investment Bank", "大众投资银行", "大众投行"],
@@ -108,21 +109,36 @@ def collect_news(stock_code):
         page += http_get(KLSE_NEWS_URL + stock_code + "/2")
     except Exception:
         pass
-    out, seen, fetched = [], set(), 0
+    out, seen, fetched, orig_fetched = [], set(), 0, 0
     for m in re.finditer(r'<h2 class="figcaption"><a[^>]*href="(/v2/news/view/[^"]+)"[^>]*>([^<]+)</a>', page):
         if fetched >= 6:
             break
-        if re.search(MULTI_STOCK_TITLE, squash(strip_tags(m.group(2))), re.I):  # 跳过一次讲多只股的文章
+        title = squash(strip_tags(m.group(2)))
+        if re.search(MULTI_STOCK_TITLE, title, re.I):  # 跳过一次讲多只股的文章
             continue
         chunk = squash(strip_tags(page[m.start():m.start() + 500]))  # 标题 + 摘要，判断要不要点进去
-        if not re.search(RESEARCH_HOUSES, chunk, re.I) and not re.search(TARGET_KW, chunk, re.I):
+        if not re.search(RESEARCH_HOUSES, chunk, re.I) and not re.search(TARGET_KW, chunk, re.I) \
+                and not re.search(RESEARCHY_TITLE, title, re.I):
             continue
         fetched += 1
         try:
-            body = squash(strip_tags(http_get("https://www.klsescreener.com" + m.group(1))))
+            raw_art = http_get("https://www.klsescreener.com" + m.group(1))
         except Exception:
             continue
+        body = squash(strip_tags(raw_art))
         price = target_from_body(body)
+        # KLSE Screener 有些文章只是节选（TheStar snapshot），数字被截掉——跟去原文抓（每股最多2次）
+        if not price and orig_fetched < 2 and re.search(RESEARCH_HOUSES, body, re.I):
+            om = re.search(r'href="(https?://www\.thestar\.com\.my[^"]+)"', raw_art, re.I)
+            if om:
+                orig_fetched += 1
+                try:
+                    ot = squash(strip_tags(http_get(om.group(1))))
+                    price = target_from_body(ot)
+                    if price:
+                        body = ot  # 投行名字也从原文认
+                except Exception:
+                    pass
         if not price:
             continue
         hm = re.search(RESEARCH_HOUSES, body, re.I)
