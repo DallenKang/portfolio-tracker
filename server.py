@@ -133,7 +133,7 @@ def collect_news(stock_code):
             if om:
                 orig_fetched += 1
                 try:
-                    ot = squash(strip_tags(http_get(om.group(1))))
+                    ot = squash(strip_tags(http_get(re.sub(r"^http:", "https:", om.group(1)))))
                     price = target_from_body(ot)
                     if price:
                         body = ot  # 投行名字也从原文认

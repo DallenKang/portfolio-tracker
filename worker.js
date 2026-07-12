@@ -3,6 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+const WORKER_VERSION = "v10-thestar-follow"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -117,7 +118,7 @@ async function collectNews(stockCode) {
       if (om) {
         origFetched++;
         try {
-          const ot = stripTags(await fetch(om[1], { headers: { "User-Agent": UA } }).then(r => r.text()));
+          const ot = stripTags(await fetch(om[1].replace(/^http:/, "https:"), { headers: { "User-Agent": UA } }).then(r => r.text()));
           price = targetFromBody(ot);
           if (price) body = ot; // 投行名字也从原文认
         } catch (e) {}
@@ -268,7 +269,7 @@ export default {
             } catch (e) { /* 没有就留空 */ }
           }));
           for (const r of rows) if (r.oversub) r.oversub = fmtOversub(r.oversub); // 统一两位小数
-          return json({ source: IPO_URL, rows });
+          return json({ source: IPO_URL, version: WORKER_VERSION, rows });
         } catch (e) {
           return json({ error: String(e) }, 502);
         }
