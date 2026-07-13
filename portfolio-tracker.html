@@ -245,7 +245,7 @@
     <h3>现价 Prices</h3>
     <div class="form-row">
       <button class="action success" onclick="fetchAllPrices()">🔄 一键抓取 Bursa 闭市价</button>
-      <span class="hint" id="p-status" style="margin:0">需要用 start-tracker.bat 开网页才能自动抓价。</span>
+      <span class="hint" id="p-status" style="margin:0">打开网页会自动抓价，这个按钮是手动刷新用。</span>
     </div>
     <div class="form-row" style="margin-top:12px">
       <div class="field"><label>股票 Counter</label><select id="p-ticker" onchange="fillSymbol()"></select></div>
@@ -254,7 +254,7 @@
       <div class="field"><label>手动现价 Manual</label><input type="number" step="any" id="p-price" placeholder="0.00"></div>
       <button class="action" onclick="updatePrice()">手动更新</button>
     </div>
-    <p class="hint">每只 counter 填一次 Bursa 4位数代码（如 MAYBANK = 1155），以后按一下按钮就自动拿最新交易日的价。盘中抓到的是 ~15分钟延迟价，闭市后就是当天闭市价。没填代码的可以手动输入。</p>
+    <p class="hint">填了代码的 counter 会<b>自动更新价格</b>：打开网页抓一次，开着每 15 分钟再抓。盘中是 ~15分钟延迟价；12:30 午市收市后 = 午市闭市价；5pm 后 = 当天闭市价。没填代码的可以手动输入。</p>
   </div>
   <div class="table-wrap">
     <table>
@@ -614,6 +614,7 @@ async function pullCloud(silent) {
     renderAll();
     setCloudStatus(`✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
     if (autoRecordDividends() > 0) save(); // 云端数据到齐后，补自动入账该记的股息
+    startAutoPrices(); // 数据到齐后自动抓最新价
   } catch (e) { handleCloudErr(e, "⬇️ 载入失败"); }
 }
 function initCloudUI() {
@@ -1314,14 +1315,14 @@ function saveSymbol() {
   save();
   document.getElementById("p-status").textContent = sym ? `已保存：${tk} = ${sym}` : `已清除 ${tk} 的代码`;
 }
-async function fetchAllPrices() {
+async function fetchAllPrices(auto) {
   const status = document.getElementById("p-status");
   const { pos } = computePortfolio();
   const heldTickers = [...new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker))];
   const mapped = heldTickers.filter(tk => db.symbols[tk]);
   const missing = heldTickers.filter(tk => !db.symbols[tk]);
-  if (!mapped.length) { status.textContent = "没有 counter 设了 Bursa 代码，先在下面逐个保存代码。"; return; }
-  status.textContent = "抓取中…";
+  if (!mapped.length) { if (!auto) status.textContent = "没有 counter 设了 Bursa 代码，先在下面逐个保存代码。"; return; }
+  if (!auto) status.textContent = "抓取中…";
   try {
     const symbols = mapped.map(tk => db.symbols[tk]).join(",");
     const r = await fetch(apiUrl("/api/quotes?symbols=" + encodeURIComponent(symbols)));
@@ -1336,13 +1337,21 @@ async function fetchAllPrices() {
       } else failed.push(tk + (q && q.error ? "（代码错误?）" : ""));
     }
     save();
-    let msg = `✓ 更新了 ${ok} 个 counter 的最新价（${new Date().toLocaleTimeString()}）`;
+    let msg = `✓ ${auto ? "自动" : ""}更新了 ${ok} 个 counter 的最新价（${new Date().toLocaleTimeString()}）`;
     if (failed.length) msg += ` · 失败: ${failed.join(", ")}`;
     if (missing.length) msg += ` · 没设代码: ${missing.join(", ")}`;
     document.getElementById("p-status").textContent = msg;
   } catch (e) {
-    status.textContent = "抓取失败：" + e.message + API_HINT;
+    if (!auto) status.textContent = "抓取失败：" + e.message + API_HINT;
   }
+}
+// 自动抓价：打开网页抓一次，开着的话每15分钟再抓
+// （盘中=~15分钟延迟价；12:30 午市收市后=午市闭市价；5pm 后=当天闭市价）
+let priceTimer = null;
+function startAutoPrices() {
+  fetchAllPrices(true);
+  clearInterval(priceTimer);
+  priceTimer = setInterval(() => fetchAllPrices(true), 15 * 60 * 1000);
 }
 
 // ---------- Ex-Dividend 日历 ----------
@@ -1699,6 +1708,7 @@ document.getElementById("cf-date").value = today();
 renderAll();
 autoRefreshExDiv();
 if (autoRecordDividends() > 0) save(); // 开网页时用现有日历数据补记股息
+startAutoPrices(); // 打开就自动抓价（云端载入后会再抓一次最新的）
 autoRefreshIPO();
 initCloudUI(); // Google 登入后会自动从云端载入；进阶填了密码则在登入回调外也可手动同步
 if (!googleIdToken && cloud.token) pullCloud(true); // 进阶密码模式：打开就拉
