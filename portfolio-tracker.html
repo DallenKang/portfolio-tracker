@@ -613,6 +613,7 @@ async function pullCloud(silent) {
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
     renderAll();
     setCloudStatus(`✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
+    if (autoRecordDividends() > 0) save(); // 云端数据到齐后，补自动入账该记的股息
   } catch (e) { handleCloudErr(e, "⬇️ 载入失败"); }
 }
 function initCloudUI() {
@@ -948,7 +949,7 @@ function renderAll() {
     const c = clientById(d.clientId);
     divTotal += d.total;
     if (d.date === today()) { divToday += d.total; todayRows.push(d); }
-    vBody.innerHTML += `<tr><td>${d.date}</td><td>${clientLabel(c)}</td><td><b>${d.ticker}</b></td>
+    vBody.innerHTML += `<tr><td>${d.date}</td><td>${clientLabel(c)}</td><td><b>${d.ticker}</b>${String(d.id).startsWith("adv") ? ` <span class="badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">自动</span>` : ""}</td>
       <td class="num">${fmtN(d.perShare)}</td><td class="num">${d.qty.toLocaleString()}</td><td class="num gold">${fmtN(d.total)}</td>
       <td><button class="action danger small" onclick="delDiv('${d.id}')">删除</button></td></tr>`;
   }
@@ -1359,8 +1360,9 @@ async function refreshExDiv() {
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     db.exdiv = { fetchedAt: Date.now(), rows: data.rows };
+    const n = autoRecordDividends();
     save();
-    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 条`;
+    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 条` + (n ? ` · 自动入账 ${n} 笔股息` : "");
   } catch (e) {
     status.textContent = "刷新失败：" + e.message + API_HINT;
   }
@@ -1371,10 +1373,9 @@ function renderExDiv(pos) {
     xBody.innerHTML = `<tr><td class="empty" colspan="6">还没有数据，按上面「刷新列表」</td></tr>`;
     return;
   }
-  const heldTickers = new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker));
-  const heldCodes = new Set(Object.entries(db.symbols)
-    .filter(([tk]) => heldTickers.has(tk))
-    .map(([, sym]) => sym.replace(/\.KL$/, "")));
+  // 持仓对照：股票名（或 Bursa 代码）-> 哪些顾客持有多少股
+  const holdings = Object.values(pos).filter(p => p.qty > 0);
+  const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
   const todayISO = today();
   const rows = db.exdiv.rows
     .map(r => ({ ann: r.annDate, stock: r.stock, price: r.price, div: r.dividend, exDate: r.exDate, code: r.code, iso: parseExDate(r.exDate) }))
@@ -1382,13 +1383,57 @@ function renderExDiv(pos) {
     .sort((a, b) => a.iso.localeCompare(b.iso));
   xBody.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="6">未来没有已公布的 ex-dividend（试按刷新）</td></tr>`;
   for (const r of rows) {
-    const heldBy = heldTickers.has(r.stock) || heldCodes.has(r.code);
-    xBody.innerHTML += `<tr class="${heldBy ? "held" : ""}">
+    const holders = holdings.filter(p => p.ticker === r.stock || (r.code && codeOf(p.ticker) === r.code));
+    // 每股股息（"RM 0.0175" 这种能算钱；"2.2315%" 这种算不了就只显示股数）
+    const m = String(r.div).match(/RM\s*([\d.]+)/i);
+    const dps = m ? parseFloat(m[1]) : null;
+    let holderCell = "";
+    if (holders.length) {
+      holderCell = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有顾客持有</span>`;
+      for (const h of holders) {
+        const c = clientById(h.clientId);
+        holderCell += `<div style="font-size:12px;margin-top:3px">${clientLabel(c)}: ${h.qty.toLocaleString()} 股${dps ? ` ≈ <b class="gold">RM ${fmtN(h.qty * dps)}</b>` : ""}</div>`;
+      }
+    }
+    xBody.innerHTML += `<tr class="${holders.length ? "held" : ""}">
       <td><b>${r.exDate}</b></td><td><b>${r.stock}</b></td><td class="num gold">${r.div}</td>
       <td class="num">${r.price}</td><td>${r.ann}</td>
-      <td>${heldBy ? '<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有顾客持有</span>' : ""}</td></tr>`;
+      <td>${holderCell}</td></tr>`;
   }
 }
+// 股息自动入账：ex-date 一到，按每个顾客 ex-date 前的持股自动记股息（自动进 Cashflow）
+// 记过的用 settings 里的 autodiv 键去重（跟着云端同步，删了也不会重生）
+function autoRecordDividends() {
+  if (!db.exdiv || !db.exdiv.rows) return 0;
+  const todayISO = today();
+  let created = 0;
+  for (const r of db.exdiv.rows) {
+    const iso = parseExDate(r.exDate);
+    if (!iso || iso > todayISO) continue; // ex-date 还没到
+    const m = String(r.dividend).match(/RM\s*([\d.]+)/i);
+    const dps = m ? parseFloat(m[1]) : null;
+    if (!(dps > 0)) continue; // % 类的算不了钱，只能手动记
+    const ent = {}; // clientId -> {qty, ticker}（ex-date 前的持股才有份）
+    for (const t of db.transactions) {
+      const code = (db.symbols[t.ticker] || "").replace(/\.KL$/, "");
+      if (t.ticker !== r.stock && !(r.code && code === r.code)) continue;
+      if (t.date >= iso) continue;
+      const e = ent[t.clientId] || (ent[t.clientId] = { qty: 0, ticker: t.ticker });
+      e.qty += t.type === "buy" ? t.qty : -t.qty;
+    }
+    for (const cid in ent) {
+      const e = ent[cid];
+      if (e.qty <= 0) continue;
+      const key = `autodiv:${cid}|${e.ticker}|${iso}|${dps}`;
+      if (db.settings[key]) continue;
+      db.settings[key] = 1;
+      db.dividends.push({ id: "adv" + uid(), clientId: cid, date: iso, ticker: e.ticker, perShare: dps, qty: e.qty, total: r2(e.qty * dps) });
+      created++;
+    }
+  }
+  return created;
+}
+
 // 打开网页时，数据超过12小时自动刷新（抓不到就静静用旧的）
 async function autoRefreshExDiv() {
   if (db.exdiv && Date.now() - db.exdiv.fetchedAt < 12 * 3600 * 1000) {
@@ -1653,6 +1698,7 @@ document.getElementById("v-date").value = today();
 document.getElementById("cf-date").value = today();
 renderAll();
 autoRefreshExDiv();
+if (autoRecordDividends() > 0) save(); // 开网页时用现有日历数据补记股息
 autoRefreshIPO();
 initCloudUI(); // Google 登入后会自动从云端载入；进阶填了密码则在登入回调外也可手动同步
 if (!googleIdToken && cloud.token) pullCloud(true); // 进阶密码模式：打开就拉
