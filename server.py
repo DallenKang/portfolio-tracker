@@ -132,13 +132,18 @@ def collect_news(stock_code):
             om = re.search(r'href="(https?://www\.thestar\.com\.my[^"]+)"', raw_art, re.I)
             if om:
                 orig_fetched += 1
-                try:
-                    ot = squash(strip_tags(http_get(re.sub(r"^http:", "https:", om.group(1)))))
-                    price = target_from_body(ot)
-                    if price:
-                        body = ot  # 投行名字也从原文认
-                except Exception:
-                    pass
+                orig_url = re.sub(r"^http:", "https:", om.group(1))
+                # TheStar 挡 Cloudflare 机房：先直连，不行就走 r.jina.ai 文字镜像（实测能读到全文）
+                for u in (orig_url, "https://r.jina.ai/" + orig_url):
+                    try:
+                        ot = squash(strip_tags(http_get(u)))
+                        p2 = target_from_body(ot)
+                        if p2:
+                            price = p2
+                            body = ot  # 投行名字也从原文认
+                            break
+                    except Exception:
+                        pass
         if not price:
             continue
         hm = re.search(RESEARCH_HOUSES, body, re.I)

@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v10-thestar-follow"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v11-jina-fallback"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -117,11 +117,15 @@ async function collectNews(stockCode) {
       const om = rawArt.match(/href="(https?:\/\/www\.thestar\.com\.my[^"]+)"/i);
       if (om) {
         origFetched++;
-        try {
-          const ot = stripTags(await fetch(om[1].replace(/^http:/, "https:"), { headers: { "User-Agent": UA } }).then(r => r.text()));
-          price = targetFromBody(ot);
-          if (price) body = ot; // 投行名字也从原文认
-        } catch (e) {}
+        const origUrl = om[1].replace(/^http:/, "https:");
+        // TheStar 挡 Cloudflare 机房：先直连，不行就走 r.jina.ai 文字镜像（实测能读到全文）
+        for (const u of [origUrl, "https://r.jina.ai/" + origUrl]) {
+          try {
+            const ot = stripTags(await fetch(u, { headers: { "User-Agent": UA } }).then(r => r.text()));
+            const p2 = targetFromBody(ot);
+            if (p2) { price = p2; body = ot; break; } // 投行名字也从原文认
+          } catch (e) {}
+        }
       }
     }
     if (!price) continue;
