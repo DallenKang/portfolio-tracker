@@ -270,7 +270,7 @@
 <!-- ============ TRANSACTIONS ============ -->
 <div class="tab" id="tab-transactions">
   <div class="form-card">
-    <h3>添加交易 Add Transaction</h3>
+    <h3 id="t-form-title">添加交易 Add Transaction</h3>
     <div class="form-row">
       <div class="field"><label>顾客 Client</label><select id="t-client" onchange="autoFees(); clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
@@ -284,7 +284,8 @@
       <div class="field"><label>Brokerage（可调整）</label><input type="number" step="any" id="t-brokerage" class="fee"></div>
       <div class="field"><label>Stamp Duty</label><input type="number" step="any" id="t-stamp" class="fee"></div>
       <div class="field"><label>Clearing Fee</label><input type="number" step="any" id="t-clearing" class="fee"></div>
-      <button class="action" onclick="addTransaction()">添加交易</button>
+      <button class="action" id="t-add-btn" onclick="addTransaction()">添加交易</button>
+      <button class="action ghost" id="t-cancel-btn" style="display:none" onclick="cancelEditTx()">取消修改</button>
     </div>
     <p class="net-preview" id="t-preview">输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。</p>
   </div>
@@ -927,7 +928,7 @@ function renderAll() {
       <td class="num">${fmtN(t.stamp || 0)}</td><td class="num">${fmtN(t.clearing || 0)}</td>
       <td class="num"><b>${fmtN(netAmount(t))}</b></td>
       <td class="num">${r !== undefined ? `<span class="${pnlClass(r)}">${pnlFmt(r)}</span>` : "-"}</td>
-      <td><button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
+      <td style="white-space:nowrap"><button class="action small ghost" onclick="editTx('${t.id}')">✏️ 编辑</button> <button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
   }
 
   // 视图切换：流水 / T-Account
@@ -1124,16 +1125,58 @@ function addTransaction() {
   if (!clientId || !clientById(clientId)) { alert("请先在「顾客」页添加顾客"); return; }
   if (!date || !ticker || !(qty > 0) || !(price > 0)) { alert("请填完整：日期、股票、股数、价格"); return; }
   if (type === "sell") {
+    // 修改模式：算持仓时先排除正在修改的这一笔，才不会误判
+    const all = db.transactions;
+    if (editingTxId) db.transactions = all.filter(t => t.id !== editingTxId);
     const { pos } = computePortfolio();
+    db.transactions = all;
     const p = pos[clientId + "|" + ticker];
     const have = p ? p.qty : 0;
     if (qty > have + 1e-9) { alert(`这个顾客的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return; }
   }
   if (code) db.symbols[ticker] = normalizeSymbol(code); // 存代码给抓价用
-  db.transactions.push({ id: uid(), clientId, date, ticker, type, qty, price, brokerage, stamp, clearing });
-  ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
-  document.getElementById("t-preview").textContent = "已添加 ✓";
+  if (editingTxId) {
+    const t = db.transactions.find(x => x.id === editingTxId);
+    if (t) Object.assign(t, { clientId, date, ticker, type, qty, price, brokerage, stamp, clearing });
+    cancelEditTx();
+    document.getElementById("t-preview").textContent = "已保存修改 ✓";
+  } else {
+    db.transactions.push({ id: uid(), clientId, date, ticker, type, qty, price, brokerage, stamp, clearing });
+    ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
+    document.getElementById("t-preview").textContent = "已添加 ✓";
+  }
   save();
+}
+// ✏️ 修改交易：载入表单 -> 改 -> 保存（不用删了重记）
+let editingTxId = null;
+function editTx(id) {
+  const t = db.transactions.find(x => x.id === id);
+  if (!t) return;
+  editingTxId = id;
+  document.getElementById("t-client").value = t.clientId;
+  document.getElementById("t-date").value = t.date;
+  document.getElementById("t-type").value = t.type;
+  document.getElementById("t-ticker").value = t.ticker;
+  document.getElementById("t-code").value = db.symbols[t.ticker] ? db.symbols[t.ticker].replace(/\.KL$/, "") : "";
+  document.getElementById("t-qty").value = t.qty.toLocaleString("en-US");
+  document.getElementById("t-price").value = t.price;
+  document.getElementById("t-brokerage").value = t.brokerage || 0;
+  document.getElementById("t-stamp").value = t.stamp || 0;
+  document.getElementById("t-clearing").value = t.clearing || 0;
+  document.getElementById("t-form-title").textContent = `✏️ 修改交易：${t.date} ${t.ticker}`;
+  document.getElementById("t-add-btn").textContent = "保存修改";
+  document.getElementById("t-cancel-btn").style.display = "";
+  clientMismatchCheck();
+  updatePreview();
+  document.getElementById("t-form-title").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function cancelEditTx() {
+  editingTxId = null;
+  ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("t-form-title").textContent = "添加交易 Add Transaction";
+  document.getElementById("t-add-btn").textContent = "添加交易";
+  document.getElementById("t-cancel-btn").style.display = "none";
+  document.getElementById("t-preview").textContent = "输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。";
 }
 // 打名字时，若该股已有代码，自动带出
 function prefillCode() {
@@ -1169,6 +1212,7 @@ function fmtMoney(el) {
 }
 function delTx(id) {
   if (!confirm("确定删除这笔交易？")) return;
+  if (editingTxId === id) cancelEditTx(); // 正在修改的那笔被删了，表单恢复
   db.transactions = db.transactions.filter(t => t.id !== id);
   save();
 }
