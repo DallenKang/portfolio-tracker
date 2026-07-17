@@ -31,6 +31,21 @@ function canonHouse(s) {
   return s;
 }
 
+// 历史股息（近5年）：给「顾客持有期间的股息」自动补记用
+// GET /api/divhistory?symbols=7293.KL,5185.KL -> { "7293.KL": [{exDate:"2025-12-03", dps:0.01}, ...] }
+async function divHistory(symbol) {
+  const p2 = Math.floor(Date.now() / 1000);
+  const p1 = p2 - 5 * 365 * 24 * 3600; // 近5年
+  const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${p1}&period2=${p2}&interval=1d&events=div`,
+    { headers: { "User-Agent": UA } });
+  const res = (await r.json()).chart.result[0];
+  const evs = (res && res.events && res.events.dividends) || {};
+  return Object.values(evs).map(e => ({
+    exDate: new Date(e.date * 1000).toISOString().slice(0, 10),
+    dps: e.amount,
+  })).filter(d => d.dps > 0).sort((a, b) => a.exDate.localeCompare(b.exDate));
+}
+
 // Yahoo 抓不到时的后备：从 KLSE Screener 个股页抓现价（用数字代码）
 async function klseQuote(code) {
   const html = await (await fetch("https://www.klsescreener.com/v2/stocks/view/" + encodeURIComponent(code),
@@ -226,6 +241,17 @@ export default {
             if (q && q.price > 0) { out[s] = q; return; }
           } catch (e) {}
           out[s] = { error: "no price from Yahoo or KLSE" };
+        }));
+        return json(out);
+      }
+
+      if (url.pathname === "/api/divhistory") {
+        const symbols = (url.searchParams.get("symbols") || "").split(",").slice(0, 60);
+        const out = {};
+        await Promise.all(symbols.map(async raw => {
+          const s = raw.trim().toUpperCase();
+          if (!s) return;
+          try { out[s] = await divHistory(s); } catch (e) { out[s] = { error: String(e) }; }
         }));
         return json(out);
       }

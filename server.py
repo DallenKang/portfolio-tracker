@@ -44,6 +44,25 @@ def canon_house(s):
     return s
 
 
+def div_history(symbol):
+    # 历史股息（近5年）：给「顾客持有期间的股息」自动补记用
+    import time
+    p2 = int(time.time())
+    p1 = p2 - 5 * 365 * 24 * 3600
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(symbol)
+           + "?period1=%d&period2=%d&interval=1d&events=div" % (p1, p2))
+    res = json.loads(http_get(url, timeout=25))["chart"]["result"][0]
+    evs = (res.get("events") or {}).get("dividends") or {}
+    out = []
+    for e in evs.values():
+        if e.get("amount", 0) > 0:
+            out.append({
+                "exDate": __import__("datetime").datetime.utcfromtimestamp(e["date"]).strftime("%Y-%m-%d"),
+                "dps": e["amount"],
+            })
+    return sorted(out, key=lambda d: d["exDate"])
+
+
 def klse_quote(code):
     # Yahoo 抓不到时的后备：从 KLSE Screener 个股页抓现价（用数字代码）
     html = http_get("https://www.klsescreener.com/v2/stocks/view/" + urllib.parse.quote(code), timeout=20)
@@ -216,6 +235,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/quotes"):
             self.handle_quotes()
+        elif self.path.startswith("/api/divhistory"):
+            self.handle_divhistory()
         elif self.path.startswith("/api/exdividends"):
             self.handle_exdividends()
         elif self.path.startswith("/api/ipos"):
@@ -256,6 +277,20 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
             out[s] = {"error": "no price from Yahoo or KLSE"}
+        self.send_json(out)
+
+    def handle_divhistory(self):
+        qs = urllib.parse.urlparse(self.path).query
+        symbols = urllib.parse.parse_qs(qs).get("symbols", [""])[0].split(",")
+        out = {}
+        for s in symbols[:60]:
+            s = s.strip().upper()
+            if not s:
+                continue
+            try:
+                out[s] = div_history(s)
+            except Exception as e:
+                out[s] = {"error": str(e)}
         self.send_json(out)
 
     def handle_exdividends(self):

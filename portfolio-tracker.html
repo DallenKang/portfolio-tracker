@@ -385,6 +385,7 @@
     <h3>📅 Bursa 即将 Ex-Dividend（未来 30 天）</h3>
     <div class="form-row">
       <button class="action success" onclick="refreshExDiv()">🔄 刷新列表</button>
+      <button class="action" onclick="backfillDividends(false)">📥 补记历史股息（近5年）</button>
       <span class="hint" id="x-status" style="margin:0">-</span>
     </div>
     <p class="hint">数据来自 i3investor。打开网页时如果数据超过 12 小时会自动刷新。<span class="gold">金色行</span> = 你的顾客有持仓的 counter，记得提醒顾客！</p>
@@ -615,6 +616,7 @@ async function pullCloud(silent) {
     setCloudStatus(`✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
     if (autoRecordDividends() > 0) save(); // 云端数据到齐后，补自动入账该记的股息
     startAutoPrices(); // 数据到齐后自动抓最新价
+    backfillDividends(true); // 顾客持有期间派过的历史股息，自动补齐
   } catch (e) { handleCloudErr(e, "⬇️ 载入失败"); }
 }
 function initCloudUI() {
@@ -1441,6 +1443,49 @@ function autoRecordDividends() {
     }
   }
   return created;
+}
+
+// 历史股息补记：抓每只股近5年的派息，按「每个顾客在 ex-date 当天的持股」自动记进股息+Cashflow
+// 顾客持有期间派过的息都会补齐（不只未来的）。已记过/已删过的用 autodiv 键跳过。
+async function backfillDividends(silent) {
+  const status = document.getElementById("x-status");
+  const tickers = [...new Set(db.transactions.map(t => t.ticker))].filter(tk => db.symbols[tk]);
+  if (!tickers.length) { if (!silent) alert("还没有股票设了 Bursa 代码"); return 0; }
+  if (!silent) status.textContent = "补记历史股息中…（抓近5年派息记录）";
+  try {
+    const symbols = tickers.map(tk => db.symbols[tk]).join(",");
+    const r = await fetch(apiUrl("/api/divhistory?symbols=" + encodeURIComponent(symbols)));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    let created = 0;
+    for (const tk of tickers) {
+      const hist = data[db.symbols[tk]];
+      if (!Array.isArray(hist)) continue;
+      for (const h of hist) {
+        if (!(h.dps > 0) || h.exDate > today()) continue;
+        // 每个顾客在这个 ex-date 之前的持股
+        const held = {};
+        for (const t of db.transactions) {
+          if (t.ticker !== tk || t.date >= h.exDate) continue;
+          held[t.clientId] = (held[t.clientId] || 0) + (t.type === "buy" ? t.qty : -t.qty);
+        }
+        for (const cid in held) {
+          if (held[cid] <= 0) continue;
+          const key = `autodiv:${cid}|${tk}|${h.exDate}|${h.dps}`;
+          if (db.settings[key]) continue;
+          db.settings[key] = 1;
+          db.dividends.push({ id: "adv" + uid(), clientId: cid, date: h.exDate, ticker: tk, perShare: h.dps, qty: held[cid], total: r2(held[cid] * h.dps) });
+          created++;
+        }
+      }
+    }
+    if (created) save();
+    if (!silent) status.textContent = created ? `✓ 补记了 ${created} 笔历史股息（已进 Cashflow）` : "✓ 没有需要补记的股息（都记齐了）";
+    return created;
+  } catch (e) {
+    if (!silent) status.textContent = "补记失败：" + e.message + API_HINT;
+    return 0;
+  }
 }
 
 // 打开网页时，数据超过12小时自动刷新（抓不到就静静用旧的）
