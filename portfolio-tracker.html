@@ -437,7 +437,7 @@
       <button class="action success" onclick="refreshIPO()">🔄 刷新列表</button>
       <span class="hint" id="ipo-status" style="margin:0">-</span>
     </div>
-    <p class="hint">每个星期日打开就能看到接下来要上市的公司：上市日期、IPO 价格、超额认购（oversubscribed）、业务、Principal Adviser / Underwriter。数据来自 iSaham，打开网页时超过 12 小时会自动刷新。<span class="gold">金边卡</span> = 7 天内上市。</p>
+    <p class="hint">每个星期日打开就能看到接下来要上市的公司：上市日期、IPO 价格、超额认购（oversubscribed）、行业、研究行目标价。数据来自 KLSE Screener，打开网页时超过 12 小时会自动刷新。<span class="gold">金边卡</span> = 7 天内上市。</p>
   </div>
   <div id="ipo-list"></div>
 </div>
@@ -1664,7 +1664,7 @@ async function autoRefreshExDiv() {
 const IPO_CACHE_V = 4; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后用户看到旧格式）
 async function refreshIPO() {
   const status = document.getElementById("ipo-status");
-  status.textContent = "刷新中…（iSaham 有时要等 10-20 秒）";
+  status.textContent = "刷新中…（要等 10-20 秒）";
   try {
     const r = await fetch(apiUrl("/api/ipos"));
     if (!r.ok) throw new Error("HTTP " + r.status);
@@ -1675,7 +1675,14 @@ async function refreshIPO() {
     renderIPO();
     status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`;
   } catch (e) {
-    status.textContent = "刷新失败：" + e.message + API_HINT;
+    // 抓取失败：大声报警，别让用户面对一片空白（很可能是数据源又被封了）
+    status.textContent = "⚠️ 抓取失败：" + e.message;
+    document.getElementById("ipo-list").innerHTML =
+      `<div class="form-card" style="border-color:var(--red)">
+        <p style="color:var(--red);font-weight:600;font-size:15px">⚠️ IPO 数据抓不到了</p>
+        <p class="hint" style="margin-top:8px">很可能是数据源（KLSE Screener）临时挂了或被封。<b>这不是「没有 IPO」，是系统抓不到。</b></p>
+        <p class="hint">请把这个画面<b>截图发给 Claude</b> 修复 —— 通常几分钟就好。（错误讯息：${e.message}）</p>
+      </div>`;
   }
 }
 function renderIPO() {
