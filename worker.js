@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v11-jina-fallback"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v12-klse-source"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -44,6 +44,22 @@ async function divHistory(symbol) {
     exDate: new Date(e.date * 1000).toISOString().slice(0, 10),
     dps: e.amount,
   })).filter(d => d.dps > 0).sort((a, b) => a.exDate.localeCompare(b.exDate));
+}
+
+// 红股/拆股（近5年）：给「持仓自动调整股数」用
+// GET /api/splits?symbols=5185.KL -> { "5185.KL": [{exDate:"2025-04-30", factor:1.0556, ratio:"19:18"}] }
+async function splitHistory(symbol) {
+  const p2 = Math.floor(Date.now() / 1000);
+  const p1 = p2 - 5 * 365 * 24 * 3600;
+  const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${p1}&period2=${p2}&interval=1d&events=split`,
+    { headers: { "User-Agent": UA } });
+  const res = (await r.json()).chart.result[0];
+  const evs = (res && res.events && res.events.splits) || {};
+  return Object.values(evs).map(e => ({
+    exDate: new Date(e.date * 1000).toISOString().slice(0, 10),
+    factor: e.numerator / e.denominator, // 持股要乘的倍数（如 1送18 -> 19/18）
+    ratio: e.splitRatio || `${e.numerator}:${e.denominator}`,
+  })).filter(s => s.factor > 0 && s.factor !== 1).sort((a, b) => a.exDate.localeCompare(b.exDate));
 }
 
 // Yahoo 抓不到时的后备：从 KLSE Screener 个股页抓现价（用数字代码）
@@ -164,36 +180,38 @@ function decodeEntities(s) {
 const stripTags = s => decodeEntities((s || "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 
 // 从 iSaham IPO 页解析出 ACE / Main 即将上市公司
+const MON3 = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
+
+// 从 KLSE Screener /v2/ipos 解析即将上市的 ACE / Main 公司
+// （iSaham 2026-07 起被 Cloudflare 锁死，改用这里；underwriter 字段这里没有）
 function parseIpos(html) {
-  // 去掉 script/style，避免里面的字干扰
-  const H = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
-  // 每家完整 IPO 卡的卡头是 <h5> 里的「CODE | Company Name Berhad」
-  const heads = [];
-  const re = /<h5[^>]*>([\s\S]*?)<\/h5>/gi;
-  let m;
-  while ((m = re.exec(H)) !== null) {
-    const txt = stripTags(m[1]);
-    const mm = txt.match(/^([A-Z0-9&]+)\s*\|\s*(.+?(?:Berhad|Bhd))\b/);
-    if (mm) heads.push({ pos: m.index, code: mm[1].trim(), name: mm[2].trim() });
-  }
-  const field = (t, p) => { const x = t.match(p); return x ? x[1].trim() : ""; };
+  const today = new Date().toISOString().slice(0, 10);
   const rows = [];
-  for (let i = 0; i < heads.length; i++) {
-    const end = i + 1 < heads.length ? heads[i + 1].pos : heads[i].pos + 9000;
-    const t = stripTags(H.slice(heads[i].pos, end));
-    const market = field(t, /Market\s*:?\s*(ACE|Main|LEAP)/i).toUpperCase();
-    if (market !== "ACE" && market !== "MAIN") continue; // 只要 ACE / Main
-    let biz = field(t, /Insights\s+([\s\S]+?)\s*Utilisation of Proceeds/i);
-    if (biz.length > 240) biz = biz.slice(0, 240).replace(/\s+\S*$/, "") + "…";
+  for (const c of html.split('<div class="card mb-3').slice(1)) {
+    const yr = c.match(/title="(20\d\d)"/);
+    const mo = c.match(/text-uppercase">([A-Z][a-z]{2})/);
+    const dy = c.match(/<h3>(\d{1,2})<\/h3>/);
+    const cm = c.match(/\/v2\/stocks\/view\/([0-9A-Z]+)">([^<]+)<\/a><\/h4><span[^>]*>([^<]+)<\/span>/);
+    const board = c.match(/Board:\s*<\/span>\s*<strong>([^<]+)/);
+    if (!(yr && mo && dy && cm && board)) continue;
+    const iso = `${yr[1]}-${MON3[mo[1]] || "00"}-${dy[1].padStart(2, "0")}`;
+    const bd = board[1].trim();
+    if (iso < today || (!bd.includes("ACE") && !bd.includes("Main"))) continue; // 只要未上市的 ACE / Main
+    const close = c.match(/Close:<\/span>\s*([0-9]{1,2}\s[A-Za-z]{3})/);
+    const sec = c.match(/Sector:\s*<\/span>\s*<strong>([^<]+)/);
+    const sub = c.match(/Sub sector:\s*<\/span>\s*<strong>([^<]+)/);
+    const price = c.slice(cm.index + cm[0].length).match(/>\s*([0-9]+\.[0-9]{1,3})\s*</);
+    let biz = sec ? stripTags(sec[1]) : "";
+    if (sub) biz += " · " + stripTags(sub[1]);
     rows.push({
-      code: heads[i].code,
-      name: heads[i].name,
-      market: market === "MAIN" ? "Main" : "ACE",
-      price: field(t, /Listing Price\s*:?\s*(?:RM\s*)?([0-9.]+)/i),
-      closeDate: field(t, /Closing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})/i),
-      listingDate: field(t, /Listing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})/i),
-      oversub: field(t, /Oversubscription rate\s*:?\s*([0-9.]+\s*x)/i),
-      adviser: field(t, /Principal Adviser\s*:?\s*(.+?)\s+(?:Issuing House|Joint|Underwriter|Shariah|Sponsor|Bumiputera|Selling)/i),
+      stockCode: cm[1],
+      code: cm[2].trim(),
+      name: stripTags(cm[3]),
+      market: bd.includes("Main") ? "Main" : "ACE",
+      price: price ? (+price[1]).toFixed(2) : "",
+      listingDate: `${dy[1].padStart(2, "0")}-${mo[1]}-${yr[1]}`,
+      closeDate: close ? close[1].replace(" ", "-") + "-" + yr[1] : "",
+      oversub: "",
       business: biz,
     });
   }
@@ -245,6 +263,17 @@ export default {
         return json(out);
       }
 
+      if (url.pathname === "/api/splits") {
+        const symbols = (url.searchParams.get("symbols") || "").split(",").slice(0, 60);
+        const out = {};
+        await Promise.all(symbols.map(async raw => {
+          const s = raw.trim().toUpperCase();
+          if (!s) return;
+          try { out[s] = await splitHistory(s); } catch (e) { out[s] = { error: String(e) }; }
+        }));
+        return json(out);
+      }
+
       if (url.pathname === "/api/divhistory") {
         const symbols = (url.searchParams.get("symbols") || "").split(",").slice(0, 60);
         const out = {};
@@ -282,24 +311,20 @@ export default {
 
       if (url.pathname === "/api/ipos") {
         try {
-          const [ipoHtml, klseHtml] = await Promise.all([
-            fetch(IPO_URL, { headers: { "User-Agent": UA } }).then(r => r.text()),
-            fetch(KLSE_IPO_URL, { headers: { "User-Agent": UA } }).then(r => r.text()).catch(() => ""),
-          ]);
-          const rows = parseIpos(ipoHtml);
-          const codes = parseKlseCodes(klseHtml); // 短名 -> Bursa 数字代码
-          for (const r of rows) r.stockCode = codes[r.code.toUpperCase()] || "";
-          // 每家抓研究行目标价（并行，best-effort）
+          const page = await fetch(KLSE_IPO_URL, { headers: { "User-Agent": UA } }).then(r => r.text());
+          // 抓取失败 / 被挡：页面里连一个 IPO 卡都没有 -> 报错，不要冒充「0 家」
+          if (!page.includes("/v2/stocks/view/")) return json({ error: "IPO source unavailable (blocked or changed)" }, 502);
+          const rows = parseIpos(page);
+          // 每家抓研究行目标价 + 超额认购（并行，best-effort）
           await Promise.all(rows.map(async r => {
-            if (!r.stockCode) return;
             try {
               const n = await collectNews(r.stockCode);
               if (n.targets.length) r.targets = n.targets;     // [{price, source, headline, url}, ...]
-              if (!r.oversub && n.oversub) r.oversub = n.oversub; // iSaham 字段空时用新闻的真实倍数
+              if (!r.oversub && n.oversub) r.oversub = n.oversub;
             } catch (e) { /* 没有就留空 */ }
           }));
           for (const r of rows) if (r.oversub) r.oversub = fmtOversub(r.oversub); // 统一两位小数
-          return json({ source: IPO_URL, version: WORKER_VERSION, rows });
+          return json({ source: KLSE_IPO_URL, version: WORKER_VERSION, rows });
         } catch (e) {
           return json({ error: String(e) }, 502);
         }

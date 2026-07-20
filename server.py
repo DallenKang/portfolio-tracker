@@ -18,7 +18,8 @@ EXDIV_URLS = [
     "https://klse.i3investor.com/web/entitlement/dividend/latest",    # fallback: announced past 3 months
 ]
 IPO_URL = "https://www.isaham.my/ipo"  # iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
-KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"  # KLSE Screener：补 Bursa 数字代码（iSaham 没有）
+KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"  # KLSE Screener IPO 列表（2026-07 起改成主来源，iSaham 被 Cloudflare 锁死）
+WORKER_VERSION = "v12-klse-source"  # 部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"  # 个股完整新闻列表（找研究行目标价）
 TARGET_KW = r"fair value|target price|\bTP\b|合理价|目标价|公平价值"  # 目标价关键词（中英）
 RESEARCH_HOUSES = r"PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|TA Research|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Malacca Securities|Malacca|Rakuten|Tradeview|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业"
@@ -59,6 +60,27 @@ def div_history(symbol):
             out.append({
                 "exDate": __import__("datetime").datetime.utcfromtimestamp(e["date"]).strftime("%Y-%m-%d"),
                 "dps": e["amount"],
+            })
+    return sorted(out, key=lambda d: d["exDate"])
+
+
+def split_history(symbol):
+    # 红股/拆股（近5年）：给「持仓自动调整股数」用
+    import time
+    p2 = int(time.time())
+    p1 = p2 - 5 * 365 * 24 * 3600
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(symbol)
+           + "?period1=%d&period2=%d&interval=1d&events=split" % (p1, p2))
+    res = json.loads(http_get(url, timeout=25))["chart"]["result"][0]
+    evs = (res.get("events") or {}).get("splits") or {}
+    out = []
+    for e in evs.values():
+        num, den = e.get("numerator", 0), e.get("denominator", 0)
+        if num > 0 and den > 0 and num != den:
+            out.append({
+                "exDate": __import__("datetime").datetime.utcfromtimestamp(e["date"]).strftime("%Y-%m-%d"),
+                "factor": num / den,
+                "ratio": e.get("splitRatio") or ("%s:%s" % (num, den)),
             })
     return sorted(out, key=lambda d: d["exDate"])
 
@@ -185,41 +207,42 @@ def squash(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
+MON3 = {"Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04", "May": "05", "Jun": "06",
+        "Jul": "07", "Aug": "08", "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12"}
+
+
 def parse_ipos(page):
-    # 去掉 script/style，避免里面的字干扰
-    H = re.sub(r"<script[\s\S]*?</script>", " ", page, flags=re.I)
-    H = re.sub(r"<style[\s\S]*?</style>", " ", H, flags=re.I)
-    # 每家完整 IPO 卡的卡头是 <h5> 里的「CODE | Company Name Berhad」
-    heads = []
-    for m in re.finditer(r"<h5[^>]*>([\s\S]*?)</h5>", H, re.I):
-        txt = squash(strip_tags(m.group(1)))
-        mm = re.match(r"^([A-Z0-9&]+)\s*\|\s*(.+?(?:Berhad|Bhd))\b", txt)
-        if mm:
-            heads.append((m.start(), mm.group(1).strip(), mm.group(2).strip()))
-
-    def field(t, pat):
-        x = re.search(pat, t, re.I)
-        return x.group(1).strip() if x else ""
-
+    # 从 KLSE Screener /v2/ipos 解析即将上市的 ACE / Main 公司（iSaham 2026-07 起被 Cloudflare 锁死，改用这里）
+    today = __import__("datetime").date.today().isoformat()
     rows = []
-    for i, (pos, code, name) in enumerate(heads):
-        end = heads[i + 1][0] if i + 1 < len(heads) else pos + 9000
-        t = squash(strip_tags(H[pos:end]))
-        market = field(t, r"Market\s*:?\s*(ACE|Main|LEAP)").upper()
-        if market not in ("ACE", "MAIN"):  # 只要 ACE / Main
+    for c in re.split(r'<div class="card mb-3', page)[1:]:
+        yr = re.search(r'title="(20\d\d)"', c)
+        mo = re.search(r'text-uppercase">([A-Z][a-z]{2})', c)
+        dy = re.search(r"<h3>(\d{1,2})</h3>", c)
+        cm = re.search(r'/v2/stocks/view/([0-9A-Z]+)">([^<]+)</a></h4><span[^>]*>([^<]+)</span>', c)
+        board = re.search(r"Board:\s*</span>\s*<strong>([^<]+)", c)
+        if not (yr and mo and dy and cm and board):
             continue
-        biz = field(t, r"Insights\s+([\s\S]+?)\s*Utilisation of Proceeds")
-        if len(biz) > 240:
-            biz = re.sub(r"\s+\S*$", "", biz[:240]) + "…"
+        iso = "%s-%s-%s" % (yr.group(1), MON3.get(mo.group(1), "00"), dy.group(1).zfill(2))
+        bd = board.group(1).strip()
+        if iso < today or ("ACE" not in bd and "Main" not in bd):  # 只要未上市的 ACE / Main
+            continue
+        close = re.search(r"Close:</span>\s*([0-9]{1,2}\s[A-Za-z]{3})", c)
+        sec = re.search(r"Sector:\s*</span>\s*<strong>([^<]+)", c)
+        sub = re.search(r"Sub sector:\s*</span>\s*<strong>([^<]+)", c)
+        price = re.search(r">\s*([0-9]+\.[0-9]{1,3})\s*</", c[cm.end():])
+        biz = squash(strip_tags(sec.group(1))) if sec else ""
+        if sub:
+            biz += " · " + squash(strip_tags(sub.group(1)))
         rows.append({
-            "code": code,
-            "name": name,
-            "market": "Main" if market == "MAIN" else "ACE",
-            "price": field(t, r"Listing Price\s*:?\s*(?:RM\s*)?([0-9.]+)"),
-            "closeDate": field(t, r"Closing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})"),
-            "listingDate": field(t, r"Listing Date\s*:?\s*(\d{2}-[A-Za-z]{3}-\d{4})"),
-            "oversub": field(t, r"Oversubscription rate\s*:?\s*([0-9.]+\s*x)"),
-            "adviser": field(t, r"Principal Adviser\s*:?\s*(.+?)\s+(?:Issuing House|Joint|Underwriter|Shariah|Sponsor|Bumiputera|Selling)"),
+            "stockCode": cm.group(1),
+            "code": cm.group(2).strip(),
+            "name": squash(strip_tags(cm.group(3))),
+            "market": "Main" if "Main" in bd else "ACE",
+            "price": "%.2f" % float(price.group(1)) if price else "",
+            "listingDate": "%s-%s-%s" % (dy.group(1).zfill(2), mo.group(1), yr.group(1)),
+            "closeDate": (close.group(1).replace(" ", "-") + "-" + yr.group(1)) if close else "",
+            "oversub": "",
             "business": biz,
         })
     return rows
@@ -237,6 +260,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.handle_quotes()
         elif self.path.startswith("/api/divhistory"):
             self.handle_divhistory()
+        elif self.path.startswith("/api/splits"):
+            self.handle_splits()
         elif self.path.startswith("/api/exdividends"):
             self.handle_exdividends()
         elif self.path.startswith("/api/ipos"):
@@ -277,6 +302,20 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
             out[s] = {"error": "no price from Yahoo or KLSE"}
+        self.send_json(out)
+
+    def handle_splits(self):
+        qs = urllib.parse.urlparse(self.path).query
+        symbols = urllib.parse.parse_qs(qs).get("symbols", [""])[0].split(",")
+        out = {}
+        for s in symbols[:60]:
+            s = s.strip().upper()
+            if not s:
+                continue
+            try:
+                out[s] = split_history(s)
+            except Exception as e:
+                out[s] = {"error": str(e)}
         self.send_json(out)
 
     def handle_divhistory(self):
@@ -323,25 +362,24 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_ipos(self):
         try:
-            rows = parse_ipos(http_get(IPO_URL))
-            try:
-                codes = parse_klse_codes(http_get(KLSE_IPO_URL))  # 短名 -> Bursa 数字代码
-            except Exception:
-                codes = {}
+            page = http_get(KLSE_IPO_URL)  # KLSE Screener /v2/ipos（主来源）
+            # 抓取失败 / 被挡：页面里连一个 IPO 卡都没有 -> 报错，不要冒充「0 家」
+            if "/v2/stocks/view/" not in page:
+                self.send_json({"error": "IPO source unavailable (blocked or changed)"}, status=502)
+                return
+            rows = parse_ipos(page)
             for r in rows:
-                r["stockCode"] = codes.get(r["code"].upper(), "")
-                if r["stockCode"]:  # 从新闻抓目标价 + 超额认购（best-effort）
-                    try:
-                        n = collect_news(r["stockCode"])
-                        if n["targets"]:
-                            r["targets"] = n["targets"]  # [{price, source, headline, url}, ...]
-                        if not r.get("oversub") and n["oversub"]:
-                            r["oversub"] = n["oversub"]  # iSaham 字段空时用新闻的真实倍数
-                    except Exception:
-                        pass
+                try:
+                    n = collect_news(r["stockCode"])  # 目标价 + 超额认购
+                    if n["targets"]:
+                        r["targets"] = n["targets"]
+                    if not r.get("oversub") and n["oversub"]:
+                        r["oversub"] = n["oversub"]
+                except Exception:
+                    pass
                 if r.get("oversub"):
-                    r["oversub"] = fmt_oversub(r["oversub"])  # 统一两位小数
-            self.send_json({"source": IPO_URL, "rows": rows})
+                    r["oversub"] = fmt_oversub(r["oversub"])
+            self.send_json({"source": KLSE_IPO_URL, "version": WORKER_VERSION, "rows": rows})
         except Exception as e:
             self.send_json({"error": str(e)}, status=502)
 
