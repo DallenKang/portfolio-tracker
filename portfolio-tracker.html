@@ -152,6 +152,11 @@
 </head>
 <body>
 
+<!-- IPO 抓不到时，最顶端全站可见的红色横幅（提醒用户来找 Claude） -->
+<div id="sys-error-banner" style="display:none;background:var(--red);color:#fff;padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:15px;font-weight:600">
+  ⚠️ 系统错误：IPO 数据抓不到了（很可能数据源被封/挂了，不是「没有 IPO」）。请<b>截图发给 Claude</b> 修复。
+</div>
+
 <h1>📈 Remisier Portfolio Tracker</h1>
 <p class="subtitle" id="app-subtitle">按顾客管理 · 费用自动计算 · 股息自动入账 · 数据云端同步</p>
 
@@ -1673,9 +1678,11 @@ async function refreshIPO() {
     db.ipo = { fetchedAt: Date.now(), rows: data.rows, v: IPO_CACHE_V };
     save();
     renderIPO();
+    document.getElementById("sys-error-banner").style.display = "none"; // 抓到了，收起顶部警告
     status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`;
   } catch (e) {
-    // 抓取失败：大声报警，别让用户面对一片空白（很可能是数据源又被封了）
+    // 抓取失败：顶端全站横幅 + IPO 区红框，别让用户面对一片空白（很可能是数据源又被封了）
+    document.getElementById("sys-error-banner").style.display = "block";
     status.textContent = "⚠️ 抓取失败：" + e.message;
     document.getElementById("ipo-list").innerHTML =
       `<div class="form-card" style="border-color:var(--red)">
