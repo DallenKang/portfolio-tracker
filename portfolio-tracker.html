@@ -102,6 +102,9 @@
   .tacct-total { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); font-size: 12.5px; font-weight: 600; }
   .tacct-foot { text-align: center; font-size: 12.5px; color: var(--muted); padding-top: 8px; }
 
+  /* 未登入：只显示登入/注册页 */
+  body.signed-out > *:not(#auth-screen) { display: none !important; }
+
   /* 顾客模式：可记录自己的交易/股息/出入金，但看不到管理页 */
   body.client-mode .tab-btn[data-tab="clients"], body.client-mode .tab-btn[data-tab="database"] { display: none; }
   body.client-mode #tab-holdings .form-card { display: none; } /* 价格自动抓，不用手动 */
@@ -161,19 +164,39 @@
 <p class="subtitle" id="app-subtitle">按顾客管理 · 费用自动计算 · 股息自动入账 · 数据云端同步</p>
 
 <div class="filter-bar" id="signin-banner" style="display:none">
-  <span id="banner-text">☁️ 用 Gmail 登入，载入你的投资组合</span>
-  <div id="gsi-button-top"></div>
+  <span id="banner-text">👋 你的投资组合</span>
   <button class="action ghost small" id="banner-signout" style="display:none" onclick="googleSignOut(); location.reload()">登出</button>
 </div>
 
-<div class="form-card" id="register-card" style="display:none">
-  <h3>👋 欢迎！第一次来，注册你的投资组合</h3>
-  <p class="hint" id="reg-hint">你的 Gmail 还没注册。输入名字就能开始用——注册后你的 Google Drive 会自动出现一个「Portfolio」记录表（只读，自动更新）。</p>
-  <div class="form-row">
-    <div class="field"><label>你的名字 Name</label><input type="text" id="reg-name" placeholder="如 Tan Ah Kow" style="min-width:200px"></div>
-    <button class="action success" onclick="registerClient()">注册 Register</button>
+<!-- 登入 / 注册页（未登入时显示） -->
+<div id="auth-screen" style="display:none; max-width:460px; margin:6vh auto;">
+  <div class="form-card" style="text-align:center">
+    <div style="font-size:40px; line-height:1">📈</div>
+    <h3 style="margin:6px 0 4px; font-size:20px">Portfolio Tracker</h3>
+    <p class="hint" style="margin:0 0 18px">你的持仓、盈亏、股息，一个地方看完</p>
+
+    <div id="auth-choice">
+      <button class="action" style="width:100%; padding:12px; font-size:15px; margin-bottom:10px" onclick="showAuth('signin')">Sign In　登入</button>
+      <button class="action success" style="width:100%; padding:12px; font-size:15px" onclick="showAuth('register')">Register New Account　注册新户口</button>
+    </div>
+
+    <div id="auth-signin" style="display:none">
+      <p class="hint" style="margin:0 0 12px">用你注册时的 Gmail 登入</p>
+      <div id="gsi-button-top" style="display:flex; justify-content:center"></div>
+      <p class="net-preview" id="signin-status" style="text-align:center"></p>
+      <button class="action ghost small" style="margin-top:10px" onclick="showAuth('choice')">← 返回</button>
+    </div>
+
+    <div id="auth-register" style="display:none; text-align:left">
+      <p class="hint" style="margin:0 0 12px">填好资料，然后用 Gmail 完成注册</p>
+      <div class="field" style="margin-bottom:10px"><label>你的名字 Name</label><input type="text" id="reg-name" placeholder="如 Tan Ah Kow" style="width:100%"></div>
+      <div class="field" style="margin-bottom:14px"><label>手机号码 Phone</label><input type="tel" id="reg-phone" placeholder="如 012-345 6789" style="width:100%"></div>
+      <div id="gsi-button-reg" style="display:flex; justify-content:center"></div>
+      <p class="net-preview" id="reg-status" style="text-align:center"></p>
+      <p class="hint" style="text-align:center; margin-top:8px">注册后你的 Google Drive 会自动出现一个「Portfolio」记录表</p>
+      <button class="action ghost small" style="margin-top:6px" onclick="showAuth('choice')">← 返回</button>
+    </div>
   </div>
-  <p class="net-preview" id="reg-status"></p>
 </div>
 
 <div class="tabs">
@@ -232,6 +255,7 @@
       <div class="field"><label>姓名 Name</label><input type="text" id="c-name" placeholder="顾客姓名"></div>
       <div class="field"><label>户口种类 Account Type</label><input type="text" id="c-account" placeholder="如 Retailer / Cash / Margin"></div>
       <div class="field"><label>顾客 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="customer@gmail.com" style="min-width:200px"></div>
+      <div class="field"><label>手机号码 Phone</label><input type="tel" id="c-phone" placeholder="012-345 6789" style="min-width:140px"></div>
       <div class="field"><label>Brokerage 模式</label>
         <select id="c-mode" onchange="toggleRateFields()">
           <option value="tiered">分层 Tiered（按 RM100K）</option>
@@ -256,7 +280,7 @@
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Client Code</th><th>姓名</th><th>户口种类</th><th>Gmail（顾客登入）</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <thead><tr><th>Client Code</th><th>姓名</th><th>户口种类</th><th>Gmail（顾客登入）</th><th>电话</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
       <tbody id="c-body"></tbody>
     </table>
   </div>
@@ -567,7 +591,6 @@ function applyClientModeUI() {
   const c = db.clients[0];
   document.getElementById("banner-text").textContent = c ? `👋 你好，${c.name} — 你的投资组合` : "顾客只读模式";
   document.getElementById("signin-banner").style.display = "";
-  document.getElementById("gsi-button-top").style.display = "none";
   document.getElementById("banner-signout").style.display = "";
   document.getElementById("app-subtitle").textContent = "你的持仓 · 盈亏 · 股息 · Cashflow — 可自己记录，自动同步到你的 Drive";
 }
@@ -582,51 +605,71 @@ function exitClientMode() {
   document.body.classList.remove("client-mode");
 }
 
-// --- 新顾客自助注册 ---
-function showRegisterCard() {
-  document.getElementById("register-card").style.display = "";
-  document.getElementById("reg-hint").textContent =
-    `你的 Gmail（${googleEmail}）还没注册。输入名字就能开始用——注册后你的 Google Drive 会自动出现一个「Portfolio」记录表（只读，自动更新）。`;
-  document.getElementById("signin-banner").style.display = "none";
-  setCloudStatus("等待注册…");
-}
+// --- 新顾客注册 ---
 async function registerClient() {
   const name = document.getElementById("reg-name").value.trim();
-  if (!name) { alert("请输入你的名字"); return; }
+  const phone = document.getElementById("reg-phone").value.trim();
   const st = document.getElementById("reg-status");
-  st.textContent = "注册中…（第一次会顺便在你的 Drive 建立记录表，等几秒）";
+  if (!name) { st.textContent = "请输入你的名字，然后再按一次 Google 按钮。"; return; }
+  if (phone.replace(/[^0-9]/g, "").length < 9) { st.textContent = "请输入有效的手机号码，然后再按一次 Google 按钮。"; return; }
+  st.textContent = "注册中…（顺便在你的 Drive 建立记录表，等几秒）";
   try {
     const r = await fetch(cloudUrl(), { method: "POST",
-      body: JSON.stringify({ action: "register", name, ...authPostFields() }) });
+      body: JSON.stringify({ action: "register", name, phone, ...authPostFields() }) });
     const j = await r.json();
-    if (j.error) throw new Error(j.reason || j.error);
-    document.getElementById("register-card").style.display = "none";
+    if (j.error) {
+      if (j.reason === "email_taken") { st.textContent = `你的 Gmail（${googleEmail}）已经被使用了。请返回选「Sign In」登入。`; return; }
+      if (j.reason === "phone_taken") { st.textContent = "号码已经被使用了。请用另外的号码。"; return; }
+      if (j.reason === "phone_required") { st.textContent = "请输入手机号码。"; return; }
+      throw new Error(j.reason || j.error);
+    }
     st.textContent = "";
-    await pullCloud(true); // 注册成功，直接载入他的（空）组合并进入顾客模式
+    authMode = "signin";
+    await pullCloud(true); // 注册成功，载入他的组合并进入顾客模式
   } catch (e) {
-    st.textContent = "注册失败：" + e.message + "（再试一次，或联络你的 remisier）";
+    st.textContent = "注册失败：" + e.message + "（再试一次）";
   }
 }
 
+// --- 登入 / 注册页 ---
+let authMode = "signin";
+function showAuthScreen() {
+  document.body.classList.add("signed-out");
+  document.getElementById("auth-screen").style.display = "";
+  showAuth("choice");
+}
+function hideAuthScreen() {
+  document.body.classList.remove("signed-out");
+  document.getElementById("auth-screen").style.display = "none";
+}
+function showAuth(which) {
+  authMode = which === "register" ? "register" : "signin";
+  document.getElementById("auth-choice").style.display = which === "choice" ? "" : "none";
+  document.getElementById("auth-signin").style.display = which === "signin" ? "" : "none";
+  document.getElementById("auth-register").style.display = which === "register" ? "" : "none";
+  document.getElementById("signin-status").textContent = "";
+  document.getElementById("reg-status").textContent = "";
+}
+
 // --- Google Sign-In ---
-function onGoogleCredential(resp) {
+async function onGoogleCredential(resp) {
   googleIdToken = resp.credential;
   googleEmail = parseJwt(googleIdToken).email || "";
   document.getElementById("cloud-signin-hint").textContent = "已登入：" + googleEmail;
   document.getElementById("gsi-signout").style.display = "";
-  document.getElementById("signin-banner").style.display = "none"; // 顾客模式的问候会在载入后重新显示
+  if (authMode === "register") { await registerClient(); return; } // 走注册流程
   setCloudStatus("✓ 已用 Gmail 登入，正在从云端载入…");
-  pullCloud(true);
+  document.getElementById("signin-status").textContent = "登入中…";
+  await pullCloud(true);
 }
 function initGoogleSignIn() {
   if (typeof google === "undefined" || !google.accounts || !google.accounts.id) return false;
   google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential, auto_select: true });
-  const btn = document.getElementById("gsi-button");
-  if (btn) google.accounts.id.renderButton(btn, { theme: "filled_blue", size: "large", text: "signin_with" });
-  const btnTop = document.getElementById("gsi-button-top");
-  if (btnTop) google.accounts.id.renderButton(btnTop, { theme: "filled_blue", size: "large", text: "signin_with" });
-  if (!googleIdToken && viewerRole !== "client") document.getElementById("signin-banner").style.display = "";
-  google.accounts.id.prompt(); // 尝试自动登入
+  for (const [id, txt] of [["gsi-button", "signin_with"], ["gsi-button-top", "signin_with"], ["gsi-button-reg", "signup_with"]]) {
+    const el = document.getElementById(id);
+    if (el) google.accounts.id.renderButton(el, { theme: "filled_blue", size: "large", text: txt });
+  }
+  google.accounts.id.prompt(); // 老顾客：自动登入，不用再点
   return true;
 }
 function googleSignOut() {
@@ -697,7 +740,11 @@ async function pullCloud(silent) {
       body: JSON.stringify({ action: "load", ...authPostFields() }) });
     const j = await r.json();
     if (j.error) {
-      if (j.reason === "not_registered") { showRegisterCard(); return; } // 新顾客 -> 请他注册
+      if (j.reason === "not_registered") { // 这个 Gmail 还没注册 -> 引导去注册
+        showAuthScreen(); showAuth("register");
+        document.getElementById("reg-status").textContent = `这个 Gmail（${googleEmail}）还没注册。填好名字和号码，再按下面的 Google 按钮完成注册。`;
+        return;
+      }
       throw new Error(j.error);
     }
     const d = j.data || {};
@@ -711,6 +758,7 @@ async function pullCloud(silent) {
     for (const c of db.clients) { if (!c.brokerageMode) { c.brokerageMode = "flat"; c.rateFlat = c.rateFlat || 0; } if (!c.costMethod) c.costMethod = "average"; }
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
     if (j.role === "client") enterClientMode(); else exitClientMode(); // 后台说你是谁，就进哪个模式
+    hideAuthScreen(); // 认证成功 -> 收起登入页，显示 app
     renderAll();
     setCloudStatus(j.role === "client"
       ? `✓ 已载入你的投资组合（${db.transactions.length} 笔交易）· 只读`
@@ -908,9 +956,9 @@ function renderAll() {
   const txCount = {};
   db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
   const cBody = document.getElementById("c-body");
-  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="9">还没有顾客，先在上面添加</td></tr>`;
+  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="10">还没有顾客，先在上面添加</td></tr>`;
   for (const c of db.clients) {
-    cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td><td>${c.email || "-"}</td>
+    cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td><td>${c.email || "-"}</td><td>${c.phone || "-"}</td>
       <td>${rateLabel(c)}</td><td class="num">${fmt(c.minBrokerage || 0)}</td>
       <td>${c.costMethod === "fifo" ? "FIFO" : "Average"}</td>
       <td class="num">${txCount[c.id] || 0}</td>
@@ -1126,6 +1174,7 @@ function saveClient() {
   const name = document.getElementById("c-name").value.trim();
   const account = document.getElementById("c-account").value.trim();
   const email = document.getElementById("c-email").value.trim().toLowerCase();
+  const phone = document.getElementById("c-phone").value.trim();
   const mode = document.getElementById("c-mode").value;
   const rateFlat = parseFloat(document.getElementById("c-rate-flat").value);
   const rateBelow = parseFloat(document.getElementById("c-rate-below").value);
@@ -1133,9 +1182,14 @@ function saveClient() {
   const min = parseFloat(document.getElementById("c-min").value) || 0;
   const costMethod = document.getElementById("c-costmethod").value;
   if (!name) { alert("请填姓名"); return; }
+  // 第二防线：email / 电话不能跟别的顾客重复
+  const normPhone = v => { let d = String(v || "").replace(/[^0-9]/g, ""); if (d.startsWith("60") && d.length >= 11) d = "0" + d.slice(2); return d; };
+  const others = db.clients.filter(c => c.id !== editingClientId);
+  if (email && others.some(c => (c.email || "").toLowerCase() === email)) { alert(`这个 Gmail 已经登记给别的顾客了：${others.find(c => (c.email || "").toLowerCase() === email).name}`); return; }
+  if (phone && others.some(c => normPhone(c.phone) && normPhone(c.phone) === normPhone(phone))) { alert(`这个电话号码已经登记给别的顾客了：${others.find(c => normPhone(c.phone) === normPhone(phone)).name}`); return; }
   if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
   if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
-  const data = { code, name, account, email, brokerageMode: mode, minBrokerage: min, costMethod,
+  const data = { code, name, account, email, phone, brokerageMode: mode, minBrokerage: min, costMethod,
     rateFlat: mode === "flat" ? rateFlat : undefined,
     rateBelow: mode === "tiered" ? rateBelow : undefined,
     rateAbove: mode === "tiered" ? rateAbove : undefined };
@@ -1144,7 +1198,7 @@ function saveClient() {
     cancelEditClient();
   } else {
     db.clients.push({ id: uid(), ...data });
-    ["c-code", "c-name", "c-account", "c-email", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
+    ["c-code", "c-name", "c-account", "c-email", "c-phone", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
   }
   save();
 }
@@ -1155,6 +1209,7 @@ function editClient(id) {
   document.getElementById("c-name").value = c.name;
   document.getElementById("c-account").value = c.account || "";
   document.getElementById("c-email").value = c.email || "";
+  document.getElementById("c-phone").value = c.phone || "";
   document.getElementById("c-mode").value = c.brokerageMode || "flat";
   document.getElementById("c-rate-flat").value = c.rateFlat ?? "";
   document.getElementById("c-rate-below").value = c.rateBelow ?? "";
@@ -1168,7 +1223,7 @@ function editClient(id) {
 }
 function cancelEditClient() {
   editingClientId = null;
-  ["c-code", "c-name", "c-account", "c-email", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
+  ["c-code", "c-name", "c-account", "c-email", "c-phone", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("c-min").value = 8;
   document.getElementById("c-mode").value = "tiered";
   document.getElementById("c-costmethod").value = "average";
@@ -1931,6 +1986,7 @@ document.getElementById("t-date").value = today();
 document.getElementById("v-date").value = today();
 document.getElementById("cf-date").value = today();
 if (viewerRole === "client") applyClientModeUI(); // 上次是顾客登入，先用缓存进只读模式
+if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注册页（Google 自动登入成功会收起）
 renderAll();
 autoRefreshExDiv();
 // PWA：正式网址（https）才注册 service worker；network-first，不会出现旧版卡住
