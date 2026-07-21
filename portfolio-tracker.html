@@ -626,6 +626,7 @@ async function registerClient() {
     st.textContent = "";
     authMode = "signin";
     await pullCloud(true); // 注册成功，载入他的组合并进入顾客模式
+    if (j.linked) setCloudStatus("✓ 已接上你原有的投资组合（由你的 remisier 记录）");
   } catch (e) {
     st.textContent = "注册失败：" + e.message + "（再试一次）";
   }
