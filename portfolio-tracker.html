@@ -1037,7 +1037,7 @@ function renderAll() {
     const run = {};
     for (const t of [...txs].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))) {
       const k = t.clientId + "|" + t.ticker;
-      run[k] = (run[k] || 0) + (t.type === "buy" ? t.qty : -t.qty);
+      run[k] = (run[k] || 0) + (t.type === "sell" ? -t.qty : t.qty); // 红股 bonus 算加股
       runAfter[t.id] = run[k];
     }
   }
@@ -1070,9 +1070,9 @@ function renderAll() {
   const sumEl = document.getElementById("stock-summary");
   if (stockF === "all") { sumEl.textContent = ""; }
   else {
-    let bq = 0, sq = 0;
-    for (const t of txs) t.type === "buy" ? bq += t.qty : sq += t.qty;
-    sumEl.textContent = `${stockF}: 总买 ${bq.toLocaleString()} · 总卖 ${sq.toLocaleString()} · 净持仓 ${(bq - sq).toLocaleString()}`;
+    let bq = 0, sq = 0, bonus = 0;
+    for (const t of txs) { if (t.type === "sell") sq += t.qty; else if (t.type === "bonus") bonus += t.qty; else bq += t.qty; }
+    sumEl.textContent = `${stockF}: 总买 ${bq.toLocaleString()}${bonus ? ` · 🎁 红股 ${bonus.toLocaleString()}` : ""} · 总卖 ${sq.toLocaleString()} · 净持仓 ${(bq + bonus - sq).toLocaleString()}`;
   }
   tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="14">没有交易记录</td></tr>`;
   let totalBrokerage = 0;
@@ -1901,7 +1901,8 @@ function renderCashflow(pos, realizedByTx) {
     ev.push({ date: cf.date, k: cf.type === "deposit" ? 0 : 5, label: (cf.type === "deposit" ? "入金 Deposit" : "出金 Withdraw") + (cf.note ? ` · ${cf.note}` : ""), in: cf.type === "deposit" ? cf.amount : 0, out: cf.type === "withdraw" ? cf.amount : 0, del: cf.id });
   for (const t of db.transactions) if (t.clientId === f) {
     const n = netAmount(t);
-    if (t.type === "buy") ev.push({ date: t.date, k: 1, label: `买入 ${t.ticker} ${t.qty.toLocaleString()}`, in: 0, out: n });
+    if (t.type === "bonus") ev.push({ date: t.date, k: 1, label: `🎁 红股 ${t.ticker} +${t.qty.toLocaleString()} 股（不涉及现金）`, in: 0, out: 0 });
+    else if (t.type === "buy") ev.push({ date: t.date, k: 1, label: `买入 ${t.ticker} ${t.qty.toLocaleString()}`, in: 0, out: n });
     else { const r = realizedByTx[t.id]; ev.push({ date: t.date, k: 2, label: `卖出 ${t.ticker} ${t.qty.toLocaleString()}` + (r !== undefined ? `（已实现 ${pnlFmt(r)}）` : ""), in: n, out: 0 }); }
   }
   for (const dv of db.dividends) if (dv.clientId === f)
