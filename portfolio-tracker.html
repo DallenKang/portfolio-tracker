@@ -443,7 +443,7 @@
   <div class="form-card">
     <h3>📅 Bursa 即将 Ex-Dividend（未来 30 天）</h3>
     <div class="form-row">
-      <button class="action success" onclick="refreshExDiv()">🔄 刷新列表</button>
+      <button class="action success" onclick="refreshExDiv(); refreshEntitlements(false)">🔄 刷新列表</button>
       <button class="action" onclick="backfillDividends(false)">📥 补记历史股息（近5年）</button>
       <button class="action" onclick="backfillSplits(false).then(() => backfillDividends(true))">🎁 检查红股/拆股（近5年）</button>
       <span class="hint" id="x-status" style="margin:0">-</span>
@@ -454,6 +454,14 @@
     <table>
       <thead><tr><th>Ex Date</th><th>Stock</th><th class="num">Dividend</th><th class="num">现价</th><th>公布日期</th><th>顾客持有</th></tr></thead>
       <tbody id="x-body"></tbody>
+    </table>
+  </div>
+
+  <h2 class="section">🎁 红股 / 拆股 / 送股 <span class="hint" style="font-weight:400">Bonus Issue · Share Dividend · Consolidation（不常有，留意比例）</span></h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Ex Date</th><th>Stock</th><th>类型</th><th>比例 Ratio</th><th class="num">倍数</th><th class="num">现价</th><th>公布日期</th><th>顾客持有</th></tr></thead>
+      <tbody id="ent-body"></tbody>
     </table>
   </div>
 </div>
@@ -552,6 +560,7 @@ function load() {
   if (!d.cashflows) d.cashflows = []; // 出入金 [{id,clientId,date,type,amount,note}]
   if (!d.exdiv) d.exdiv = null;     // {fetchedAt, rows} ex-dividend 缓存
   if (!d.ipo) d.ipo = null;         // {fetchedAt, rows} IPO 上市提醒缓存
+  if (!d.ent) d.ent = null;         // {fetchedAt, rows} 红股/拆股/送股 缓存
   // 旧顾客只有单一 brokerageRate 的，转成 flat 模式
   for (const c of d.clients || []) {
     if (!c.brokerageMode) {
@@ -1018,6 +1027,7 @@ function renderAll() {
   fillDivTickers(pos);
   fillSymbol();
   renderExDiv(pos);
+  renderEntitlements(pos);
   renderCashflow(pos, realizedByTx);
 
   // 交易表
@@ -1621,6 +1631,59 @@ function autoRecordDividends() {
   return created;
 }
 
+// 红股/拆股/送股 预告：抓 i3investor 的 entitlement 列表，标出哪个顾客持有、会拿到多少
+async function refreshEntitlements(silent) {
+  try {
+    const r = await fetch(apiUrl("/api/entitlements"));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    db.ent = { fetchedAt: Date.now(), rows: j.rows };
+    if (viewerRole !== "client") save(); else renderAll();
+  } catch (e) {
+    if (!silent) document.getElementById("x-status").textContent = "红股列表刷新失败：" + e.message + API_HINT;
+  }
+}
+function renderEntitlements(pos) {
+  const body = document.getElementById("ent-body");
+  if (!body) return;
+  if (!db.ent || !db.ent.rows || !db.ent.rows.length) {
+    body.innerHTML = `<tr><td class="empty" colspan="8">还没有数据，按上面「🔄 刷新列表」</td></tr>`;
+    return;
+  }
+  const holdings = Object.values(pos).filter(p => p.qty > 0);
+  const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
+  const rows = db.ent.rows
+    .map(r => ({ ...r, iso: parseExDate(r.exDate) }))
+    .sort((a, b) => (b.iso || "").localeCompare(a.iso || "")); // 最近/即将的排前面
+  const todayISO = today();
+  body.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="8">近期没有红股/拆股</td></tr>`;
+  for (const r of rows) {
+    const holders = holdings.filter(p => p.ticker === r.stock || (r.code && codeOf(p.ticker) === r.code));
+    let who = "";
+    if (holders.length) {
+      who = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有顾客持有</span>`;
+      for (const h of holders) {
+        const c = clientById(h.clientId);
+        const extra = r.factor ? Math.round(h.qty * (r.factor - 1)) : null;
+        who += `<div style="font-size:12px;margin-top:3px">${clientLabel(c)}: ${h.qty.toLocaleString()} 股`
+             + (extra !== null ? (extra >= 0 ? ` → <b class="gold">+${extra.toLocaleString()} 股</b>` : ` → <b class="neg">${extra.toLocaleString()} 股</b>`) : "")
+             + `</div>`;
+      }
+    }
+    const upcoming = r.iso && r.iso >= todayISO;
+    body.innerHTML += `<tr class="${holders.length ? "held" : ""}">
+      <td><b>${r.exDate || "-"}</b>${upcoming ? ` <span class="badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">即将</span>` : ""}</td>
+      <td><b>${r.stock}</b></td>
+      <td>${r.type}</td>
+      <td><b class="gold">${r.ratio || "-"}</b></td>
+      <td class="num">${r.factor ? "×" + (Math.round(r.factor * 10000) / 10000) : "-"}</td>
+      <td class="num">${r.price || "-"}</td>
+      <td>${r.annDate || "-"}</td>
+      <td>${who}</td></tr>`;
+  }
+}
+
 // 历史股息补记：抓每只股近5年的派息，按「每个顾客在 ex-date 当天的持股」自动记进股息+Cashflow
 // 顾客持有期间派过的息都会补齐（不只未来的）。已记过/已删过的用 autodiv 键跳过。
 async function backfillDividends(silent) {
@@ -1720,6 +1783,11 @@ async function autoRefreshExDiv() {
   }
   try { await refreshExDiv(); } catch (e) {}
 }
+// 红股列表也是 12 小时自动刷新一次
+async function autoRefreshEntitlements() {
+  if (db.ent && Date.now() - db.ent.fetchedAt < 12 * 3600 * 1000) return;
+  try { await refreshEntitlements(true); } catch (e) {}
+}
 
 // ---------- IPO 上市提醒 ----------
 const IPO_CACHE_V = 4; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后用户看到旧格式）
@@ -1735,7 +1803,9 @@ async function refreshIPO() {
     save();
     renderIPO();
     document.getElementById("sys-error-banner").style.display = "none"; // 抓到了，收起顶部警告
-    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`;
+    // 数据源健康（sourceOk）但 0 家 = 真的没有新股在排队，不是故障
+    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`
+      + (data.rows.length === 0 && data.cardsSeen ? `（数据源正常，读到 ${data.cardsSeen} 家历史 IPO，只是目前没有未上市的）` : "");
   } catch (e) {
     // 抓取失败：顶端全站横幅 + IPO 区红框，别让用户面对一片空白（很可能是数据源又被封了）
     document.getElementById("sys-error-banner").style.display = "block";
@@ -1793,7 +1863,7 @@ function renderIPO() {
   const section = (title, list) =>
     list.length ? `<div class="ipo-group-title">${title} <span class="when">${list.length} 家</span></div>` + list.map(card).join("") : "";
   let html = section("📅 接下来 7 天上市", soon) + section("🔜 之后陆续上市", later) + section("📌 日期待定", tba);
-  box.innerHTML = html || `<div class="form-card"><p class="empty">未来没有 ACE / Main 的 IPO（试按刷新）</p></div>`;
+  box.innerHTML = html || `<div class="form-card"><p class="empty">目前没有即将上市的 ACE / Main IPO —— 这是正常的，有新公司排队就会自动出现。</p></div>`;
 }
 async function autoRefreshIPO() {
   if (db.ipo && db.ipo.v === IPO_CACHE_V && Date.now() - db.ipo.fetchedAt < 12 * 3600 * 1000) {
@@ -1971,7 +2041,7 @@ function importJSON(ev) {
 function clearAll() {
   if (!confirm("⚠️ 确定清空全部数据（包括所有顾客和交易）？此操作不可恢复！建议先导出 JSON 备份。")) return;
   if (!confirm("再确认一次：真的要删除所有记录？")) return;
-  db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null, ipo: null };
+  db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null, ipo: null, ent: null };
   save();
 }
 
@@ -1991,6 +2061,7 @@ if (viewerRole === "client") applyClientModeUI(); // 上次是顾客登入，先
 if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注册页（Google 自动登入成功会收起）
 renderAll();
 autoRefreshExDiv();
+autoRefreshEntitlements();
 // PWA：正式网址（https）才注册 service worker；network-first，不会出现旧版卡住
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 if (autoRecordDividends() > 0) save(); // 开网页时用现有日历数据补记股息

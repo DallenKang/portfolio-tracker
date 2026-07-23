@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v12-klse-source"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v14-ipo-health"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -29,6 +29,35 @@ function canonHouse(s) {
   const low = s.toLowerCase();
   for (const g of HOUSE_ALIASES) if (g.some(a => a.toLowerCase() === low)) return g[0];
   return s;
+}
+
+// 红股 / 拆股 / 送股 预告（i3investor「Bonus, Share Split & Consolidation」）
+// GET /api/entitlements -> [{exDate, annDate, stock, code, type, ratio, factor, price}]
+// 比例意思（已用 Yahoo 交叉验证）：
+//   Bonus Issue / Share Dividend  "X : Y" = 每持 Y 送 X  -> 倍数 (X+Y)/Y
+//   Share Consolidation           "X : Y" = Y 股并成 X 股 -> 倍数 X/Y
+const ENT_URL = "https://klse.i3investor.com/web/entitlement/other/latest";
+async function entitlements() {
+  const html = await (await fetch(ENT_URL, { headers: { "User-Agent": UA } })).text();
+  const m = html.match(/var dtdata = (\[.*?\]);/s);
+  if (!m) throw new Error("dtdata not found");
+  const out = [];
+  for (const r of JSON.parse(m[1])) {
+    const type = String(r[2] || "");
+    if (type === "Adjustment" || type === "Profit Payment") continue; // 窝轮调整/派息，不是股数变动
+    const ratio = String(r[5] || "").trim();
+    const p = ratio.split(":").map(x => parseFloat(x));
+    let factor = null;
+    if (p.length === 2 && p[0] > 0 && p[1] > 0) {
+      factor = /consolidation|consolidat/i.test(type) ? p[0] / p[1] : (p[0] + p[1]) / p[1];
+    }
+    out.push({
+      exDate: String(r[6] || ""), annDate: String(r[0] || ""),
+      stock: String(r[1] || ""), code: String(r[7] || "").replace(/\/+$/, "").split("/").pop(),
+      type, ratio, factor, price: String(r[4] || ""),
+    });
+  }
+  return out;
 }
 
 // 历史股息（近5年）：给「顾客持有期间的股息」自动补记用
@@ -184,6 +213,21 @@ const MON3 = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
 
 // 从 KLSE Screener /v2/ipos 解析即将上市的 ACE / Main 公司
 // （iSaham 2026-07 起被 Cloudflare 锁死，改用这里；underwriter 字段这里没有）
+// 只数「解析得出来的 IPO 卡」有几张（不管上市日期和板块）。
+// 用来判断数据源健不健康：>0 = 页面结构没变；0 = 被封或改版了。
+function parseIpoCards(html) {
+  const found = [];
+  for (const c of html.split('<div class="card mb-3').slice(1)) {
+    const yr = c.match(/title="(20\d\d)"/);
+    const mo = c.match(/text-uppercase">([A-Z][a-z]{2})/);
+    const dy = c.match(/<h3>(\d{1,2})<\/h3>/);
+    const cm = c.match(/\/v2\/stocks\/view\/([0-9A-Z]+)">([^<]+)<\/a><\/h4>/);
+    const board = c.match(/Board:\s*<\/span>\s*<strong>([^<]+)/);
+    if (yr && mo && dy && cm && board) found.push(cm[2].trim());
+  }
+  return found;
+}
+
 function parseIpos(html) {
   const today = new Date().toISOString().slice(0, 10);
   const rows = [];
@@ -263,6 +307,10 @@ export default {
         return json(out);
       }
 
+      if (url.pathname === "/api/entitlements") {
+        return json({ source: ENT_URL, version: WORKER_VERSION, rows: await entitlements() });
+      }
+
       if (url.pathname === "/api/splits") {
         const symbols = (url.searchParams.get("symbols") || "").split(",").slice(0, 60);
         const out = {};
@@ -312,8 +360,11 @@ export default {
       if (url.pathname === "/api/ipos") {
         try {
           const page = await fetch(KLSE_IPO_URL, { headers: { "User-Agent": UA } }).then(r => r.text());
-          // 抓取失败 / 被挡：页面里连一个 IPO 卡都没有 -> 报错，不要冒充「0 家」
-          if (!page.includes("/v2/stocks/view/")) return json({ error: "IPO source unavailable (blocked or changed)" }, 502);
+          // 分辨两件事（不能混）：
+          //   a) 页面拿不到 / 结构变了 -> 真的坏了，报错
+          //   b) 页面正常、卡片解析得到，只是没有「未上市的 ACE/Main」-> 正常的 0 家
+          const cards = parseIpoCards(page);           // 页面上所有 IPO 卡（不分日期/板块）
+          if (!cards.length) return json({ error: "IPO source unavailable (blocked or structure changed)" }, 502);
           const rows = parseIpos(page);
           // 每家抓研究行目标价 + 超额认购（并行，best-effort）
           await Promise.all(rows.map(async r => {
@@ -324,7 +375,8 @@ export default {
             } catch (e) { /* 没有就留空 */ }
           }));
           for (const r of rows) if (r.oversub) r.oversub = fmtOversub(r.oversub); // 统一两位小数
-          return json({ source: KLSE_IPO_URL, version: WORKER_VERSION, rows });
+          // sourceOk = 页面确实读到了 IPO 卡；前端靠它分辨「真的没有」vs「抓不到」
+          return json({ source: KLSE_IPO_URL, version: WORKER_VERSION, sourceOk: true, cardsSeen: cards.length, rows });
         } catch (e) {
           return json({ error: String(e) }, 502);
         }
