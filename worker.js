@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v14-ipo-health"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v15-corpactions"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -29,6 +29,46 @@ function canonHouse(s) {
   const low = s.toLowerCase();
   for (const g of HOUSE_ALIASES) if (g.some(a => a.toLowerCase() === low)) return g[0];
   return s;
+}
+
+// 个股的历史企业行动（i3investor 每只股自己的 entitlement 页）
+// Yahoo 会漏掉马股小型股的红股（实例：EDELTEQ 2026-03-10 1:2 完全没有），所以改用这个当主源。
+// GET /api/corpactions?codes=0278,5102 -> { "0278": [{exDate, type, ratio, factor, autoApply}] }
+// 比例读法（已用 Yahoo 三次交叉验证：AFFIN 1:18=19/18、VSTECS 2:1=3、GCB 4:3=7/3）：
+//   BONUS_ISSUE / SHARE_DIVIDEND  "X : Y" = 每持 Y 送 X   -> 倍数 (X+Y)/Y
+//   STOCK_SPLIT / CONSOLIDATION   "X : Y" = Y 股变成 X 股 -> 倍数 X/Y（PHARMA 1:5=0.2 验证过）
+// 只有「白送、股数直接变」的才自动调整；RIGHTS_ISSUE 要出钱、FREE_WARRANT 是另一种证券 -> 不自动，交给用户决定
+const AUTO_APPLY_TYPES = ["BONUS_ISSUE", "SHARE_DIVIDEND", "STOCK_SPLIT", "CONSOLIDATION", "SHARE_CONSOLIDATION"];
+function corpActionFactor(type, ratio) {
+  const p = String(ratio || "").split(":").map(x => parseFloat(x));
+  if (!(p.length === 2 && p[0] > 0 && p[1] > 0)) return null;
+  const t = String(type || "").toUpperCase();
+  if (t.includes("CONSOLIDAT") || t.includes("SPLIT")) return p[0] / p[1];   // Y 股 -> X 股
+  if (t.includes("BONUS") || t.includes("SHARE_DIVIDEND")) return (p[0] + p[1]) / p[1]; // 送股
+  return null;
+}
+async function corpActions(code) {
+  const html = await (await fetch("https://klse.i3investor.com/web/stock/entitlement/" + encodeURIComponent(code),
+    { headers: { "User-Agent": UA } })).text();
+  const m = html.match(/var dtdata = (\[.*?\]);/s);
+  if (!m) throw new Error("entitlement table not found for " + code);
+  const out = [];
+  for (const r of JSON.parse(m[1])) {
+    const type = String(r[2] || "").toUpperCase();
+    if (type === "DIVIDEND") continue; // 现金股息走另一个接口
+    const ratio = String(r[4] || "").trim();
+    const factor = corpActionFactor(type, ratio);
+    out.push({
+      exDate: isoFromDMY(String(r[1] || "")), annDate: isoFromDMY(String(r[0] || "")),
+      type, subject: String(r[3] || ""), ratio, factor,
+      autoApply: !!(factor && factor !== 1 && AUTO_APPLY_TYPES.some(t => type.includes(t.replace("SHARE_", "")))),
+    });
+  }
+  return out.filter(x => x.exDate).sort((a, b) => a.exDate.localeCompare(b.exDate));
+}
+function isoFromDMY(s) { // "10-Mar-2026" -> "2026-03-10"
+  const p = s.split("-");
+  return (p.length === 3 && MON3[p[1]]) ? `${p[2]}-${MON3[p[1]]}-${p[0].padStart(2, "0")}` : "";
 }
 
 // 红股 / 拆股 / 送股 预告（i3investor「Bonus, Share Split & Consolidation」）
@@ -305,6 +345,17 @@ export default {
           out[s] = { error: "no price from Yahoo or KLSE" };
         }));
         return json(out);
+      }
+
+      if (url.pathname === "/api/corpactions") {
+        const codes = (url.searchParams.get("codes") || "").split(",").slice(0, 60);
+        const out = {};
+        await Promise.all(codes.map(async raw => {
+          const c = raw.trim().toUpperCase();
+          if (!c) return;
+          try { out[c] = await corpActions(c); } catch (e) { out[c] = { error: String(e) }; }
+        }));
+        return json({ version: WORKER_VERSION, data: out });
       }
 
       if (url.pathname === "/api/entitlements") {

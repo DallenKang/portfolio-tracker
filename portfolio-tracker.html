@@ -867,8 +867,8 @@ function computePortfolio() {
       }
       // 0) 红股/拆股先生效（当天的买卖按调整后的持股算）
       // 总成本不变、股数变多 -> 每股成本按比例摊薄；FIFO 各批次同比例放大，保持先进先出次序
-      if (bonusQty > 0 && p.qty > 0) {
-        const factor = (p.qty + bonusQty) / p.qty;
+      if (bonusQty !== 0 && p.qty > 0 && p.qty + bonusQty > 0) {
+        const factor = (p.qty + bonusQty) / p.qty; // 送股 >1；并股 <1（股数减少、每股成本升高）
         if (method === "fifo") for (const lot of lots) { lot.qty *= factor; lot.cps /= factor; }
         p.qty += bonusQty;
       }
@@ -1735,18 +1735,28 @@ async function backfillSplits(silent) {
   const status = document.getElementById("x-status");
   const tickers = [...new Set(db.transactions.map(t => t.ticker))].filter(tk => db.symbols[tk]);
   if (!tickers.length) { if (!silent) alert("还没有股票设了 Bursa 代码"); return 0; }
-  if (!silent) status.textContent = "检查红股/拆股中…（抓近5年记录）";
+  if (!silent) status.textContent = "检查红股/拆股中…（查 i3investor 每只股的记录）";
   try {
-    const symbols = tickers.map(tk => db.symbols[tk]).join(",");
-    const r = await fetch(apiUrl("/api/splits?symbols=" + encodeURIComponent(symbols)));
+    // 用 i3investor 每只股的 entitlement（Yahoo 会漏掉马股小型股的红股，例：EDELTEQ）
+    const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
+    const codes = [...new Set(tickers.map(codeOf))].filter(Boolean).join(",");
+    const r = await fetch(apiUrl("/api/corpactions?codes=" + encodeURIComponent(codes)));
     if (!r.ok) throw new Error("HTTP " + r.status);
-    const data = await r.json();
+    const resp = await r.json();
+    const data = resp.data || {};
     let created = 0;
+    const needManual = []; // 供股/凭单这些不能自动算的，列给用户看
     for (const tk of tickers) {
-      const list = data[db.symbols[tk]];
+      const list = data[codeOf(tk)];
       if (!Array.isArray(list)) continue;
       for (const s of list) {
-        if (!(s.factor > 0) || s.factor === 1 || s.exDate > today()) continue;
+        if (s.exDate > today()) continue;
+        if (!s.autoApply) { // 供股(要出钱)、免费凭单(另一种证券)-> 不自动，提醒用户
+          const anyHeld = db.transactions.some(t => t.ticker === tk && t.date < s.exDate);
+          if (anyHeld) needManual.push(`${tk} ${s.exDate} ${s.type} ${s.ratio}`);
+          continue;
+        }
+        if (!(s.factor > 0) || s.factor === 1) continue;
         // 每个顾客在 ex-date 之前的持股（含更早的红股调整，所以按日期顺序处理）
         const held = {};
         for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
@@ -1757,17 +1767,21 @@ async function backfillSplits(silent) {
           if (held[cid] <= 0) continue;
           const key = `autosplit:${cid}|${tk}|${s.exDate}|${s.factor}`;
           if (db.settings[key]) continue;
-          const extra = Math.round(held[cid] * (s.factor - 1)); // 多出来的股数（取整）
-          if (extra <= 0) continue;
+          const extra = Math.round(held[cid] * (s.factor - 1)); // 送股为正；并股为负（股数减少）
+          if (extra === 0 || held[cid] + extra <= 0) continue;
           db.settings[key] = 1;
           db.transactions.push({ id: "spl" + uid(), clientId: cid, date: s.exDate, ticker: tk,
-            type: "bonus", qty: extra, price: 0, brokerage: 0, stamp: 0, clearing: 0, note: `红股/拆股 ${s.ratio}` });
+            type: "bonus", qty: extra, price: 0, brokerage: 0, stamp: 0, clearing: 0, note: `${s.type} ${s.ratio}` });
           created++;
         }
       }
     }
     if (created) save();
-    if (!silent) status.textContent = created ? `✓ 补记了 ${created} 笔红股/拆股调整（持仓股数已更新）` : "✓ 没有需要调整的红股/拆股";
+    if (!silent) {
+      let msg = created ? `✓ 补记了 ${created} 笔红股/拆股调整（持仓股数已更新）` : "✓ 没有需要调整的红股/拆股";
+      if (needManual.length) msg += ` · ⚠ 这些要你自己判断（供股要出钱、凭单是另一种证券，系统不自动加）：${[...new Set(needManual)].join("；")}`;
+      status.textContent = msg;
+    }
     return created;
   } catch (e) {
     if (!silent) status.textContent = "红股检查失败：" + e.message + API_HINT;
