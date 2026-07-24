@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v17-warrants"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v18-warrants"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -49,6 +49,11 @@ const PAS_ENT_URL = "https://www.pickastock.info/api/Entitlement/";
 const I3_ENT_URL = "https://klse.i3investor.com/web/stock/entitlement/";
 const PAS_SYMBOLS_URL = "https://www.pickastock.info/api/TimeNSales/MainAceSymbol";
 
+// 两边写法不同（"2 : 1" / "2.0000 : 1.0000"），比对前先化成同一个样子
+function normRatio(r) {
+  const p = String(r || "").split(":").map(x => parseFloat(x));
+  return (p.length === 2 && p[0] > 0 && p[1] > 0) ? `${p[0]}:${p[1]}` : "";
+}
 function ratioFactor(kind, ratio) { // kind: "bonus" | "split"
   const p = String(ratio || "").split(":").map(x => parseFloat(x));
   if (!(p.length === 2 && p[0] > 0 && p[1] > 0)) return null;
@@ -60,6 +65,27 @@ function ratioFactor(kind, ratio) { // kind: "bonus" | "split"
 function warrantPerShare(ratio) {
   const p = String(ratio || "").split(":").map(x => parseFloat(x));
   return (p.length === 2 && p[0] > 0 && p[1] > 0) ? p[0] / p[1] : null;
+}
+// 有 "warrant" 字眼 ≠ 白拿的凭单。必须看公告原文，三种都实测过：
+//   白拿  Bonus Issue (Warrants) GCB 2025："ISSUANCE OF ... FREE WARRANTS ... FOR EVERY FOUR (4) EXISTING SHARES"
+//   白拿  Others (Warrants)      GCB 2019："Issue of ... free warrants ... for every 3 existing ordinary shares"
+//   要钱  Rights Issue (Shares & Warrants) YINSON 2022：附加股 RM1.41 一股，认购了才附送凭单
+//         —— 公告里照样有 "FREE DETACHABLE WARRANTS" 字眼，只看字眼会误判，所以先挡 RIGHT
+//   不算  Others (Shares & Warrants) AFFIN 2000："Existing warrantholders entitlement to the adjustment"
+//         —— 那是给旧凭单持有人调行使价，不是发新凭单给股东
+function isFreeWarrant(type, desc) {
+  const t = String(type || "").toUpperCase();
+  if (!t.includes("WARRANT")) return false;
+  if (t.includes("RIGHT")) return false;                       // 要出钱认购才有 -> 不自动给
+  const d = String(desc || "").trim();
+  if (!d) return t.includes("BONUS");                          // 没有公告文字时只信 "Bonus Issue (Warrants)"
+  if (/existing warrant\s?holders|adjustment to the/i.test(d)) return false; // 调整旧凭单，不是新发
+  if (/rights issue|issue price|subscription price/i.test(d)) return false;  // 描述里透露要认购
+  // 要同时是「发新凭单」和「每持 N 股送 M 张」。注意 MINOX/RAMSSOL 写 "BONUS ISSUE OF ... WARRANTS"
+  // 没有 free 字眼（bonus 本身就是白送），所以不能只认 free。
+  const isIssue = /bonus issue|free\s+(\w+\s+){0,2}warrants?|issuance of|issue of/i.test(d);
+  const perShare = /warrants?\s+for every|for every\s+[\w()\s]{0,20}(existing\s+)?(ordinary\s+)?shares?/i.test(d);
+  return isIssue && perShare;
 }
 // 现在还在市的全部 counter（2700+）。用途：判断凭单到期了没有。
 // 不能用「KLSE Screener 抓不抓得到价格」来判断 —— 它连早就下市的凭单也照样回传旧价（GCB-WA 实测）。
@@ -105,6 +131,7 @@ async function i3IsWarrant(detailPath) {
     const html = await (await fetch("https://klse.i3investor.com" + detailPath,
       { headers: { "User-Agent": UA, "Referer": "https://klse.i3investor.com/" } })).text();
     const txt = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    if (/renounceable|rights issue|issue price of rm/i.test(txt)) return null; // 要认购的，不是白拿
     if (/free warrants?|bonus issue of .{0,40}warrants?|warrants? for every/i.test(txt)) return true;
     if (/bonus issue of .{0,60}(ordinary )?shares?/i.test(txt)) return false;
   } catch (e) { /* 读不到就当不确定 */ }
@@ -117,8 +144,14 @@ async function corpActions(code) {
     i3Entitlements(code).catch(() => []),
   ]);
   if (pas === null) throw new Error("pickastock entitlement failed for " + code);
-  const i3ByDate = new Map();
-  for (const e of i3) if (!i3ByDate.has(e.exDate)) i3ByDate.set(e.exDate, e);
+  // 同一天可能有好几笔（PHARMA 2013-05-31 同时有 BONUS_ISSUE 1:10 和 STOCK_SPLIT 2:1），
+  // 只按日期找会拿错笔 -> 先用「日期+比例」精确配对，配不到才退回只看日期。
+  const i3ByKey = new Map(), i3ByDate = new Map();
+  for (const e of i3) {
+    const k = e.exDate + "|" + normRatio(e.ratio);
+    if (!i3ByKey.has(k)) i3ByKey.set(k, e);
+    if (!i3ByDate.has(e.exDate)) i3ByDate.set(e.exDate, e);
+  }
 
   const out = [], seen = new Set();
   for (const it of pas) {
@@ -130,12 +163,12 @@ async function corpActions(code) {
     let { kind, auto } = cls;
     // Pick@Stock 用 "Others" 装拆股，含糊；问 i3 同一天是什么
     if (!kind && ratio) {
-      const peer = i3ByDate.get(exDate);
+      const peer = i3ByKey.get(exDate + "|" + normRatio(ratio)) || i3ByDate.get(exDate);
       const pt = peer ? peer.type : "";
       if (pt.includes("SPLIT") || pt.includes("CONSOLIDAT")) { kind = "split"; auto = true; }
     }
     const factor = kind ? ratioFactor(kind, ratio) : null;
-    const isW = String(it.EntitlementType || "").toUpperCase().includes("WARRANT");
+    const isW = isFreeWarrant(it.EntitlementType, it.EntitlementDesc);
     seen.add(exDate);
     out.push({
       exDate, annDate: isoFromDMonY(String(it.AnnDate || "")),

@@ -284,6 +284,31 @@ def warrant_per_share(ratio):
     return p[0] / p[1] if len(p) == 2 and p[0] > 0 and p[1] > 0 else None
 
 
+def is_free_warrant(etype, desc):
+    """有 warrant 字眼 != 白拿的凭单。必须看公告原文，三种都实测过：
+       白拿  Bonus Issue (Warrants) GCB 2025: "ISSUANCE OF ... FREE WARRANTS ... FOR EVERY FOUR (4) EXISTING SHARES"
+       白拿  Others (Warrants)      GCB 2019: "Issue of ... free warrants ... for every 3 existing ordinary shares"
+       要钱  Rights Issue (Shares & Warrants) YINSON 2022: 附加股 RM1.41 一股，认购了才附送凭单
+             —— 公告里照样有 "FREE DETACHABLE WARRANTS"，只看字眼会误判，所以先挡 RIGHT
+       不算  Others (Shares & Warrants) AFFIN 2000: "Existing warrantholders entitlement to the adjustment"
+             —— 给旧凭单持有人调行使价，不是发新凭单给股东"""
+    t = str(etype or "").upper()
+    if "WARRANT" not in t or "RIGHT" in t:
+        return False
+    d = str(desc or "").strip()
+    if not d:
+        return "BONUS" in t          # 没有公告文字时只信 "Bonus Issue (Warrants)"
+    if re.search(r"existing warrant\s?holders|adjustment to the", d, re.I):
+        return False
+    if re.search(r"rights issue|issue price|subscription price", d, re.I):
+        return False
+    # 要同时是「发新凭单」和「每持 N 股送 M 张」。MINOX/RAMSSOL 写 "BONUS ISSUE OF ... WARRANTS"
+    # 没有 free 字眼（bonus 本身就是白送），所以不能只认 free。
+    is_issue = re.search(r"bonus issue|free\s+(\w+\s+){0,2}warrants?|issuance of|issue of", d, re.I)
+    per_share = re.search(r"warrants?\s+for every|for every\s+[\w()\s]{0,20}(existing\s+)?(ordinary\s+)?shares?", d, re.I)
+    return bool(is_issue and per_share)
+
+
 def i3_is_warrant(detail_path):
     """i3 只写 BONUS_ISSUE、分不出股票还是凭单时，去详情页读 Bursa 公告原文。
     返回 True=凭单 / False=真红股 / None=断不出（交给用户人工看）"""
@@ -294,6 +319,8 @@ def i3_is_warrant(detail_path):
     except Exception:
         return None
     txt = re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", page))
+    if re.search(r"renounceable|rights issue|issue price of rm", txt, re.I):
+        return None                      # 要认购的，不是白拿
     if re.search(r"free warrants?|bonus issue of .{0,40}warrants?|warrants? for every", txt, re.I):
         return True
     if re.search(r"bonus issue of .{0,60}(ordinary )?shares?", txt, re.I):
@@ -309,6 +336,15 @@ def iso_from_dmy(s):        # "10-Mar-2026" -> "2026-03-10"
 def iso_from_dmony(s):      # "10 Mar 2026" -> "2026-03-10"
     p = str(s).strip().split()
     return "%s-%s-%s" % (p[2], MON3[p[1]], p[0].zfill(2)) if len(p) == 3 and p[1] in MON3 else ""
+
+
+def norm_ratio(r):
+    """两边写法不同（"2 : 1" / "2.0000 : 1.0000"），比对前先化成同一个样子"""
+    try:
+        p = [float(x) for x in str(r or "").split(":")]
+    except ValueError:
+        return ""
+    return "%s:%s" % (p[0], p[1]) if len(p) == 2 and p[0] > 0 and p[1] > 0 else ""
 
 
 def ratio_factor(kind, ratio):
@@ -358,8 +394,11 @@ def corp_actions(code):
     items = json.loads(http_get(PAS_ENT_URL + urllib.parse.quote(code) + "?page=1&rows=200",
                                 referer="https://www.pickastock.info/")).get("items") or []
     i3 = i3_entitlements(code)
-    i3_by_date = {}
+    # 同一天可能有好几笔（PHARMA 2013-05-31 同时有 BONUS_ISSUE 1:10 和 STOCK_SPLIT 2:1），
+    # 只按日期找会拿错笔 -> 先用「日期+比例」精确配对，配不到才退回只看日期。
+    i3_by_key, i3_by_date = {}, {}
     for e in i3:
+        i3_by_key.setdefault(e["exDate"] + "|" + norm_ratio(e["ratio"]), e)
         i3_by_date.setdefault(e["exDate"], e)
 
     out, seen = [], set()
@@ -372,13 +411,14 @@ def corp_actions(code):
             continue
         kind, auto = cls
         ratio = str(it.get("Ratio") or "").strip()
-        if not kind and ratio:                     # Pick@Stock 用 "Others" 装拆股，问 i3 同一天是什么
-            pt = (i3_by_date.get(ex) or {}).get("type", "")
+        if not kind and ratio:                     # Pick@Stock 用 "Others" 装拆股，问 i3 那笔是什么
+            peer = i3_by_key.get(ex + "|" + norm_ratio(ratio)) or i3_by_date.get(ex)
+            pt = (peer or {}).get("type", "")
             if "SPLIT" in pt or "CONSOLIDAT" in pt:
                 kind, auto = "split", True
         factor = ratio_factor(kind, ratio) if kind else None
         seen.add(ex)
-        is_w = "WARRANT" in str(it.get("EntitlementType") or "").upper()
+        is_w = is_free_warrant(it.get("EntitlementType"), it.get("EntitlementDesc"))
         out.append({"exDate": ex, "annDate": iso_from_dmony(it.get("AnnDate") or ""),
                     "type": str(it.get("EntitlementType") or ""),
                     "subject": str(it.get("EntitlementDesc") or it.get("EntitlementType") or ""),
