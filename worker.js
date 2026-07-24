@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v15-corpactions"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v16-pickastock"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -31,43 +31,106 @@ function canonHouse(s) {
   return s;
 }
 
-// 个股的历史企业行动（i3investor 每只股自己的 entitlement 页）
-// Yahoo 会漏掉马股小型股的红股（实例：EDELTEQ 2026-03-10 1:2 完全没有），所以改用这个当主源。
-// GET /api/corpactions?codes=0278,5102 -> { "0278": [{exDate, type, ratio, factor, autoApply}] }
-// 比例读法（已用 Yahoo 三次交叉验证：AFFIN 1:18=19/18、VSTECS 2:1=3、GCB 4:3=7/3）：
-//   BONUS_ISSUE / SHARE_DIVIDEND  "X : Y" = 每持 Y 送 X   -> 倍数 (X+Y)/Y
-//   STOCK_SPLIT / CONSOLIDATION   "X : Y" = Y 股变成 X 股 -> 倍数 X/Y（PHARMA 1:5=0.2 验证过）
-// 只有「白送、股数直接变」的才自动调整；RIGHTS_ISSUE 要出钱、FREE_WARRANT 是另一种证券 -> 不自动，交给用户决定
-const AUTO_APPLY_TYPES = ["BONUS_ISSUE", "SHARE_DIVIDEND", "STOCK_SPLIT", "CONSOLIDATION", "SHARE_CONSOLIDATION"];
-function corpActionFactor(type, ratio) {
+// 个股的历史企业行动 —— 主源 Pick@Stock（持牌 Bursa 数据），i3investor 只当交叉核对。
+// GET /api/corpactions?codes=0278,5102 -> { "0278": [{exDate, type, ratio, factor, autoApply, needCheck, source}] }
+//
+// 为什么换掉 i3investor 当主源（2026-07-24 实测，会算错客户股数的坑）：
+//   i3 把「免费凭单 bonus issue of WARRANTS」也标成 BONUS_ISSUE，跟真红股一模一样，分不出来。
+//   实例 EDELTEQ 0278 2026-03-10「1:2」——Bursa 公告原文是 292,894,596 free WARRANTS，
+//   除权日股价只跌 10.5%（真的 1 送 2 红股要跌 33%）。照 i3 自动跑会平白多给客户 50% 股票。
+//   同样中招的还有 MINOX 0288 2025-02-03、RAMSSOL 0236 2023-02-24、GCB 5102 2025-06-17 那笔 1:4。
+//   Pick@Stock 明确分开写 "Bonus Issue" 和 "Bonus Issue (Warrants)"，所以拿它当主源。
+//
+// 比例读法（已用 Yahoo 股价交叉验证：AFFIN 1:18=19/18、VSTECS 2:1=3、GCB 4:3=7/3、PHARMA 1:5=0.2）：
+//   Bonus Issue / Share Dividend   "X : Y" = 每持 Y 送 X   -> 倍数 (X+Y)/Y
+//   Split / Consolidation          "X : Y" = Y 股变成 X 股 -> 倍数 X/Y
+// 只有「白送、股数直接变」的才 autoApply；凭单/附加股(要出钱)/dividend in specie 一律不自动。
+const PAS_ENT_URL = "https://www.pickastock.info/api/Entitlement/";
+const I3_ENT_URL = "https://klse.i3investor.com/web/stock/entitlement/";
+
+function ratioFactor(kind, ratio) { // kind: "bonus" | "split"
   const p = String(ratio || "").split(":").map(x => parseFloat(x));
   if (!(p.length === 2 && p[0] > 0 && p[1] > 0)) return null;
+  return kind === "split" ? p[0] / p[1] : (p[0] + p[1]) / p[1];
+}
+// 把 Pick@Stock 的 EntitlementType 归类。返回 null = 跟股数无关，直接跳过。
+function classifyPas(type) {
   const t = String(type || "").toUpperCase();
-  if (t.includes("CONSOLIDAT") || t.includes("SPLIT")) return p[0] / p[1];   // Y 股 -> X 股
-  if (t.includes("BONUS") || t.includes("SHARE_DIVIDEND")) return (p[0] + p[1]) / p[1]; // 送股
-  return null;
+  if (t.includes("WARRANT")) return { kind: null, auto: false };          // 免费凭单：另一种证券，股数不变
+  if (t.includes("RIGHT")) return { kind: null, auto: false };            // 附加股：要出钱，用户自己决定
+  if (t.includes("SPECIE")) return { kind: null, auto: false };           // dividend in specie：派别家公司的股
+  if (t.includes("CONSOLIDAT") || t.includes("SPLIT") || t.includes("SUBDIVI")) return { kind: "split", auto: true };
+  if (t.includes("BONUS") || t.includes("SHARE DIVIDEND")) return { kind: "bonus", auto: true };
+  if (t.includes("DIVIDEND") || t.includes("DISTRIBUTION") || t.includes("CAPITAL REPAYMENT")) return null; // 现金，走另一个接口
+  return { kind: null, auto: false }; // "Others" 等含糊类别 -> 交给 i3 判，判不出就人工看
+}
+async function pasEntitlements(code) {
+  const r = await fetch(PAS_ENT_URL + encodeURIComponent(code) + "?page=1&rows=200",
+    { headers: { "User-Agent": UA, "Referer": "https://www.pickastock.info/" } });
+  const j = await r.json();
+  return Array.isArray(j.items) ? j.items : [];
+}
+async function i3Entitlements(code) {
+  const html = await (await fetch(I3_ENT_URL + encodeURIComponent(code), { headers: { "User-Agent": UA } })).text();
+  const m = html.match(/var dtdata = (\[.*?\]);/s);
+  if (!m) return [];
+  return JSON.parse(m[1]).map(r => ({
+    exDate: isoFromDMY(String(r[1] || "")), annDate: isoFromDMY(String(r[0] || "")),
+    type: String(r[2] || "").toUpperCase(), subject: String(r[3] || ""), ratio: String(r[4] || "").trim(),
+  })).filter(x => x.exDate && x.type !== "DIVIDEND");
 }
 async function corpActions(code) {
-  const html = await (await fetch("https://klse.i3investor.com/web/stock/entitlement/" + encodeURIComponent(code),
-    { headers: { "User-Agent": UA } })).text();
-  const m = html.match(/var dtdata = (\[.*?\]);/s);
-  if (!m) throw new Error("entitlement table not found for " + code);
-  const out = [];
-  for (const r of JSON.parse(m[1])) {
-    const type = String(r[2] || "").toUpperCase();
-    if (type === "DIVIDEND") continue; // 现金股息走另一个接口
-    const ratio = String(r[4] || "").trim();
-    const factor = corpActionFactor(type, ratio);
+  // 两个源同时抓；Pick@Stock 是主，i3 用来 (a) 解释 "Others" (b) 补 Pick@Stock 漏掉的
+  const [pas, i3] = await Promise.all([
+    pasEntitlements(code).catch(() => null),
+    i3Entitlements(code).catch(() => []),
+  ]);
+  if (pas === null) throw new Error("pickastock entitlement failed for " + code);
+  const i3ByDate = new Map();
+  for (const e of i3) if (!i3ByDate.has(e.exDate)) i3ByDate.set(e.exDate, e);
+
+  const out = [], seen = new Set();
+  for (const it of pas) {
+    const exDate = isoFromDMonY(String(it.ExDate || ""));
+    if (!exDate) continue;
+    const cls = classifyPas(it.EntitlementType);
+    if (cls === null) continue; // 现金股息
+    const ratio = String(it.Ratio || "").trim();
+    let { kind, auto } = cls;
+    // Pick@Stock 用 "Others" 装拆股，含糊；问 i3 同一天是什么
+    if (!kind && ratio) {
+      const peer = i3ByDate.get(exDate);
+      const pt = peer ? peer.type : "";
+      if (pt.includes("SPLIT") || pt.includes("CONSOLIDAT")) { kind = "split"; auto = true; }
+    }
+    const factor = kind ? ratioFactor(kind, ratio) : null;
+    seen.add(exDate);
     out.push({
-      exDate: isoFromDMY(String(r[1] || "")), annDate: isoFromDMY(String(r[0] || "")),
-      type, subject: String(r[3] || ""), ratio, factor,
-      autoApply: !!(factor && factor !== 1 && AUTO_APPLY_TYPES.some(t => type.includes(t.replace("SHARE_", "")))),
+      exDate, annDate: isoFromDMonY(String(it.AnnDate || "")),
+      type: String(it.EntitlementType || ""), subject: String(it.EntitlementDesc || it.EntitlementType || ""),
+      ratio, factor, source: "pickastock", ref: it.ReferenceUrl || "",
+      autoApply: !!(auto && factor && factor !== 1),
+      needCheck: false,
     });
   }
-  return out.filter(x => x.exDate).sort((a, b) => a.exDate.localeCompare(b.exDate));
+  // i3 有、Pick@Stock 没有的（例：EDELTEQ 的凭单红股）：列出来但绝不自动套用，让用户自己看
+  for (const e of i3) {
+    if (seen.has(e.exDate)) continue;
+    out.push({
+      exDate: e.exDate, annDate: e.annDate, type: e.type, subject: e.subject, ratio: e.ratio,
+      factor: null, source: "i3investor", ref: "",
+      autoApply: false,
+      needCheck: true, // 只有一个来源有 -> 人工确认是红股还是凭单
+    });
+  }
+  return out.sort((a, b) => a.exDate.localeCompare(b.exDate));
 }
 function isoFromDMY(s) { // "10-Mar-2026" -> "2026-03-10"
   const p = s.split("-");
+  return (p.length === 3 && MON3[p[1]]) ? `${p[2]}-${MON3[p[1]]}-${p[0].padStart(2, "0")}` : "";
+}
+function isoFromDMonY(s) { // "10 Mar 2026" -> "2026-03-10"
+  const p = String(s).trim().split(/\s+/);
   return (p.length === 3 && MON3[p[1]]) ? `${p[2]}-${MON3[p[1]]}-${p[0].padStart(2, "0")}` : "";
 }
 

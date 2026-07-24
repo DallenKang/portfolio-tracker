@@ -248,10 +248,112 @@ def parse_ipos(page):
     return rows
 
 
-def http_get(url, timeout=40):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def http_get(url, timeout=40, referer=None):
+    hdrs = {"User-Agent": UA}
+    if referer:
+        hdrs["Referer"] = referer
+    req = urllib.request.Request(url, headers=hdrs)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "replace")
+
+
+# ---- 个股企业行动：主源 Pick@Stock（持牌 Bursa 数据），i3investor 交叉核对 ----
+# i3 把「免费凭单」也标成 BONUS_ISSUE，跟真红股分不出来（EDELTEQ / MINOX / RAMSSOL / GCB 都中招），
+# 照它跑会平白给客户多加股票。Pick@Stock 明确分开 "Bonus Issue" 和 "Bonus Issue (Warrants)"。
+PAS_ENT_URL = "https://www.pickastock.info/api/Entitlement/"
+I3_ENT_URL = "https://klse.i3investor.com/web/stock/entitlement/"
+
+
+def iso_from_dmy(s):        # "10-Mar-2026" -> "2026-03-10"
+    p = s.split("-")
+    return "%s-%s-%s" % (p[2], MON3[p[1]], p[0].zfill(2)) if len(p) == 3 and p[1] in MON3 else ""
+
+
+def iso_from_dmony(s):      # "10 Mar 2026" -> "2026-03-10"
+    p = str(s).strip().split()
+    return "%s-%s-%s" % (p[2], MON3[p[1]], p[0].zfill(2)) if len(p) == 3 and p[1] in MON3 else ""
+
+
+def ratio_factor(kind, ratio):
+    try:
+        p = [float(x) for x in str(ratio or "").split(":")]
+    except ValueError:
+        return None
+    if len(p) != 2 or p[0] <= 0 or p[1] <= 0:
+        return None
+    return p[0] / p[1] if kind == "split" else (p[0] + p[1]) / p[1]
+
+
+def classify_pas(t):
+    """归类 Pick@Stock 的 EntitlementType。返回 None = 现金股息，直接跳过。"""
+    t = str(t or "").upper()
+    if "WARRANT" in t or "RIGHT" in t or "SPECIE" in t:
+        return (None, False)                       # 凭单 / 附加股 / 派别家股票 -> 股数不变
+    if "CONSOLIDAT" in t or "SPLIT" in t or "SUBDIVI" in t:
+        return ("split", True)
+    if "BONUS" in t or "SHARE DIVIDEND" in t:
+        return ("bonus", True)
+    if "DIVIDEND" in t or "DISTRIBUTION" in t or "CAPITAL REPAYMENT" in t:
+        return None
+    return (None, False)                           # "Others" 等含糊类别 -> 靠 i3 判
+
+
+def i3_entitlements(code):
+    try:
+        page = http_get(I3_ENT_URL + urllib.parse.quote(code))
+    except Exception:
+        return []
+    m = re.search(r"var dtdata = (\[.*?\]);", page, re.S)
+    if not m:
+        return []
+    out = []
+    for r in json.loads(m.group(1)):
+        t = str(r[2] or "").upper()
+        ex = iso_from_dmy(str(r[1] or ""))
+        if ex and t != "DIVIDEND":
+            out.append({"exDate": ex, "annDate": iso_from_dmy(str(r[0] or "")),
+                        "type": t, "subject": str(r[3] or ""), "ratio": str(r[4] or "").strip()})
+    return out
+
+
+def corp_actions(code):
+    items = json.loads(http_get(PAS_ENT_URL + urllib.parse.quote(code) + "?page=1&rows=200",
+                                referer="https://www.pickastock.info/")).get("items") or []
+    i3 = i3_entitlements(code)
+    i3_by_date = {}
+    for e in i3:
+        i3_by_date.setdefault(e["exDate"], e)
+
+    out, seen = [], set()
+    for it in items:
+        ex = iso_from_dmony(it.get("ExDate") or "")
+        if not ex:
+            continue
+        cls = classify_pas(it.get("EntitlementType"))
+        if cls is None:
+            continue
+        kind, auto = cls
+        ratio = str(it.get("Ratio") or "").strip()
+        if not kind and ratio:                     # Pick@Stock 用 "Others" 装拆股，问 i3 同一天是什么
+            pt = (i3_by_date.get(ex) or {}).get("type", "")
+            if "SPLIT" in pt or "CONSOLIDAT" in pt:
+                kind, auto = "split", True
+        factor = ratio_factor(kind, ratio) if kind else None
+        seen.add(ex)
+        out.append({"exDate": ex, "annDate": iso_from_dmony(it.get("AnnDate") or ""),
+                    "type": str(it.get("EntitlementType") or ""),
+                    "subject": str(it.get("EntitlementDesc") or it.get("EntitlementType") or ""),
+                    "ratio": ratio, "factor": factor, "source": "pickastock",
+                    "ref": it.get("ReferenceUrl") or "",
+                    "autoApply": bool(auto and factor and factor != 1), "needCheck": False})
+
+    for e in i3:                                   # i3 有、Pick@Stock 没有 -> 列出但绝不自动套用
+        if e["exDate"] in seen:
+            continue
+        out.append({"exDate": e["exDate"], "annDate": e["annDate"], "type": e["type"],
+                    "subject": e["subject"], "ratio": e["ratio"], "factor": None,
+                    "source": "i3investor", "ref": "", "autoApply": False, "needCheck": True})
+    return sorted(out, key=lambda x: x["exDate"])
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -262,6 +364,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.handle_divhistory()
         elif self.path.startswith("/api/splits"):
             self.handle_splits()
+        elif self.path.startswith("/api/corpactions"):
+            self.handle_corpactions()
         elif self.path.startswith("/api/exdividends"):
             self.handle_exdividends()
         elif self.path.startswith("/api/ipos"):
@@ -317,6 +421,20 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 out[s] = {"error": str(e)}
         self.send_json(out)
+
+    def handle_corpactions(self):
+        qs = urllib.parse.urlparse(self.path).query
+        codes = urllib.parse.parse_qs(qs).get("codes", [""])[0].split(",")
+        out = {}
+        for c in codes[:60]:
+            c = c.strip()
+            if not c:
+                continue
+            try:
+                out[c] = corp_actions(c)
+            except Exception as e:
+                out[c] = {"error": str(e)}
+        self.send_json({"version": "local-v16-pickastock", "data": out})
 
     def handle_divhistory(self):
         qs = urllib.parse.urlparse(self.path).query
