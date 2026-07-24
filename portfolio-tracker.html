@@ -321,7 +321,7 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>顾客</th><th>股票</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
+        <th>顾客</th><th>股票</th><th>代码 Code</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
         <th class="num">现价</th><th class="num">市值</th><th class="num">未实现 P/(L)</th><th class="num">%</th>
       </tr></thead>
       <tbody id="h-body"></tbody>
@@ -989,14 +989,14 @@ function renderAll() {
   const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId));
   let totalCost = 0, totalValue = 0, totalUnrealized = 0, hasPrice = false;
   const hBody = document.getElementById("h-body");
-  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="9">没有持仓</td></tr>`;
+  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="10">没有持仓</td></tr>`;
   const byClient = {};
   for (const p of held) (byClient[p.clientId] = byClient[p.clientId] || []).push(p);
   const clientIds = Object.keys(byClient)
     .sort((a, b) => (clientById(a)?.code || clientById(a)?.name || "").localeCompare(clientById(b)?.code || clientById(b)?.name || ""));
   for (const cid of clientIds) {
     const c = clientById(cid);
-    hBody.innerHTML += `<tr class="client-header"><td colspan="9">👤 ${clientLabel(c)}${c && c.account ? ` · ${c.account}` : ""}</td></tr>`;
+    hBody.innerHTML += `<tr class="client-header"><td colspan="10">👤 ${clientLabel(c)}${c && c.account ? ` · ${c.account}` : ""}</td></tr>`;
     let subCost = 0, subValue = 0, subU = 0, subHasPrice = false;
     for (const p of byClient[cid].sort((a, b) => a.ticker.localeCompare(b.ticker))) {
       const avg = p.cost / p.qty;
@@ -1012,11 +1012,12 @@ function renderAll() {
         pnlCell = `<span class="${pnlClass(u)}">${pnlFmt(u)}</span>`;
         pctCell = `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>`;
       }
-      hBody.innerHTML += `<tr><td></td><td><b>${p.ticker}</b></td><td class="num">${p.qty.toLocaleString()}</td>
+      const code = (db.symbols[p.ticker] || "").replace(/\.KL$/i, ""); // 交易时存的 Bursa 代码，这里一并显示
+      hBody.innerHTML += `<tr><td></td><td><b>${p.ticker}</b></td><td class="hint">${code || "-"}</td><td class="num">${p.qty.toLocaleString()}</td>
         <td class="num">${avg.toFixed(4)}</td><td class="num">${fmtN(p.cost)}</td>
         <td class="num">${pr ? pr.price.toFixed(4) : "-"}</td><td class="num">${valCell}</td><td class="num">${pnlCell}</td><td class="num">${pctCell}</td></tr>`;
     }
-    hBody.innerHTML += `<tr class="subtotal"><td></td><td>小计</td><td></td><td></td><td class="num">${fmtN(subCost)}</td><td></td>
+    hBody.innerHTML += `<tr class="subtotal"><td></td><td>小计</td><td></td><td></td><td></td><td class="num">${fmtN(subCost)}</td><td></td>
       <td class="num">${subHasPrice ? fmtN(subValue) : "-"}</td>
       <td class="num">${subHasPrice ? `<span class="${pnlClass(subU)}">${pnlFmt(subU)}</span>` : "-"}</td>
       <td class="num">${subHasPrice && subCost > 0 ? `<span class="${pnlClass(subU)}">${(subU / subCost * 100).toFixed(2)}%</span>` : "-"}</td></tr>`;
@@ -2083,7 +2084,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
    交易记录表（#t-body）有它自己的排序（按原始数据排，更准），这里跳过不动它。 */
 const SORT_SKIP = ["t-body"];              // 已经有自己排序的表
 const tableSort = new Map();               // tbodyId -> {col, dir}
-let sortingNow = false;                    // 防止自己改 DOM 又触发 observer
+const sortWatch = new Map();               // tbodyId -> MutationObserver（重画后自动把排序套回去）
 
 // 把一格的文字变成可以比较的值：数字（去掉逗号 RM % 括号负数）、日期、否则当文字
 function sortVal(td) {
@@ -2105,17 +2106,21 @@ function applyTableSort(tbody) {
   const st = tableSort.get(tbody.id);
   const rows = [...tbody.rows];
   if (!rows.length || rows.some(r => r.querySelector("td.empty"))) return;
-  sortingNow = true;
-  // 持仓表有「👤 顾客」分组行 -> 只在每一组里面排，不打散分组
+  // 搬动行本身也是 DOM 改动，会再触发观察器 -> 先断开，排完才接回去（观察器回呼是非同步的，
+  // 用布尔旗标挡不住：旗标早就放开了，会变成自己触发自己的无限循环）
+  const watch = sortWatch.get(tbody.id);
+  if (watch) watch.disconnect();
+  // 持仓表有「👤 顾客」分组行 -> 只在每一组里面排，不打散分组；「小计」永远钉在该组最后
   const blocks = [];
   let cur = null;
   for (const r of rows) {
-    if (r.classList.contains("client-header")) { cur = { head: r, items: [] }; blocks.push(cur); continue; }
-    if (!cur) { cur = { head: null, items: [] }; blocks.push(cur); }
-    cur.items.push(r);
+    if (r.classList.contains("client-header")) { cur = { head: r, items: [], foot: [] }; blocks.push(cur); continue; }
+    if (!cur) { cur = { head: null, items: [], foot: [] }; blocks.push(cur); }
+    (r.classList.contains("subtotal") ? cur.foot : cur.items).push(r);
   }
   for (const b of blocks) {
-    b.items.forEach((r, i) => { r._i = i; });
+    // 只在第一次见到这行时记原本位置；排序只是搬动同一批 DOM，重画才会产生新行 -> 那时才重新记
+    b.items.forEach((r, i) => { if (r._i === undefined) r._i = i; });
     if (st) {
       b.items.sort((x, y) => {
         const a = sortVal(x.cells[st.col]), c = sortVal(y.cells[st.col]);
@@ -2131,9 +2136,13 @@ function applyTableSort(tbody) {
     }
   }
   const frag = document.createDocumentFragment();
-  for (const b of blocks) { if (b.head) frag.appendChild(b.head); for (const r of b.items) frag.appendChild(r); }
+  for (const b of blocks) {
+    if (b.head) frag.appendChild(b.head);
+    for (const r of b.items) frag.appendChild(r);
+    for (const r of b.foot) frag.appendChild(r); // 小计留在最后
+  }
   tbody.appendChild(frag);
-  sortingNow = false;
+  if (watch) watch.observe(tbody, { childList: true });
 }
 
 function drawSortArrows(table, tbodyId) {
@@ -2166,8 +2175,9 @@ function initTableSort() {
     });
     drawSortArrows(table, tbody.id);
     // 表格重画后（例如改了一笔交易）自动把排序套回去，不用再点一次
-    new MutationObserver(() => { if (!sortingNow && tableSort.has(tbody.id)) applyTableSort(tbody); })
-      .observe(tbody, { childList: true });
+    const watch = new MutationObserver(() => { if (tableSort.has(tbody.id)) applyTableSort(tbody); });
+    sortWatch.set(tbody.id, watch);
+    watch.observe(tbody, { childList: true });
   }
 }
 initTableSort();
