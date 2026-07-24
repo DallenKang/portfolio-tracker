@@ -874,6 +874,11 @@ function computePortfolio() {
         const factor = (p.qty + bonusQty) / p.qty; // 送股 >1；并股 <1（股数减少、每股成本升高）
         if (method === "fifo") for (const lot of lots) { lot.qty *= factor; lot.cps /= factor; }
         p.qty += bonusQty;
+      } else if (bonusQty > 0 && p.qty === 0) {
+        // 免费凭单：这个 counter 本来就没有持仓（不是母股摊薄），白拿的 -> 成本 0 开仓。
+        // 卖掉时收到多少就全算赚。上面那条不动，所以原有的红股/拆股算法完全没变。
+        if (method === "fifo") lots.push({ qty: bonusQty, cps: 0 });
+        p.qty += bonusQty; // p.cost 不加：白拿的没有成本
       }
       const buyCps = buyQty > 0 ? buyNet / buyQty : 0;   // 当天每股买入净成本
       const sellPps = sellQty > 0 ? sellNet / sellQty : 0; // 当天每股卖出净收
@@ -1010,7 +1015,8 @@ function renderAll() {
         subValue += mv; subU += u;
         valCell = fmtN(mv);
         pnlCell = `<span class="${pnlClass(u)}">${pnlFmt(u)}</span>`;
-        pctCell = `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>`;
+        // 成本 0（免费凭单白拿的）没有百分比可算，除下去会变 Infinity%
+        pctCell = p.cost > 0 ? `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>` : `<span class="hint">白拿</span>`;
       }
       const code = (db.symbols[p.ticker] || "").replace(/\.KL$/i, ""); // 交易时存的 Bursa 代码，这里一并显示
       hBody.innerHTML += `<tr><td></td><td><b>${p.ticker}</b></td><td class="hint">${code || "-"}</td><td class="num">${p.qty.toLocaleString()}</td>
@@ -1746,20 +1752,56 @@ async function backfillSplits(silent) {
     // 主源 Pick@Stock（持牌 Bursa 数据），i3investor 交叉核对。
     // 关键：i3 把「免费凭单」也写成 Bonus Issue，照它跑会平白多给客户股票（EDELTEQ / MINOX 实例）。
     const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
-    const codes = [...new Set(tickers.map(codeOf))].filter(Boolean).join(",");
+    // 只查母股（4 位数代码）。凭单代码是母股+WA（如 0278WA），去查会拿回母股的记录 -> 重复套用
+    const codes = [...new Set(tickers.map(codeOf))].filter(c => /^\d{4}$/.test(c)).join(",");
     const r = await fetch(apiUrl("/api/corpactions?codes=" + encodeURIComponent(codes)));
     if (!r.ok) throw new Error("HTTP " + r.status);
     const resp = await r.json();
     const data = resp.data || {};
-    let created = 0;
-    const needManual = []; // 供股/凭单这些不能自动算的，列给用户看
+    let created = 0, wCreated = 0;
+    const needManual = []; // 供股这些不能自动算的，列给用户看
     const needCheck = [];  // 只有一个来源有、分不清是红股还是凭单 -> 一定要人工看
+    const wExpired = [];   // 凭单早就到期了，不算进持仓
+    // ex-date 当天顾客手上有多少股（不含当天新产生的红股/凭单，因为配额是按除权前的持股算）
+    const heldAt = (tk, exDate) => {
+      const h = {};
+      for (const t of db.transactions) {
+        if (t.ticker !== tk || t.date >= exDate) continue;
+        h[t.clientId] = (h[t.clientId] || 0) + (t.type === "sell" ? -t.qty : t.qty);
+      }
+      return h;
+    };
     for (const tk of tickers) {
       const list = data[codeOf(tk)];
       if (!Array.isArray(list)) continue;
       for (const s of list) {
         if (s.exDate > today()) continue;
-        if (!s.autoApply) { // 供股(要出钱)、免费凭单(另一种证券)-> 不自动，提醒用户
+        // 免费凭单：母股股数不变，但顾客确实多了一批凭单 -> 开一个新 counter 记进持仓
+        if (s.isWarrant && s.perShare > 0) {
+          if (!s.warrantSymbol) continue;
+          const held = heldAt(tk, s.exDate);
+          const anyHeld = Object.values(held).some(q => q > 0);
+          if (!anyHeld) continue;
+          if (s.warrantLive !== true) { // 已到期/已下市 -> 现在手上是空的，不该记
+            wExpired.push(`${s.warrantSymbol}（${s.exDate} 送，已到期）`);
+            continue;
+          }
+          db.symbols[s.warrantSymbol] = s.warrantCode + ".KL"; // 让它跟着自动更新价格
+          for (const cid in held) {
+            if (held[cid] <= 0) continue;
+            const key = `autowarrant:${cid}|${s.warrantSymbol}|${s.exDate}`;
+            if (db.settings[key]) continue;
+            const qty = Math.floor(held[cid] * s.perShare); // 不足一张的零头不发
+            if (qty <= 0) continue;
+            db.settings[key] = 1;
+            db.transactions.push({ id: "wrt" + uid(), clientId: cid, date: s.exDate, ticker: s.warrantSymbol,
+              type: "bonus", qty, price: 0, brokerage: 0, stamp: 0, clearing: 0,
+              note: `免费凭单 ${s.ratio}（持 ${held[cid].toLocaleString()} ${tk}）` });
+            wCreated++;
+          }
+          continue;
+        }
+        if (!s.autoApply) { // 供股(要出钱)之类 -> 不自动，提醒用户
           const anyHeld = db.transactions.some(t => t.ticker === tk && t.date < s.exDate);
           if (anyHeld) (s.needCheck ? needCheck : needManual).push(`${tk} ${s.exDate} ${s.type} ${s.ratio}`);
           continue;
@@ -1784,14 +1826,19 @@ async function backfillSplits(silent) {
         }
       }
     }
-    if (created) save();
+    if (created || wCreated) save();
     if (!silent) {
-      let msg = created ? `✓ 补记了 ${created} 笔红股/拆股调整（持仓股数已更新）` : "✓ 没有需要调整的红股/拆股";
-      if (needManual.length) msg += ` · ⚠ 这些要你自己判断（供股要出钱、凭单是另一种证券，系统不自动加）：${[...new Set(needManual)].join("；")}`;
-      if (needCheck.length) msg += ` · ❗ 这些只有 i3investor 有、Pick@Stock 没有，分不清是真红股还是免费凭单，请自己查 Bursa 公告再决定：${[...new Set(needCheck)].join("；")}`;
+      const parts = [];
+      if (created) parts.push(`✓ 补记了 ${created} 笔红股/拆股调整（持仓股数已更新）`);
+      if (wCreated) parts.push(`🎟 补记了 ${wCreated} 笔免费凭单（已开新 counter，价格会自动更新）`);
+      if (!parts.length) parts.push("✓ 没有需要调整的红股/拆股/凭单");
+      let msg = parts.join(" · ");
+      if (wExpired.length) msg += ` · ℹ 这些凭单已过期，没算进持仓：${[...new Set(wExpired)].join("；")}`;
+      if (needManual.length) msg += ` · ⚠ 这些要你自己判断（供股要出钱，系统不自动加）：${[...new Set(needManual)].join("；")}`;
+      if (needCheck.length) msg += ` · ❗ 这些只有 i3investor 有、又读不到 Bursa 公告原文，分不清是真红股还是免费凭单，请自己查再决定：${[...new Set(needCheck)].join("；")}`;
       status.textContent = msg;
     }
-    return created;
+    return created + wCreated;
   } catch (e) {
     if (!silent) status.textContent = "红股检查失败：" + e.message + API_HINT;
     return 0;

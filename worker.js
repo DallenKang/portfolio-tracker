@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v16-pickastock"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v17-warrants"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -47,11 +47,28 @@ function canonHouse(s) {
 // 只有「白送、股数直接变」的才 autoApply；凭单/附加股(要出钱)/dividend in specie 一律不自动。
 const PAS_ENT_URL = "https://www.pickastock.info/api/Entitlement/";
 const I3_ENT_URL = "https://klse.i3investor.com/web/stock/entitlement/";
+const PAS_SYMBOLS_URL = "https://www.pickastock.info/api/TimeNSales/MainAceSymbol";
 
 function ratioFactor(kind, ratio) { // kind: "bonus" | "split"
   const p = String(ratio || "").split(":").map(x => parseFloat(x));
   if (!(p.length === 2 && p[0] > 0 && p[1] > 0)) return null;
   return kind === "split" ? p[0] / p[1] : (p[0] + p[1]) / p[1];
+}
+
+// 免费凭单「X : Y」= 每持 Y 股送 X 张凭单 -> 每股几张（EDELTEQ 1:2 = 0.5，公告原文
+// "1 Warrant for every 2 existing ordinary shares" 核对过）
+function warrantPerShare(ratio) {
+  const p = String(ratio || "").split(":").map(x => parseFloat(x));
+  return (p.length === 2 && p[0] > 0 && p[1] > 0) ? p[0] / p[1] : null;
+}
+// 现在还在市的全部 counter（2700+）。用途：判断凭单到期了没有。
+// 不能用「KLSE Screener 抓不抓得到价格」来判断 —— 它连早就下市的凭单也照样回传旧价（GCB-WA 实测）。
+let liveSymbolsCache = null;
+async function liveSymbols() {
+  if (liveSymbolsCache) return liveSymbolsCache;
+  const r = await fetch(PAS_SYMBOLS_URL, { headers: { "User-Agent": UA, "Referer": "https://www.pickastock.info/" } });
+  liveSymbolsCache = new Set(Object.keys(await r.json()));
+  return liveSymbolsCache;
 }
 // 把 Pick@Stock 的 EntitlementType 归类。返回 null = 跟股数无关，直接跳过。
 function classifyPas(type) {
@@ -77,7 +94,21 @@ async function i3Entitlements(code) {
   return JSON.parse(m[1]).map(r => ({
     exDate: isoFromDMY(String(r[1] || "")), annDate: isoFromDMY(String(r[0] || "")),
     type: String(r[2] || "").toUpperCase(), subject: String(r[3] || ""), ratio: String(r[4] || "").trim(),
+    detail: String(r[5] || ""), // 详情页链接，里面有 Bursa 公告原文
   })).filter(x => x.exDate && x.type !== "DIVIDEND");
+}
+// i3 只写 BONUS_ISSUE、看不出是股票还是凭单时，去详情页读 Bursa 公告原文来断。
+// EDELTEQ 实例读到："Bonus issue of up to 292,894,596 free warrants ... 1 Warrant for every 2 existing ordinary shares"
+async function i3IsWarrant(detailPath) {
+  if (!detailPath) return null;
+  try {
+    const html = await (await fetch("https://klse.i3investor.com" + detailPath,
+      { headers: { "User-Agent": UA, "Referer": "https://klse.i3investor.com/" } })).text();
+    const txt = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    if (/free warrants?|bonus issue of .{0,40}warrants?|warrants? for every/i.test(txt)) return true;
+    if (/bonus issue of .{0,60}(ordinary )?shares?/i.test(txt)) return false;
+  } catch (e) { /* 读不到就当不确定 */ }
+  return null; // 断不出来 -> 交给用户人工看
 }
 async function corpActions(code) {
   // 两个源同时抓；Pick@Stock 是主，i3 用来 (a) 解释 "Others" (b) 补 Pick@Stock 漏掉的
@@ -104,6 +135,7 @@ async function corpActions(code) {
       if (pt.includes("SPLIT") || pt.includes("CONSOLIDAT")) { kind = "split"; auto = true; }
     }
     const factor = kind ? ratioFactor(kind, ratio) : null;
+    const isW = String(it.EntitlementType || "").toUpperCase().includes("WARRANT");
     seen.add(exDate);
     out.push({
       exDate, annDate: isoFromDMonY(String(it.AnnDate || "")),
@@ -111,19 +143,39 @@ async function corpActions(code) {
       ratio, factor, source: "pickastock", ref: it.ReferenceUrl || "",
       autoApply: !!(auto && factor && factor !== 1),
       needCheck: false,
+      isWarrant: isW, perShare: isW ? warrantPerShare(ratio) : null,
     });
   }
-  // i3 有、Pick@Stock 没有的（例：EDELTEQ 的凭单红股）：列出来但绝不自动套用，让用户自己看
+  // i3 有、Pick@Stock 没有的（例：EDELTEQ 的凭单）：去详情页读公告原文断是股票还是凭单；断不出才丢给用户
   for (const e of i3) {
     if (seen.has(e.exDate)) continue;
+    const w = e.type.includes("BONUS") || e.type.includes("WARRANT") ? await i3IsWarrant(e.detail) : null;
     out.push({
       exDate: e.exDate, annDate: e.annDate, type: e.type, subject: e.subject, ratio: e.ratio,
-      factor: null, source: "i3investor", ref: "",
-      autoApply: false,
-      needCheck: true, // 只有一个来源有 -> 人工确认是红股还是凭单
+      factor: w === false ? ratioFactor("bonus", e.ratio) : null,
+      source: w === null ? "i3investor" : "i3investor+announcement", ref: "",
+      autoApply: false,   // 单一来源，股数一律不自动改
+      needCheck: w === null, // 公告读得出来就不用再问用户
+      isWarrant: w === true, perShare: w === true ? warrantPerShare(e.ratio) : null,
     });
   }
-  return out.sort((a, b) => a.exDate.localeCompare(b.exDate));
+  out.sort((a, b) => a.exDate.localeCompare(b.exDate));
+
+  // 凭单代号：Bursa 惯例是母股代码 + WA / WB / WC…，按送出的先后顺序排。
+  // 到期的凭单不能算进持仓 -> 用 Pick@Stock 的在市 symbol 表确认（不能用「有没有价格」判断，
+  // KLSE Screener 连早就下市的凭单也照回旧价，GCB-WA 实测）。
+  const base = (pas[0] && pas[0].Symbol) ? String(pas[0].Symbol).toUpperCase() : "";
+  const wEvents = out.filter(x => x.isWarrant && x.perShare > 0);
+  if (base && wEvents.length) {
+    const live = await liveSymbols().catch(() => null);
+    wEvents.forEach((e, i) => {
+      const letter = String.fromCharCode(65 + i); // 第1次送 -> WA，第2次 -> WB…
+      e.warrantSymbol = `${base}-W${letter}`;
+      e.warrantCode = `${code}W${letter}`;
+      e.warrantLive = live ? live.has(e.warrantSymbol) : null; // null = 查不到在市名单，前端不要自动加
+    });
+  }
+  return out;
 }
 function isoFromDMY(s) { // "10-Mar-2026" -> "2026-03-10"
   const p = s.split("-");

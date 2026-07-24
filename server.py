@@ -262,6 +262,43 @@ def http_get(url, timeout=40, referer=None):
 # 照它跑会平白给客户多加股票。Pick@Stock 明确分开 "Bonus Issue" 和 "Bonus Issue (Warrants)"。
 PAS_ENT_URL = "https://www.pickastock.info/api/Entitlement/"
 I3_ENT_URL = "https://klse.i3investor.com/web/stock/entitlement/"
+PAS_SYMBOLS_URL = "https://www.pickastock.info/api/TimeNSales/MainAceSymbol"
+_live_symbols = None
+
+
+def live_symbols():
+    """现在还在市的全部 counter。用来判断凭单到期了没有。
+    不能用「KLSE Screener 抓不抓得到价格」判断——它连早就下市的凭单也照回旧价（GCB-WA 实测）。"""
+    global _live_symbols
+    if _live_symbols is None:
+        _live_symbols = set(json.loads(http_get(PAS_SYMBOLS_URL, referer="https://www.pickastock.info/")).keys())
+    return _live_symbols
+
+
+def warrant_per_share(ratio):
+    """免费凭单「X : Y」= 每持 Y 股送 X 张（EDELTEQ 1:2 = 0.5，已对 Bursa 公告原文）"""
+    try:
+        p = [float(x) for x in str(ratio or "").split(":")]
+    except ValueError:
+        return None
+    return p[0] / p[1] if len(p) == 2 and p[0] > 0 and p[1] > 0 else None
+
+
+def i3_is_warrant(detail_path):
+    """i3 只写 BONUS_ISSUE、分不出股票还是凭单时，去详情页读 Bursa 公告原文。
+    返回 True=凭单 / False=真红股 / None=断不出（交给用户人工看）"""
+    if not detail_path:
+        return None
+    try:
+        page = http_get("https://klse.i3investor.com" + detail_path, referer="https://klse.i3investor.com/")
+    except Exception:
+        return None
+    txt = re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", page))
+    if re.search(r"free warrants?|bonus issue of .{0,40}warrants?|warrants? for every", txt, re.I):
+        return True
+    if re.search(r"bonus issue of .{0,60}(ordinary )?shares?", txt, re.I):
+        return False
+    return None
 
 
 def iso_from_dmy(s):        # "10-Mar-2026" -> "2026-03-10"
@@ -312,7 +349,8 @@ def i3_entitlements(code):
         ex = iso_from_dmy(str(r[1] or ""))
         if ex and t != "DIVIDEND":
             out.append({"exDate": ex, "annDate": iso_from_dmy(str(r[0] or "")),
-                        "type": t, "subject": str(r[3] or ""), "ratio": str(r[4] or "").strip()})
+                        "type": t, "subject": str(r[3] or ""), "ratio": str(r[4] or "").strip(),
+                        "detail": str(r[5] or "")})
     return out
 
 
@@ -340,20 +378,42 @@ def corp_actions(code):
                 kind, auto = "split", True
         factor = ratio_factor(kind, ratio) if kind else None
         seen.add(ex)
+        is_w = "WARRANT" in str(it.get("EntitlementType") or "").upper()
         out.append({"exDate": ex, "annDate": iso_from_dmony(it.get("AnnDate") or ""),
                     "type": str(it.get("EntitlementType") or ""),
                     "subject": str(it.get("EntitlementDesc") or it.get("EntitlementType") or ""),
                     "ratio": ratio, "factor": factor, "source": "pickastock",
                     "ref": it.get("ReferenceUrl") or "",
-                    "autoApply": bool(auto and factor and factor != 1), "needCheck": False})
+                    "autoApply": bool(auto and factor and factor != 1), "needCheck": False,
+                    "isWarrant": is_w, "perShare": warrant_per_share(ratio) if is_w else None})
 
-    for e in i3:                                   # i3 有、Pick@Stock 没有 -> 列出但绝不自动套用
+    for e in i3:      # i3 有、Pick@Stock 没有 -> 读公告原文断是股票还是凭单；断不出才丢给用户
         if e["exDate"] in seen:
             continue
+        w = i3_is_warrant(e["detail"]) if ("BONUS" in e["type"] or "WARRANT" in e["type"]) else None
         out.append({"exDate": e["exDate"], "annDate": e["annDate"], "type": e["type"],
-                    "subject": e["subject"], "ratio": e["ratio"], "factor": None,
-                    "source": "i3investor", "ref": "", "autoApply": False, "needCheck": True})
-    return sorted(out, key=lambda x: x["exDate"])
+                    "subject": e["subject"], "ratio": e["ratio"],
+                    "factor": ratio_factor("bonus", e["ratio"]) if w is False else None,
+                    "source": "i3investor" if w is None else "i3investor+announcement",
+                    "ref": "", "autoApply": False, "needCheck": w is None,
+                    "isWarrant": w is True,
+                    "perShare": warrant_per_share(e["ratio"]) if w is True else None})
+    out.sort(key=lambda x: x["exDate"])
+
+    # 凭单代号：Bursa 惯例是母股代码 + WA/WB/WC…，按送出的先后排。到期的不算持仓 -> 查在市名单。
+    base = str(items[0].get("Symbol") or "").upper() if items else ""
+    w_events = [x for x in out if x["isWarrant"] and (x["perShare"] or 0) > 0]
+    if base and w_events:
+        try:
+            live = live_symbols()
+        except Exception:
+            live = None
+        for i, e in enumerate(w_events):
+            letter = chr(65 + i)                   # 第1次送 -> WA，第2次 -> WB…
+            e["warrantSymbol"] = "%s-W%s" % (base, letter)
+            e["warrantCode"] = "%sW%s" % (code, letter)
+            e["warrantLive"] = (e["warrantSymbol"] in live) if live is not None else None
+    return out
 
 
 class Handler(SimpleHTTPRequestHandler):
