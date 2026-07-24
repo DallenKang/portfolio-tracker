@@ -114,6 +114,9 @@
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
   th.sortable .arrow { color: var(--blue); font-size: 11px; }
+  /* 没排序时也显示一个淡淡的 ⇅，让人一看就知道这栏可以点来排序 */
+  th.sortable .arrow.idle { color: var(--muted); opacity: 0.5; font-weight: 400; }
+  th.sortable:hover .arrow.idle { opacity: 0.9; }
 
   tr.client-header td {
     background: var(--card2); font-weight: 600; font-size: 14px; color: var(--text);
@@ -1074,7 +1077,9 @@ function renderAll() {
   // 栏目标题显示 ▲/▼
   document.querySelectorAll("#t-head th.sortable").forEach(th => {
     const active = txSort && txSort.key === th.dataset.key;
-    th.innerHTML = th.dataset.label + (active ? ` <span class="arrow">${txSort.dir === 1 ? "▲" : "▼"}</span>` : "");
+    th.innerHTML = th.dataset.label + (active
+      ? ` <span class="arrow">${txSort.dir === 1 ? "▲" : "▼"}</span>`
+      : ` <span class="arrow idle">⇅</span>`); // 没排序也显示淡箭头，提示可以点
   });
   // 汇总（选单一股票时显示）
   const sumEl = document.getElementById("stock-summary");
@@ -2071,6 +2076,102 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
   };
 });
+/* ============ 通用表格排序 ============
+   每个表头点一下 = 升序 ▲，再点 = 降序 ▼，第三下 = 恢复原本顺序。
+   没排序时显示淡淡的 ⇅ 提示可以点。
+   做法是直接排「画面上已经算好的那几行」，不碰任何 P&L / 费用的计算，所以不会影响数字对错。
+   交易记录表（#t-body）有它自己的排序（按原始数据排，更准），这里跳过不动它。 */
+const SORT_SKIP = ["t-body"];              // 已经有自己排序的表
+const tableSort = new Map();               // tbodyId -> {col, dir}
+let sortingNow = false;                    // 防止自己改 DOM 又触发 observer
+
+// 把一格的文字变成可以比较的值：数字（去掉逗号 RM % 括号负数）、日期、否则当文字
+function sortVal(td) {
+  const raw = (td ? td.textContent : "").trim();
+  if (!raw || raw === "-" || raw === "—") return { n: null, s: "" };
+  let s = raw.replace(/[,\s]/g, "").replace(/^RM/i, "").replace(/%$/, "");
+  let neg = false;
+  if (/^\((.*)\)$/.test(s)) { neg = true; s = s.slice(1, -1); }   // (123) = -123
+  if (/^-?\d+(\.\d+)?$/.test(s)) return { n: (neg ? -1 : 1) * parseFloat(s), s: raw };
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);              // 2026-03-10
+  if (iso) return { n: null, s: iso[0] };
+  const dmy = raw.match(/^(\d{1,2})[-\s]([A-Za-z]{3})[-\s](\d{4})/); // 10-Mar-2026 / 10 Mar 2026
+  const MM = { jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12" };
+  if (dmy && MM[dmy[2].toLowerCase()]) return { n: null, s: `${dmy[3]}-${MM[dmy[2].toLowerCase()]}-${dmy[1].padStart(2,"0")}` };
+  return { n: null, s: raw.toLowerCase() };
+}
+
+function applyTableSort(tbody) {
+  const st = tableSort.get(tbody.id);
+  const rows = [...tbody.rows];
+  if (!rows.length || rows.some(r => r.querySelector("td.empty"))) return;
+  sortingNow = true;
+  // 持仓表有「👤 顾客」分组行 -> 只在每一组里面排，不打散分组
+  const blocks = [];
+  let cur = null;
+  for (const r of rows) {
+    if (r.classList.contains("client-header")) { cur = { head: r, items: [] }; blocks.push(cur); continue; }
+    if (!cur) { cur = { head: null, items: [] }; blocks.push(cur); }
+    cur.items.push(r);
+  }
+  for (const b of blocks) {
+    b.items.forEach((r, i) => { r._i = i; });
+    if (st) {
+      b.items.sort((x, y) => {
+        const a = sortVal(x.cells[st.col]), c = sortVal(y.cells[st.col]);
+        let d;
+        if (a.n !== null && c.n !== null) d = a.n - c.n;
+        else if (a.n !== null) d = -1;            // 有数字的排前面
+        else if (c.n !== null) d = 1;
+        else d = a.s.localeCompare(c.s, "zh");
+        return st.dir * d || x._i - y._i;         // 平手就保持原本顺序
+      });
+    } else {
+      b.items.sort((x, y) => x._i - y._i);
+    }
+  }
+  const frag = document.createDocumentFragment();
+  for (const b of blocks) { if (b.head) frag.appendChild(b.head); for (const r of b.items) frag.appendChild(r); }
+  tbody.appendChild(frag);
+  sortingNow = false;
+}
+
+function drawSortArrows(table, tbodyId) {
+  const st = tableSort.get(tbodyId);
+  [...table.tHead.rows[0].cells].forEach((th, i) => {
+    if (!th.classList.contains("sortable")) return;
+    const on = st && st.col === i;
+    th.innerHTML = th.dataset.label + ` <span class="arrow${on ? "" : " idle"}">${on ? (st.dir === 1 ? "▲" : "▼") : "⇅"}</span>`;
+  });
+}
+
+function initTableSort() {
+  for (const table of document.querySelectorAll("table")) {
+    const tbody = table.tBodies[0];
+    if (!tbody || !tbody.id || SORT_SKIP.includes(tbody.id) || !table.tHead) continue;
+    const ths = [...table.tHead.rows[0].cells];
+    ths.forEach((th, i) => {
+      const label = th.textContent.trim();
+      if (!label) return;                       // 操作按钮那一栏不给排
+      th.classList.add("sortable");
+      th.dataset.label = label;
+      th.onclick = () => {
+        const st = tableSort.get(tbody.id);
+        if (!st || st.col !== i) tableSort.set(tbody.id, { col: i, dir: 1 });
+        else if (st.dir === 1) tableSort.set(tbody.id, { col: i, dir: -1 });
+        else tableSort.delete(tbody.id);        // 点第三下 = 取消排序
+        drawSortArrows(table, tbody.id);
+        applyTableSort(tbody);
+      };
+    });
+    drawSortArrows(table, tbody.id);
+    // 表格重画后（例如改了一笔交易）自动把排序套回去，不用再点一次
+    new MutationObserver(() => { if (!sortingNow && tableSort.has(tbody.id)) applyTableSort(tbody); })
+      .observe(tbody, { childList: true });
+  }
+}
+initTableSort();
+
 document.getElementById("t-date").value = today();
 document.getElementById("v-date").value = today();
 document.getElementById("cf-date").value = today();
