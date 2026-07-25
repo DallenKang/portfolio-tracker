@@ -1,6 +1,6 @@
 {
-  "name": "Portfolio Tracker",
-  "short_name": "Portfolio",
+  "name": "Inner Circle Ptracker",
+  "short_name": "Inner Circle",
   "description": "你的投资组合：持仓、盈亏、股息、Cashflow",
   "start_url": "./portfolio-tracker.html",
   "scope": "./",

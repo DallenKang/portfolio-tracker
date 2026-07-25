@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Remisier Portfolio Tracker 投资组合追踪</title>
+<title>Inner Circle Ptracker 投资组合追踪</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f1419">
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Portfolio">
+<meta name="apple-mobile-web-app-title" content="Inner Circle">
 <style>
   :root {
     --bg: #0f1419;
@@ -163,7 +163,7 @@
   ⚠️ 系统错误：IPO 数据抓不到了（很可能数据源被封/挂了，不是「没有 IPO」）。请<b>截图发给 Claude</b> 修复。
 </div>
 
-<h1>📈 Remisier Portfolio Tracker</h1>
+<h1>📈 Inner Circle Ptracker</h1>
 <p class="subtitle" id="app-subtitle">按顾客管理 · 费用自动计算 · 股息自动入账 · 数据云端同步</p>
 
 <div class="filter-bar" id="signin-banner" style="display:none">
@@ -175,7 +175,7 @@
 <div id="auth-screen" style="display:none; max-width:460px; margin:6vh auto;">
   <div class="form-card" style="text-align:center">
     <div style="font-size:40px; line-height:1">📈</div>
-    <h3 style="margin:6px 0 4px; font-size:20px">Portfolio Tracker</h3>
+    <h3 style="margin:6px 0 4px; font-size:20px">Inner Circle Ptracker</h3>
     <p class="hint" style="margin:0 0 18px">你的持仓、盈亏、股息，一个地方看完</p>
 
     <div id="auth-choice">
@@ -531,8 +531,8 @@ const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127
 const apiUrl = path => (!IS_LOCAL && WORKER_URL) ? WORKER_URL + path : path;
 const API_HINT = IS_LOCAL ? "（确认你是用 start-tracker.bat 开的网页）" : "（Worker 未设置或没响应）";
 // Google Sheet 后台（内建，靠 Gmail 登入把关，所以网址可公开）
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbxwWrL-dezPDeQhUfA50p0FAUifqirXwr3WofQeUL0Ofgaqd5wCYNptIoWs39KFpfiE/exec";
-const GOOGLE_CLIENT_ID = "352178220130-7lg44vhcqq9q3earb7501jh76mrtg149.apps.googleusercontent.com";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbx-DcxLMfWQdrLWYFkqAb8OUTgJc6TFK5Yzo6mODPi-I_902kI_xAhQljkUSDnPq6wy/exec"; // Inner Circle Ptracker 后台
+const GOOGLE_CLIENT_ID = "364911121422-l4gnggq2qghqchic99dvt8cl2m8rh33s.apps.googleusercontent.com";
 const DEFAULT_SETTINGS = { clearingRate: 0.03, clearingCap: 1000, stampPer1000: 1.00, stampCap: 1000 };
 
 // ---------- Storage & migration ----------
