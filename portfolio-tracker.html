@@ -1753,11 +1753,26 @@ async function backfillSplits(silent) {
     // 关键：i3 把「免费凭单」也写成 Bonus Issue，照它跑会平白多给客户股票（EDELTEQ / MINOX 实例）。
     const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
     // 只查母股（4 位数代码）。凭单代码是母股+WA（如 0278WA），去查会拿回母股的记录 -> 重复套用
-    const codes = [...new Set(tickers.map(codeOf))].filter(c => /^\d{4}$/.test(c)).join(",");
-    const r = await fetch(apiUrl("/api/corpactions?codes=" + encodeURIComponent(codes)));
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const resp = await r.json();
-    const data = resp.data || {};
+    const codes = [...new Set(tickers.map(codeOf))].filter(c => /^\d{4}$/.test(c));
+    // 分批查：每支股要抓 2-4 个外部网页，一次全送会撞到 Cloudflare 的单次请求上限
+    const data = {}, failed = [];
+    for (let i = 0; i < codes.length; i += 10) {
+      const batch = codes.slice(i, i + 10);
+      if (!silent) status.textContent = `检查红股/拆股中… ${Math.min(i + 10, codes.length)}/${codes.length}`;
+      try {
+        const r = await fetch(apiUrl("/api/corpactions?codes=" + encodeURIComponent(batch.join(","))));
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        Object.assign(data, (await r.json()).data || {});
+      } catch (e) {
+        batch.forEach(c => failed.push(c)); // 整批失败
+      }
+    }
+    // 单支抓失败时 worker 回的是 {error:...} 而不是阵列。以前这里直接跳过，
+    // 结果画面照样显示「没有需要调整」——等於把「查不到」讲成「没问题」。必须讲出来。
+    for (const c of codes) {
+      if (failed.includes(c)) continue;
+      if (!Array.isArray(data[c])) failed.push(c);
+    }
     let created = 0, wCreated = 0;
     const needManual = []; // 供股这些不能自动算的，列给用户看
     const needCheck = [];  // 只有一个来源有、分不清是红股还是凭单 -> 一定要人工看
@@ -1831,7 +1846,11 @@ async function backfillSplits(silent) {
       const parts = [];
       if (created) parts.push(`✓ 补记了 ${created} 笔红股/拆股调整（持仓股数已更新）`);
       if (wCreated) parts.push(`🎟 补记了 ${wCreated} 笔免费凭单（已开新 counter，价格会自动更新）`);
-      if (!parts.length) parts.push("✓ 没有需要调整的红股/拆股/凭单");
+      // 有股票没查到就不能说「没问题」——只能说「这几支没查到」，不然等於谎报平安
+      if (!parts.length) parts.push(failed.length
+        ? `⚠ 查不到资料，这次什么都没改`
+        : "✓ 没有需要调整的红股/拆股/凭单");
+      if (failed.length) parts.push(`❌ 有 ${failed.length} 支股没查到（${failed.join("、")}），这几支等於没检查，请稍後再按一次`);
       let msg = parts.join(" · ");
       if (wExpired.length) msg += ` · ℹ 这些凭单已过期，没算进持仓：${[...new Set(wExpired)].join("；")}`;
       if (needManual.length) msg += ` · ⚠ 这些要你自己判断（供股要出钱，系统不自动加）：${[...new Set(needManual)].join("；")}`;
