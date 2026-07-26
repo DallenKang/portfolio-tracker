@@ -110,6 +110,23 @@
   body.client-mode #tab-holdings .form-card { display: none; } /* 价格自动抓，不用手动 */
   body.client-mode #tab-exdiv .form-card button { display: none; } /* 补记按钮是 owner 的 */
   body.client-mode #clientFilter { pointer-events: none; opacity: 0.75; }
+  /* 员工权限页只有 super 看得到（後端也会挡，这里只是不显示） */
+  body.not-super .tab-btn[data-tab="staff"], body.client-mode .tab-btn[data-tab="staff"] { display: none; }
+  .staff-clients { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .staff-clients label {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+    background: var(--card2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 10px; font-size: 13px; color: var(--text); white-space: nowrap;
+  }
+  .staff-clients label:hover { border-color: var(--blue); }
+  /* 上面 input{min-width:100px} 会把打勾框撑成一条，这里要抢回来 */
+  .staff-clients input[type="checkbox"] {
+    min-width: 0; width: 15px; height: 15px; margin: 0; padding: 0; flex: none; accent-color: var(--blue);
+  }
+  #s-scope-wrap { margin-top: 4px; }
+  .role-badge { font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
+  .role-super { background: #6b4d1a; color: #ffd479; }
+  .role-staff { background: #1e3a5f; color: #7fc4ff; }
 
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
@@ -211,6 +228,7 @@
   <button class="tab-btn" data-tab="cashflow">💵 Cashflow</button>
   <button class="tab-btn" data-tab="exdiv">📅 Ex-Dividend</button>
   <button class="tab-btn" data-tab="ipo">🆕 IPO</button>
+  <button class="tab-btn" data-tab="staff">🔑 员工权限</button>
   <button class="tab-btn" data-tab="database">🗄️ 数据库</button>
 </div>
 
@@ -482,6 +500,48 @@
   <div id="ipo-list"></div>
 </div>
 
+<!-- ============ STAFF（只有 super 看得到） ============ -->
+<div class="tab" id="tab-staff">
+  <div class="form-card">
+    <h3 id="s-form-title">加员工 Add Staff</h3>
+    <div class="form-row">
+      <div class="field"><label>Gmail（他登入用的）</label><input type="email" id="s-email" placeholder="someone@gmail.com"></div>
+      <div class="field"><label>名字 Name</label><input type="text" id="s-name" placeholder="如 Admin / Remisier A"></div>
+      <div class="field"><label>权限 Role</label>
+        <select id="s-role" onchange="toggleStaffScope()">
+          <option value="staff">员工 Staff — 只看指定顾客</option>
+          <option value="super">Super — 看全部，可以管员工</option>
+        </select>
+      </div>
+    </div>
+    <div id="s-scope-wrap">
+      <label style="font-size:13px;color:var(--muted)">这个人可以看哪些顾客？（可复选，同一个顾客可以给几个人看）</label>
+      <div class="staff-clients" id="s-clients"></div>
+      <div style="margin-top:8px">
+        <button class="action small ghost" onclick="toggleAllStaffClients(true)">全选</button>
+        <button class="action small ghost" onclick="toggleAllStaffClients(false)">全不选</button>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <button class="action" id="s-save-btn" onclick="saveStaff()">添加</button>
+      <button class="action ghost" id="s-cancel" style="display:none" onclick="resetStaffForm()">取消</button>
+    </div>
+    <p id="s-status" class="hint"></p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Gmail</th><th>名字</th><th>权限</th><th>可看顾客</th><th></th></tr></thead>
+      <tbody id="s-body"></tbody>
+    </table>
+  </div>
+  <p class="hint" style="margin-top:10px">
+    ⚠️ 权限是<b>後台在管的</b>——员工就算改了网页也拿不到别人的资料，存档时也动不了不属於他的顾客。<br>
+    ⚠️ 至少要留一个 Super，不然没人能管员工了。<br>
+    改完记得让对方<b>重新登入</b>才会生效。
+  </p>
+</div>
+
 <!-- ============ DATABASE ============ -->
 <div class="tab" id="tab-database">
   <div class="toolbar">
@@ -526,7 +586,7 @@
 const STORE_KEY = "portfolio-tracker-v1";
 const CCY = "RM";
 // 放上网（GitHub Pages）时，数据改由 Cloudflare Worker 帮忙抓；本地开则用 server.py
-const WORKER_URL = "https://portfolioworker.dallenpungzikang96.workers.dev"; // Cloudflare Worker（云端抓数据）
+const WORKER_URL = "https://portfolioworker.innercircleptracker.workers.dev"; // Cloudflare Worker（云端抓数据）
 const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.protocol === "file:";
 const apiUrl = path => (!IS_LOCAL && WORKER_URL) ? WORKER_URL + path : path;
 const API_HINT = IS_LOCAL ? "（确认你是用 start-tracker.bat 开的网页）" : "（Worker 未设置或没响应）";
@@ -540,7 +600,7 @@ function load() {
   let d;
   try { d = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) {}
   if (!d || !Array.isArray(d.transactions)) {
-    return { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null };
+    return { version: 2, clients: [], staff: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null };
   }
   if (d.version !== 2) {
     // 旧版数据：建一个默认顾客，旧的 fees 全部当 brokerage
@@ -559,6 +619,7 @@ function load() {
     localStorage.setItem(STORE_KEY, JSON.stringify(d));
   }
   if (!d.settings) d.settings = { ...DEFAULT_SETTINGS };
+  if (!d.staff) d.staff = [];       // 员工名单 [{id,email,name,role,clients}]，只有 super 拿得到
   if (!d.symbols) d.symbols = {};   // counter -> Yahoo 代码 (如 MAYBANK -> 1155.KL)
   if (!d.cashflows) d.cashflows = []; // 出入金 [{id,clientId,date,type,amount,note}]
   if (!d.exdiv) d.exdiv = null;     // {fetchedAt, rows} ex-dividend 缓存
@@ -598,6 +659,13 @@ function parseJwt(t) { try { return JSON.parse(atob(t.split(".")[1].replace(/-/g
 
 // --- 角色：owner（你，全功能）/ client（顾客，只读看自己）---
 let viewerRole = localStorage.getItem("viewer-role") || "owner";
+// super = 看得到全部顾客 + 可以管员工。由後台每次载入时告诉前端，前端不能自己决定。
+let isSuper = localStorage.getItem("is-super") === "1";
+function setSuper(v) {
+  isSuper = !!v;
+  localStorage.setItem("is-super", isSuper ? "1" : "0");
+  document.body.classList.toggle("not-super", !isSuper);
+}
 function applyClientModeUI() {
   document.body.classList.add("client-mode");
   const c = db.clients[0];
@@ -718,8 +786,11 @@ function toggleCloudAuto() {
   setCloudStatus(cloud.auto ? "✓ 自动同步已开：每次改动会自动存到云端。" : "自动同步已关。");
 }
 function cloudPayload() {
-  return { clients: db.clients, settings: db.settings, transactions: db.transactions,
-           dividends: db.dividends, cashflows: db.cashflows, prices: db.prices, symbols: db.symbols };
+  const p = { clients: db.clients, settings: db.settings, transactions: db.transactions,
+              dividends: db.dividends, cashflows: db.cashflows, prices: db.prices, symbols: db.symbols };
+  // 员工名单只有 super 能送。非 super 送空的 -> 後台会沿用服务器版，不会被洗掉。
+  if (isSuper) p.staff = db.staff;
+  return p;
 }
 async function pushCloud(silent) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
@@ -761,6 +832,8 @@ async function pullCloud(silent) {
       throw new Error(j.error);
     }
     const d = j.data || {};
+    setSuper(j.isSuper === true); // 後台说了算：只有 super 看得到员工页
+    db.staff = d.staff || [];
     db.clients = d.clients || [];
     db.transactions = d.transactions || [];
     db.dividends = d.dividends || [];
@@ -969,6 +1042,10 @@ function renderAll() {
   if ([...vSel.options].some(o => o.value === vPrev)) vSel.value = vPrev;
   if ([...cfSel.options].some(o => o.value === cfPrev)) cfSel.value = cfPrev;
   clientMismatchCheck();
+
+  // 员工权限页（顾客清单会变，勾选框要跟着更新）
+  renderStaffForm();
+  renderStaffTable();
 
   // 顾客表
   const txCount = {};
@@ -1192,6 +1269,105 @@ function toggleRateFields() {
   document.getElementById("f-rate-below").style.display = mode === "tiered" ? "" : "none";
   document.getElementById("f-rate-above").style.display = mode === "tiered" ? "" : "none";
 }
+// ---------- 员工权限（只有 super 用得到）----------
+// 存的是 clients 栏（顾客 id 用逗号分隔，"*" = 全部）。後台 guardStaffSave 才是真正的把关，
+// 这里只是让 Dallen 不用去 Google Sheet 手打那串 id。
+let editingStaffId = null;
+function toggleStaffScope() {
+  const isSup = document.getElementById("s-role").value === "super";
+  document.getElementById("s-scope-wrap").style.display = isSup ? "none" : ""; // super 本来就看全部
+}
+function toggleAllStaffClients(on) {
+  document.querySelectorAll("#s-clients input").forEach(cb => { cb.checked = on; });
+}
+function renderStaffForm() {
+  const wrap = document.getElementById("s-clients");
+  const picked = new Set([...wrap.querySelectorAll("input:checked")].map(cb => cb.value)); // 重画时保留已勾的
+  wrap.innerHTML = db.clients.length
+    ? db.clients.map(c => `<label><input type="checkbox" value="${c.id}"${picked.has(c.id) ? " checked" : ""}>${clientLabel(c)}</label>`).join("")
+    : `<span class="hint">还没有顾客</span>`;
+}
+function saveStaff() {
+  const email = document.getElementById("s-email").value.trim().toLowerCase();
+  const name = document.getElementById("s-name").value.trim();
+  const role = document.getElementById("s-role").value;
+  const st = document.getElementById("s-status");
+  if (!email || !email.includes("@")) { st.textContent = "请填正确的 Gmail"; return; }
+  if (!name) { st.textContent = "请填名字"; return; }
+  if (db.staff.some(s => s.email === email && s.id !== editingStaffId)) { st.textContent = "这个 Gmail 已经在名单里了"; return; }
+  const picked = [...document.querySelectorAll("#s-clients input:checked")].map(cb => cb.value);
+  if (role === "staff" && !picked.length) { st.textContent = "请至少勾一个顾客，不然他登入後什么都看不到"; return; }
+  // 不能把最後一个 super 降级，否则没人管得了员工名单
+  if (editingStaffId && role !== "super") {
+    const others = db.staff.filter(s => s.id !== editingStaffId && s.role === "super");
+    if (!others.length && (db.staff.find(s => s.id === editingStaffId) || {}).role === "super") {
+      st.textContent = "这是最後一个 Super，不能降级——先设另一个 Super 再改他"; return;
+    }
+  }
+  const data = { email, name, role, clients: role === "super" ? "*" : picked.join(",") };
+  if (editingStaffId) { Object.assign(db.staff.find(s => s.id === editingStaffId), data); resetStaffForm(); }
+  else { db.staff.push({ id: "st" + uid(), ...data }); resetStaffForm(); }
+  save();
+  st.textContent = `✓ 已保存。${name} 要重新登入才会生效。`;
+}
+function editStaff(id) {
+  const s = db.staff.find(x => x.id === id);
+  if (!s) return;
+  editingStaffId = id;
+  document.getElementById("s-email").value = s.email;
+  document.getElementById("s-name").value = s.name;
+  document.getElementById("s-role").value = s.role || "staff";
+  const allow = String(s.clients || "").split(",").map(x => x.trim());
+  document.querySelectorAll("#s-clients input").forEach(cb => { cb.checked = allow.includes(cb.value); });
+  toggleStaffScope();
+  document.getElementById("s-form-title").textContent = "改员工 Edit Staff";
+  document.getElementById("s-save-btn").textContent = "保存";
+  document.getElementById("s-cancel").style.display = "";
+  document.getElementById("s-status").textContent = "";
+  document.getElementById("s-email").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function resetStaffForm() {
+  editingStaffId = null;
+  ["s-email", "s-name"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("s-role").value = "staff";
+  toggleAllStaffClients(false);
+  toggleStaffScope();
+  document.getElementById("s-form-title").textContent = "加员工 Add Staff";
+  document.getElementById("s-save-btn").textContent = "添加";
+  document.getElementById("s-cancel").style.display = "none";
+  document.getElementById("s-status").textContent = "";
+}
+function delStaff(id) {
+  const s = db.staff.find(x => x.id === id);
+  if (!s) return;
+  if (s.role === "super" && db.staff.filter(x => x.role === "super").length <= 1) {
+    alert("这是最後一个 Super，删掉就没人能管员工了。先设另一个 Super 再删他。"); return;
+  }
+  if (!confirm(`确定移除 ${s.name}（${s.email}）？他之後就登不进来了。`)) return;
+  db.staff = db.staff.filter(x => x.id !== id);
+  if (editingStaffId === id) resetStaffForm();
+  save();
+}
+function renderStaffTable() {
+  const body = document.getElementById("s-body");
+  if (!body) return;
+  body.innerHTML = db.staff.length ? "" : `<tr><td class="empty" colspan="5">还没有员工。加进来的人就能用自己的 Gmail 登入。</td></tr>`;
+  for (const s of db.staff) {
+    let scope;
+    if (s.role === "super" || !String(s.clients || "").trim() || s.clients === "*") scope = "<b>全部顾客</b>";
+    else {
+      const ids = String(s.clients).split(",").map(x => x.trim()).filter(Boolean);
+      const names = ids.map(id => { const c = clientById(id); return c ? (c.code || c.name) : `<span class="pnl-neg">${id}(已删)</span>`; });
+      scope = `${names.length} 个：${names.join("、")}`;
+    }
+    body.innerHTML += `<tr><td>${s.email}</td><td><b>${s.name}</b></td>
+      <td><span class="role-badge ${s.role === "super" ? "role-super" : "role-staff"}">${s.role === "super" ? "SUPER" : "STAFF"}</span></td>
+      <td>${scope}</td>
+      <td><button class="action small ghost" onclick="editStaff('${s.id}')">编辑</button>
+          <button class="action danger small" onclick="delStaff('${s.id}')">移除</button></td></tr>`;
+  }
+}
+
 function saveClient() {
   const code = document.getElementById("c-code").value.trim().toUpperCase();
   const name = document.getElementById("c-name").value.trim();
@@ -2251,6 +2427,8 @@ initTableSort();
 document.getElementById("t-date").value = today();
 document.getElementById("v-date").value = today();
 document.getElementById("cf-date").value = today();
+setSuper(isSuper); // 套用上次的 super 状态（决定员工页显不显示），登入後後台会再确认一次
+toggleStaffScope();
 if (viewerRole === "client") applyClientModeUI(); // 上次是顾客登入，先用缓存进只读模式
 if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注册页（Google 自动登入成功会收起）
 renderAll();

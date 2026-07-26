@@ -14,6 +14,7 @@ apps-script.gs
 # 内部操作文件，不上传（含後备主密钥）
 上线步骤-顾客Portal.txt
 搬家步骤-InnerCircle.txt
+域名步骤-InnerCircle.txt
 
 # Claude Code institutional files - keep out of public repo
 CLAUDE.md
