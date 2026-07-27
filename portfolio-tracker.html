@@ -105,6 +105,20 @@
   /* 未登入：只显示登入/注册页 */
   body.signed-out > *:not(#auth-screen) { display: none !important; }
 
+  /* 股票户口标签（APEX / CGS…），让人一眼看出这笔货在哪个户口 */
+  .acct-tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 9px;
+    background: rgba(52, 152, 219, 0.16); color: var(--blue); border: 1px solid rgba(52, 152, 219, 0.3); vertical-align: middle; }
+
+  /* 登入/注册等待遮罩：新户口要在 Drive 建记录表，慢几秒，没提示会被当成当机 */
+  #auth-busy { display: none; position: absolute; inset: 0; z-index: 5; border-radius: 10px;
+    background: rgba(15, 20, 25, 0.9); flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  #auth-busy.on { display: flex; }
+  #auth-busy .spinner { width: 34px; height: 34px; border: 3px solid var(--border); border-top-color: var(--blue);
+    border-radius: 50%; animation: auth-spin 0.8s linear infinite; }
+  @keyframes auth-spin { to { transform: rotate(360deg); } }
+  #auth-busy-msg { font-size: 15px; font-weight: 600; color: var(--text); padding: 0 20px; line-height: 1.5; }
+  #auth-busy-sub { font-size: 12.5px; color: var(--muted); padding: 0 22px; line-height: 1.6; }
+
   /* 投资者模式：可记录自己的交易/股息/出入金，但看不到管理页 */
   body.client-mode .tab-btn[data-tab="clients"], body.client-mode .tab-btn[data-tab="database"] { display: none; }
   body.client-mode #tab-holdings .form-card { display: none; } /* 价格自动抓，不用手动 */
@@ -204,7 +218,7 @@
 
 <!-- 登入 / 注册页（未登入时显示） -->
 <div id="auth-screen" style="display:none; max-width:460px; margin:6vh auto;">
-  <div class="form-card" style="text-align:center">
+  <div class="form-card" style="text-align:center; position:relative">
     <div style="font-size:40px; line-height:1">📈</div>
     <h3 style="margin:6px 0 4px; font-size:20px">Inner Circle Ptracker</h3>
     <p class="hint" style="margin:0 0 18px">你的持仓、盈亏、股息，一个地方看完</p>
@@ -235,6 +249,12 @@
       <p class="hint" style="text-align:center; margin-top:8px">注册后你的 Google Drive 会自动出现一个「Portfolio」记录表</p>
       <button class="action ghost small" style="margin-top:6px" onclick="showAuth('choice')">← 返回</button>
     </div>
+
+    <div id="auth-busy">
+      <div class="spinner"></div>
+      <p id="auth-busy-msg">请稍等…</p>
+      <p id="auth-busy-sub"></p>
+    </div>
   </div>
 </div>
 
@@ -254,6 +274,8 @@
 <div class="filter-bar">
   <label>查看投资者 Filter:</label>
   <select id="clientFilter" onchange="filterChanged()"><option value="all">全部投资者 All Investors</option></select>
+  <label>股票户口 Account:</label>
+  <select id="accountFilter" onchange="renderAll()"><option value="all">全部户口 All Accounts</option></select>
 </div>
 
 <!-- ============ DASHBOARD ============ -->
@@ -267,6 +289,40 @@
     <div class="card"><div class="label">今天股息 Today</div><div class="value gold" id="d-div-today">-</div></div>
     <div class="card"><div class="label">累计 Brokerage（佣金）</div><div class="value" id="d-brokerage">-</div></div>
     <div class="card"><div class="label">总回报 Total Return</div><div class="value" id="d-total-return">-</div></div>
+  </div>
+
+  <h2 class="section">股票户口 Stock Accounts</h2>
+  <div class="form-card">
+    <h3 id="a-form-title">添加股票户口 Add Account</h3>
+    <div class="form-row">
+      <div class="field" id="f-acct-client"><label>投资者 Investor</label><select id="a-client"></select></div>
+      <div class="field"><label>户口名 Account Name</label><input type="text" id="a-name" placeholder="如 APEX / CGS / Maybank"></div>
+      <div class="field"><label>Brokerage 模式</label>
+        <select id="a-mode" onchange="toggleAcctRateFields()">
+          <option value="tiered">分层 Tiered（按 RM100K）</option>
+          <option value="flat">Flat Rate（统一）</option>
+        </select>
+      </div>
+      <div class="field" id="f-a-rate-below"><label>&lt; RM100K (%)</label><input type="number" step="any" id="a-rate-below" placeholder="如 0.42"></div>
+      <div class="field" id="f-a-rate-above"><label>≥ RM100K (%)</label><input type="number" step="any" id="a-rate-above" placeholder="如 0.21"></div>
+      <div class="field" id="f-a-rate-flat" style="display:none"><label>Flat Rate (%)</label><input type="number" step="any" id="a-rate-flat" placeholder="如 0.18"></div>
+      <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="a-min" placeholder="如 8" value="8"></div>
+      <div class="field"><label>成本算法 Cost Method</label>
+        <select id="a-costmethod">
+          <option value="average">Average（平均成本）</option>
+          <option value="fifo">FIFO（先进先出）</option>
+        </select>
+      </div>
+      <button class="action" id="a-save-btn" onclick="saveAccount()">添加户口</button>
+      <button class="action ghost" id="a-cancel-btn" onclick="cancelEditAccount()" style="display:none">取消</button>
+    </div>
+    <p class="hint">一个投资者可以有多个股票户口（不同股票行/投行）。<b>每个户口的收费和成本算法分开设定</b> —— 不同股票行收费不一样，同一支股票在两个户口也会分开算成本。<br>记交易、股息、出入金的时候，选是哪个户口就好。</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>投资者</th><th>户口</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <tbody id="a-body"></tbody>
+    </table>
   </div>
 
   <h2 class="section">各投资者摘要 Investor Summary</h2>
@@ -315,12 +371,13 @@
       <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
-    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出），每个投资者可不同。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
+    <p class="hint"><b>这里填的费率与成本法，是用来开他第一个股票户口（APEX）的。</b>真正算钱是看「总览」页那张股票户口表 —— 他有几个户口就有几组收费，要改去那边改。<br>
+    分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出）。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
   </div>
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Investor Code</th><th>姓名</th><th>户口种类</th><th>Gmail（投资者登入）</th><th>电话</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <thead><tr><th>Investor Code</th><th>姓名</th><th>户口种类</th><th>Gmail（投资者登入）</th><th>电话</th><th>股票户口</th><th class="num">交易笔数</th><th></th></tr></thead>
       <tbody id="c-body"></tbody>
     </table>
   </div>
@@ -358,7 +415,7 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>投资者</th><th>股票</th><th>代码 Code</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
+        <th>投资者</th><th>户口</th><th>股票</th><th>代码 Code</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
         <th class="num">现价</th><th class="num">市值</th><th class="num">未实现 P/(L)</th><th class="num">%</th>
       </tr></thead>
       <tbody id="h-body"></tbody>
@@ -371,7 +428,8 @@
   <div class="form-card">
     <h3 id="t-form-title">添加交易 Add Transaction</h3>
     <div class="form-row">
-      <div class="field"><label>投资者 Investor</label><select id="t-client" onchange="autoFees(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>投资者 Investor</label><select id="t-client" onchange="fillAccountSelects(); autoFees(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>股票户口 Account</label><select id="t-account" onchange="autoFees()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
       <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
       <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()"><datalist id="tickerList"></datalist></div>
@@ -425,7 +483,8 @@
   <div class="form-card">
     <h3>记录股息 Record Dividend</h3>
     <div class="form-row">
-      <div class="field"><label>投资者 Investor</label><select id="v-client" onchange="fillDivTickers(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>投资者 Investor</label><select id="v-client" onchange="fillAccountSelects(); fillDivTickers(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>股票户口 Account</label><select id="v-account" onchange="fillDivTickers()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="v-date"></div>
       <div class="field"><label>股票 Counter</label><select id="v-ticker" onchange="prefillDivQty()"></select></div>
       <div class="field"><label>每股股息 DPS</label><input type="number" step="any" id="v-dps" placeholder="0.00" oninput="calcDivTotal()"></div>
@@ -437,7 +496,7 @@
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>日期</th><th>投资者</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">总额</th><th></th></tr></thead>
+      <thead><tr><th>日期</th><th>投资者</th><th>户口</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">总额</th><th></th></tr></thead>
       <tbody id="v-body"></tbody>
     </table>
   </div>
@@ -448,7 +507,8 @@
   <div class="form-card">
     <h3>记录出入金 Deposit / Withdraw</h3>
     <div class="form-row">
-      <div class="field"><label>投资者 Investor</label><select id="cf-client" onchange="clientMismatchCheck()"></select></div>
+      <div class="field"><label>投资者 Investor</label><select id="cf-client" onchange="fillAccountSelects(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>股票户口 Account</label><select id="cf-account"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="cf-date"></div>
       <div class="field"><label>类型 Type</label><select id="cf-type"><option value="deposit">入金 Deposit</option><option value="withdraw">出金 Withdraw</option></select></div>
       <div class="field"><label>金额 Amount (RM)</label><input type="text" inputmode="decimal" id="cf-amount" placeholder="1,000.00" oninput="fmtMoney(this)"></div>
@@ -619,7 +679,7 @@ function load() {
   let d;
   try { d = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) {}
   if (!d || !Array.isArray(d.transactions)) {
-    return { version: 2, clients: [], staff: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null };
+    return { version: 2, clients: [], staff: [], accounts: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null };
   }
   if (d.version !== 2) {
     // 旧版数据：建一个默认投资者，旧的 fees 全部当 brokerage
@@ -739,12 +799,14 @@ async function registerClient() {
   if (phone.replace(/[^0-9]/g, "").length < 9) { st.textContent = "请输入有效的手机号码，然后再按一次 Google 按钮。"; return; }
   // 银行式同意流程：没勾同意条款就不给注册（勾选状态会随注册时间一起留在系统记录里）
   if (!document.getElementById("reg-agree").checked) { st.textContent = "请先勾选同意《使用条款、免责声明与隐私政策》，然后再按一次 Google 按钮。"; return; }
-  st.textContent = "注册中…（顺便在你的 Drive 建立记录表，等几秒）";
+  st.textContent = "";
+  authBusy("正在建立你的户口…", "同时在你的 Google Drive 建立记录表，通常 5–15 秒。请不要关掉这一页，也不用再按一次。");
   try {
     const r = await fetch(cloudUrl(), { method: "POST",
       body: JSON.stringify({ action: "register", name, phone, ...authPostFields() }) });
     const j = await r.json();
     if (j.error) {
+      authIdle();
       if (j.reason === "email_taken") { st.textContent = `你的 Gmail（${googleEmail}）已经被使用了。请返回选「Sign In」登入。`; return; }
       if (j.reason === "phone_taken") { st.textContent = "号码已经被使用了。请用另外的号码。"; return; }
       if (j.reason === "phone_required") { st.textContent = "请输入手机号码。"; return; }
@@ -752,25 +814,41 @@ async function registerClient() {
     }
     st.textContent = "";
     authMode = "signin";
+    authBusy("户口建好了 ✓ 正在载入你的投资组合…", "快好了，请稍等。");
     await pullCloud(true); // 注册成功，载入他的组合并进入投资者模式
     if (j.linked) setCloudStatus("✓ 已接上你原有的投资组合（由你的 remisier 记录）");
   } catch (e) {
+    authIdle();
     st.textContent = "注册失败：" + e.message + "（再试一次）";
   }
 }
 
 // --- 登入 / 注册页 ---
 let authMode = "signin";
+// 等後端回应时盖住整张卡：让人知道在跑，也顺便挡住重复点 Google 按钮
+function authBusy(msg, sub) {
+  const el = document.getElementById("auth-busy");
+  if (!el) return;
+  document.getElementById("auth-busy-msg").textContent = msg;
+  document.getElementById("auth-busy-sub").textContent = sub || "";
+  el.classList.add("on");
+}
+function authIdle() {
+  const el = document.getElementById("auth-busy");
+  if (el) el.classList.remove("on");
+}
 function showAuthScreen() {
   document.body.classList.add("signed-out");
   document.getElementById("auth-screen").style.display = "";
   showAuth("choice");
 }
 function hideAuthScreen() {
+  authIdle();
   document.body.classList.remove("signed-out");
   document.getElementById("auth-screen").style.display = "none";
 }
 function showAuth(which) {
+  authIdle();
   authMode = which === "register" ? "register" : "signin";
   document.getElementById("auth-choice").style.display = which === "choice" ? "" : "none";
   document.getElementById("auth-signin").style.display = which === "signin" ? "" : "none";
@@ -796,7 +874,8 @@ async function onGoogleCredential(resp) {
     return;
   }
   setCloudStatus("✓ 已用 Gmail 登入，正在从云端载入…");
-  document.getElementById("signin-status").textContent = "登入中…";
+  document.getElementById("signin-status").textContent = "";
+  authBusy("登入中，正在载入你的投资组合…", "第一次登入或换电脑时会慢一点，请稍等。");
   await pullCloud(true);
 }
 function initGoogleSignIn() {
@@ -818,6 +897,7 @@ function googleSignOut() {
   setCloudStatus("已登出。");
 }
 function handleCloudErr(e, prefix, wasPush) {
+  authIdle(); // 出错就把等待遮罩收掉，不然会一直转
   const msg = String((e && e.message) || e);
   if (/unauthorized/i.test(msg) && googleIdToken) {
     googleIdToken = null;
@@ -846,7 +926,7 @@ function toggleCloudAuto() {
   setCloudStatus(cloud.auto ? "✓ 自动同步已开：每次改动会自动存到云端。" : "自动同步已关。");
 }
 function cloudPayload() {
-  const p = { clients: db.clients, settings: db.settings, transactions: db.transactions,
+  const p = { clients: db.clients, accounts: db.accounts, settings: db.settings, transactions: db.transactions,
               dividends: db.dividends, cashflows: db.cashflows, prices: db.prices, symbols: db.symbols };
   // 员工名单只有 super 能送。非 super 送空的 -> 後台会沿用服务器版，不会被洗掉。
   if (isSuper) p.staff = db.staff;
@@ -927,6 +1007,7 @@ async function pullCloud(silent, quiet) {
     setSuper(j.isSuper === true); // 後台说了算：只有 super 看得到员工页
     db.staff = d.staff || [];
     db.clients = d.clients || [];
+    db.accounts = d.accounts || [];
     db.transactions = d.transactions || [];
     db.dividends = d.dividends || [];
     db.cashflows = d.cashflows || [];
@@ -934,6 +1015,8 @@ async function pullCloud(silent, quiet) {
     db.symbols = d.symbols || {};
     db.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
     for (const c of db.clients) { if (!c.brokerageMode) { c.brokerageMode = "flat"; c.rateFlat = c.rateFlat || 0; } if (!c.costMethod) c.costMethod = "average"; }
+    // 云端可能还是旧格式（没户口），拉回来先补上，并存回云端 —— 否则下次拉又要重建一次
+    if (ensureAccounts()) setTimeout(() => schedulePush(), 800);
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
     if (j.role === "client") enterClientMode(); else exitClientMode(); // 后台说你是谁，就进哪个模式
     hideAuthScreen(); // 认证成功 -> 收起登入页，显示 app
@@ -972,6 +1055,50 @@ const clientLabel = c => c ? (c.code ? `[${c.code}] ${c.name}` : c.name) : "?";
 const r2 = x => Math.round(x * 100) / 100;
 const ceil2 = x => Math.ceil(x * 100 - 1e-7) / 100;
 
+// ---------- 股票户口 Accounts（一位投资者可以有多个：APEX / CGS / Maybank…）----------
+// 每个户口自己的 brokerage 收法与成本法 —— 不同股票行收费不同，成本也必须分开算。
+const DEFAULT_ACCT_NAME = "APEX";
+const accountById = id => db.accounts.find(a => a.id === id);
+const accountsForClient = cid => db.accounts.filter(a => a.clientId === cid);
+const acctLabel = a => a ? a.name : "?";
+// 算费用/成本法要用的设定：以户口为准；万一户口不见了就退回投资者层级的旧设定（不会算错，只是回到旧行为）
+function acctCfg(accountId, clientId) {
+  return accountById(accountId) || clientById(clientId) ||
+         { brokerageMode: "flat", rateFlat: 0, minBrokerage: 0, costMethod: "average" };
+}
+// 持仓的分组键：投资者 + 户口 + 股票。格式只写在这里一个地方，改了不会漏。
+const posKey = r => r.clientId + "|" + (r.accountId || "") + "|" + r.ticker;
+const posKeyOf = (clientId, accountId, ticker) => clientId + "|" + (accountId || "") + "|" + ticker;
+// 迁移：旧资料没有户口 -> 每位投资者开一个预设户口（沿用他原本的费率与成本法），
+// 旧的交易/股息/出入金全部归进去。这样算出来的数字跟迁移前一模一样。
+function ensureAccounts() {
+  if (!Array.isArray(db.accounts)) db.accounts = [];
+  let changed = false;
+  const firstOf = {};
+  for (const c of db.clients) {
+    let list = accountsForClient(c.id);
+    if (!list.length) {
+      const a = { id: uid(), clientId: c.id, name: DEFAULT_ACCT_NAME,
+                  brokerageMode: c.brokerageMode || "flat",
+                  rateFlat: c.rateFlat, rateBelow: c.rateBelow, rateAbove: c.rateAbove,
+                  minBrokerage: c.minBrokerage || 0,
+                  costMethod: c.costMethod === "fifo" ? "fifo" : "average" };
+      db.accounts.push(a);
+      list = [a];
+      changed = true;
+    }
+    firstOf[c.id] = list[0].id;
+  }
+  for (const tab of ["transactions", "dividends", "cashflows"]) {
+    for (const r of (db[tab] || [])) {
+      if (r.accountId && accountById(r.accountId)) continue;
+      const fid = firstOf[r.clientId];
+      if (fid) { r.accountId = fid; changed = true; }
+    }
+  }
+  return changed;
+}
+
 // ---------- Fee engine（马来西亚 Bursa 规则）----------
 // Brokerage: gross × 投资者 rate%，不低于最低 brokerage（四舍五入到 cent）
 //   - flat 模式：统一 rate
@@ -1002,26 +1129,26 @@ function netAmount(t) {
   return t.type === "buy" ? gross + fees : gross - fees;
 }
 
-// ---------- Core: 按 (投资者, 股票) 回放交易（用 Net Amount）----------
+// ---------- Core: 按 (投资者, 户口, 股票) 回放交易（用 Net Amount）----------
 // 步骤：1) 先做 Intraday（同股同日买卖）配对，算即日盈亏，不碰过夜持仓
-//       2) 剩下的过夜股数，按该投资者的成本法（average / fifo）算
-function clientCostMethod(clientId) {
-  const c = clientById(clientId);
-  return (c && c.costMethod === "fifo") ? "fifo" : "average";
+//       2) 剩下的过夜股数，按该户口的成本法（average / fifo）算
+// 为什么要分户口：同一支股票在 CGS 和 APEX 是两笔不同的货，卖 CGS 的不能扣 APEX 的成本。
+function acctCostMethod(accountId, clientId) {
+  return acctCfg(accountId, clientId).costMethod === "fifo" ? "fifo" : "average";
 }
 function computePortfolio() {
-  const pos = {};            // "clientId|ticker" -> {clientId, ticker, qty, cost, realized}
+  const pos = {};            // "clientId|accountId|ticker" -> {clientId, accountId, ticker, qty, cost, realized}
   const realizedByTx = {};   // 卖出交易 -> 已实现盈亏
   const intradayTx = {};     // 交易 id -> true（即日配对的，用来打标签）
   const groups = {};
   for (const t of db.transactions) {
-    const key = t.clientId + "|" + t.ticker;
+    const key = posKey(t);
     (groups[key] = groups[key] || []).push(t);
   }
   for (const key in groups) {
     const first = groups[key][0];
-    const method = clientCostMethod(first.clientId);
-    const p = pos[key] = { clientId: first.clientId, ticker: first.ticker, qty: 0, cost: 0, realized: 0 };
+    const method = acctCostMethod(first.accountId, first.clientId);
+    const p = pos[key] = { clientId: first.clientId, accountId: first.accountId || "", ticker: first.ticker, qty: 0, cost: 0, realized: 0 };
     let lots = []; // FIFO 批次：{qty, cps（每股净成本）}
     const byDate = {};
     for (const t of groups[key]) (byDate[t.date] = byDate[t.date] || []).push(t);
@@ -1090,9 +1217,18 @@ function computePortfolio() {
 }
 
 // ---------- Render ----------
-function matchFilter(clientId) {
+function matchClientFilter(clientId) {
   const f = document.getElementById("clientFilter").value;
   return f === "all" || f === clientId;
+}
+function matchAccountFilter(accountId) {
+  const el = document.getElementById("accountFilter");
+  const f = el ? el.value : "all";
+  return f === "all" || f === accountId;
+}
+// 不传 accountId（例如在跑投资者清单）就只看投资者筛选
+function matchFilter(clientId, accountId) {
+  return matchClientFilter(clientId) && (accountId === undefined || matchAccountFilter(accountId));
 }
 
 // 「查看投资者」换人时，交易/股息/Cashflow 表单的投资者自动跟着换（选 All 则不动）
@@ -1126,7 +1262,7 @@ function renderAll() {
   if (viewerRole === "client" && db.clients.length) filterSel.value = db.clients[0].id; // 投资者只能看自己
 
   // 投资者下拉
-  const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)} (${rateLabel(c)})</option>`).join("");
+  const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)}</option>`).join("");
   const tSel = document.getElementById("t-client"), vSel = document.getElementById("v-client"), cfSel = document.getElementById("cf-client");
   const tPrev = tSel.value, vPrev = vSel.value, cfPrev = cfSel.value;
   tSel.innerHTML = clientOpts || "<option value=''>请先添加投资者</option>";
@@ -1137,6 +1273,26 @@ function renderAll() {
   if ([...cfSel.options].some(o => o.value === cfPrev)) cfSel.value = cfPrev;
   clientMismatchCheck();
 
+  // 户口管理表单的投资者下拉（投资者模式只有自己一个，直接锁住）
+  const aSel = document.getElementById("a-client");
+  const aPrev = aSel.value;
+  aSel.innerHTML = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)}</option>`).join("")
+                   || "<option value=''>请先添加投资者</option>";
+  if ([...aSel.options].some(o => o.value === aPrev)) aSel.value = aPrev;
+  else if (filterSel.value !== "all") aSel.value = filterSel.value;
+  document.getElementById("f-acct-client").style.display = (viewerRole === "client") ? "none" : "";
+
+  // 户口筛选下拉：只列出目前筛选到的投资者名下的户口
+  const acctSel = document.getElementById("accountFilter");
+  const acctPrev = acctSel.value;
+  const acctList = db.accounts.filter(a => matchClientFilter(a.clientId));
+  acctSel.innerHTML = `<option value="all">全部户口 All Accounts</option>` +
+    acctList.map(a => `<option value="${a.id}">${a.name}${filterSel.value === "all" ? " · " + clientLabel(clientById(a.clientId)) : ""}</option>`).join("");
+  acctSel.value = [...acctSel.options].some(o => o.value === acctPrev) ? acctPrev : "all";
+
+  fillAccountSelects();
+  renderAccountsTable();
+
   // 员工权限页（投资者清单会变，勾选框要跟着更新）
   renderStaffForm();
   renderStaffTable();
@@ -1145,11 +1301,10 @@ function renderAll() {
   const txCount = {};
   db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
   const cBody = document.getElementById("c-body");
-  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="10">还没有投资者，先在上面添加</td></tr>`;
+  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="8">还没有投资者，先在上面添加</td></tr>`;
   for (const c of db.clients) {
     cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td><td>${c.email || "-"}</td><td>${c.phone || "-"}</td>
-      <td>${rateLabel(c)}</td><td class="num">${fmt(c.minBrokerage || 0)}</td>
-      <td>${c.costMethod === "fifo" ? "FIFO" : "Average"}</td>
+      <td>${accountsForClient(c.id).map(a => `<span class="acct-tag">${a.name}</span>`).join(" ") || `<span class="hint">未设定</span>`}</td>
       <td class="num">${txCount[c.id] || 0}</td>
       <td><button class="action small ghost" onclick="editClient('${c.id}')">编辑</button>
           <button class="action danger small" onclick="delClient('${c.id}')">删除</button></td></tr>`;
@@ -1162,19 +1317,22 @@ function renderAll() {
   document.getElementById("s-stamp-cap").value = db.settings.stampCap;
 
   // 持仓：按投资者分组（投资者标题行 -> 仓位 -> 小计）
-  const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId));
+  const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId, p.accountId));
   let totalCost = 0, totalValue = 0, totalUnrealized = 0, hasPrice = false;
   const hBody = document.getElementById("h-body");
-  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="10">没有持仓</td></tr>`;
+  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="11">没有持仓</td></tr>`;
   const byClient = {};
   for (const p of held) (byClient[p.clientId] = byClient[p.clientId] || []).push(p);
   const clientIds = Object.keys(byClient)
     .sort((a, b) => (clientById(a)?.code || clientById(a)?.name || "").localeCompare(clientById(b)?.code || clientById(b)?.name || ""));
   for (const cid of clientIds) {
     const c = clientById(cid);
-    hBody.innerHTML += `<tr class="client-header"><td colspan="10">👤 ${clientLabel(c)}${c && c.account ? ` · ${c.account}` : ""}</td></tr>`;
+    hBody.innerHTML += `<tr class="client-header"><td colspan="11">👤 ${clientLabel(c)}${c && c.account ? ` · ${c.account}` : ""}</td></tr>`;
     let subCost = 0, subValue = 0, subU = 0, subHasPrice = false;
-    for (const p of byClient[cid].sort((a, b) => a.ticker.localeCompare(b.ticker))) {
+    // 先按户口再按股票排，同一个户口的货排在一起才好看
+    for (const p of byClient[cid].sort((a, b) =>
+        acctLabel(accountById(a.accountId)).localeCompare(acctLabel(accountById(b.accountId))) ||
+        a.ticker.localeCompare(b.ticker))) {
       const avg = p.cost / p.qty;
       const pr = db.prices[p.ticker];
       totalCost += p.cost; subCost += p.cost;
@@ -1190,11 +1348,11 @@ function renderAll() {
         pctCell = p.cost > 0 ? `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>` : `<span class="hint">白拿</span>`;
       }
       const code = (db.symbols[p.ticker] || "").replace(/\.KL$/i, ""); // 交易时存的 Bursa 代码，这里一并显示
-      hBody.innerHTML += `<tr><td></td><td><b>${p.ticker}</b></td><td class="hint">${code || "-"}</td><td class="num">${p.qty.toLocaleString()}</td>
+      hBody.innerHTML += `<tr><td></td><td><span class="acct-tag">${acctLabel(accountById(p.accountId))}</span></td><td><b>${p.ticker}</b></td><td class="hint">${code || "-"}</td><td class="num">${p.qty.toLocaleString()}</td>
         <td class="num">${avg.toFixed(4)}</td><td class="num">${fmtN(p.cost)}</td>
         <td class="num">${pr ? pr.price.toFixed(4) : "-"}</td><td class="num">${valCell}</td><td class="num">${pnlCell}</td><td class="num">${pctCell}</td></tr>`;
     }
-    hBody.innerHTML += `<tr class="subtotal"><td></td><td>小计</td><td></td><td></td><td></td><td class="num">${fmtN(subCost)}</td><td></td>
+    hBody.innerHTML += `<tr class="subtotal"><td></td><td></td><td>小计</td><td></td><td></td><td></td><td class="num">${fmtN(subCost)}</td><td></td>
       <td class="num">${subHasPrice ? fmtN(subValue) : "-"}</td>
       <td class="num">${subHasPrice ? `<span class="${pnlClass(subU)}">${pnlFmt(subU)}</span>` : "-"}</td>
       <td class="num">${subHasPrice && subCost > 0 ? `<span class="${pnlClass(subU)}">${(subU / subCost * 100).toFixed(2)}%</span>` : "-"}</td></tr>`;
@@ -1215,19 +1373,19 @@ function renderAll() {
   // 股票筛选下拉（跟随投资者 filter 的范围）
   const stockSel = document.getElementById("stockFilter");
   const stockPrev = stockSel.value || "all";
-  const stockList = [...new Set(db.transactions.filter(t => matchFilter(t.clientId)).map(t => t.ticker))].sort();
+  const stockList = [...new Set(db.transactions.filter(t => matchFilter(t.clientId, t.accountId)).map(t => t.ticker))].sort();
   stockSel.innerHTML = `<option value="all">全部股票 All</option>` + stockList.map(t => `<option>${t}</option>`).join("");
   stockSel.value = [...stockSel.options].some(o => o.value === stockPrev) ? stockPrev : "all";
   const stockF = stockSel.value;
 
   const tBody = document.getElementById("t-body");
-  const txs = db.transactions.filter(t => matchFilter(t.clientId) && (stockF === "all" || t.ticker === stockF));
-  // 按时间顺序先算「每笔之后的累计持仓」（按 投资者+股票 各自算）
+  const txs = db.transactions.filter(t => matchFilter(t.clientId, t.accountId) && (stockF === "all" || t.ticker === stockF));
+  // 按时间顺序先算「每笔之后的累计持仓」（按 投资者+户口+股票 各自算）
   const runAfter = {};
   {
     const run = {};
     for (const t of [...txs].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))) {
-      const k = t.clientId + "|" + t.ticker;
+      const k = posKey(t);
       run[k] = (run[k] || 0) + (t.type === "sell" ? -t.qty : t.qty); // 红股 bonus 算加股
       runAfter[t.id] = run[k];
     }
@@ -1269,7 +1427,7 @@ function renderAll() {
   }
   tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="14">没有交易记录</td></tr>`;
   let totalBrokerage = 0;
-  for (const t of db.transactions) if (matchFilter(t.clientId)) totalBrokerage += t.brokerage || 0;
+  for (const t of db.transactions) if (matchFilter(t.clientId, t.accountId)) totalBrokerage += t.brokerage || 0;
   for (const t of txs) {
     const c = clientById(t.clientId);
     const gross = t.qty * t.price;
@@ -1299,22 +1457,22 @@ function renderAll() {
 
   // 股息表
   const vBody = document.getElementById("v-body");
-  const dvs = [...db.dividends].filter(d => matchFilter(d.clientId)).sort((a, b) => b.date.localeCompare(a.date));
-  vBody.innerHTML = dvs.length ? "" : `<tr><td class="empty" colspan="7">没有股息记录</td></tr>`;
+  const dvs = [...db.dividends].filter(d => matchFilter(d.clientId, d.accountId)).sort((a, b) => b.date.localeCompare(a.date));
+  vBody.innerHTML = dvs.length ? "" : `<tr><td class="empty" colspan="8">没有股息记录</td></tr>`;
   let divTotal = 0, divToday = 0;
   const todayRows = [];
   for (const d of dvs) {
     const c = clientById(d.clientId);
     divTotal += d.total;
     if (d.date === today()) { divToday += d.total; todayRows.push(d); }
-    vBody.innerHTML += `<tr><td>${d.date}</td><td>${clientLabel(c)}</td><td><b>${d.ticker}</b>${String(d.id).startsWith("adv") ? ` <span class="badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">自动</span>` : ""}</td>
+    vBody.innerHTML += `<tr><td>${d.date}</td><td>${clientLabel(c)}</td><td><span class="acct-tag">${acctLabel(accountById(d.accountId))}</span></td><td><b>${d.ticker}</b>${String(d.id).startsWith("adv") ? ` <span class="badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">自动</span>` : ""}</td>
       <td class="num">${fmtN(d.perShare)}</td><td class="num">${d.qty.toLocaleString()}</td><td class="num gold">${fmtN(d.total)}</td>
       <td><button class="action danger small" onclick="delDiv('${d.id}')">删除</button></td></tr>`;
   }
 
   // Dashboard cards
   let totalRealized = 0;
-  for (const p of Object.values(pos)) if (matchFilter(p.clientId)) totalRealized += p.realized;
+  for (const p of Object.values(pos)) if (matchFilter(p.clientId, p.accountId)) totalRealized += p.realized;
   setCard("d-cost", fmt(totalCost));
   document.getElementById("d-value").textContent = hasPrice ? fmt(totalValue) : (held.length ? "请先更新现价" : fmt(0));
   setPnlCard("d-unrealized", hasPrice ? totalUnrealized : null);
@@ -1462,6 +1620,116 @@ function renderStaffTable() {
   }
 }
 
+// ---------- 股票户口 CRUD（投资者自己也能开，费率他自己填）----------
+let editingAccountId = null;
+function toggleAcctRateFields() {
+  const tiered = document.getElementById("a-mode").value === "tiered";
+  document.getElementById("f-a-rate-below").style.display = tiered ? "" : "none";
+  document.getElementById("f-a-rate-above").style.display = tiered ? "" : "none";
+  document.getElementById("f-a-rate-flat").style.display = tiered ? "none" : "";
+}
+function saveAccount() {
+  const clientId = document.getElementById("a-client").value;
+  const name = document.getElementById("a-name").value.trim();
+  const mode = document.getElementById("a-mode").value;
+  const rateFlat = parseFloat(document.getElementById("a-rate-flat").value);
+  const rateBelow = parseFloat(document.getElementById("a-rate-below").value);
+  const rateAbove = parseFloat(document.getElementById("a-rate-above").value);
+  const min = parseFloat(document.getElementById("a-min").value) || 0;
+  const costMethod = document.getElementById("a-costmethod").value;
+  if (!clientId || !clientById(clientId)) { alert("请先选投资者"); return; }
+  if (!name) { alert("请填户口名，如 APEX / CGS"); return; }
+  if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
+  if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
+  // 同一位投资者底下户口名不能重复，否则交易选错户口自己都分不出
+  const dupe = db.accounts.some(a => a.clientId === clientId && a.id !== editingAccountId &&
+    a.name.toLowerCase() === name.toLowerCase());
+  if (dupe) { alert(`这位投资者已经有一个叫「${name}」的户口了`); return; }
+  const data = { clientId, name, brokerageMode: mode, minBrokerage: min, costMethod,
+    rateFlat: mode === "flat" ? rateFlat : undefined,
+    rateBelow: mode === "tiered" ? rateBelow : undefined,
+    rateAbove: mode === "tiered" ? rateAbove : undefined };
+  if (editingAccountId) {
+    const a = accountById(editingAccountId);
+    const moved = a.clientId !== clientId && db.transactions.some(t => t.accountId === editingAccountId);
+    if (moved) { alert("这个户口底下已经有交易了，不能换到别的投资者名下。"); return; }
+    Object.assign(a, data);
+    cancelEditAccount();
+  } else {
+    db.accounts.push({ id: uid(), ...data });
+    document.getElementById("a-name").value = "";
+  }
+  save();
+}
+function editAccount(id) {
+  const a = accountById(id);
+  if (!a) return;
+  editingAccountId = id;
+  document.getElementById("a-client").value = a.clientId;
+  document.getElementById("a-name").value = a.name || "";
+  document.getElementById("a-mode").value = a.brokerageMode || "flat";
+  document.getElementById("a-rate-flat").value = a.rateFlat ?? "";
+  document.getElementById("a-rate-below").value = a.rateBelow ?? "";
+  document.getElementById("a-rate-above").value = a.rateAbove ?? "";
+  document.getElementById("a-min").value = a.minBrokerage || 0;
+  document.getElementById("a-costmethod").value = a.costMethod === "fifo" ? "fifo" : "average";
+  toggleAcctRateFields();
+  document.getElementById("a-form-title").textContent = "编辑户口：" + a.name;
+  document.getElementById("a-save-btn").textContent = "保存";
+  document.getElementById("a-cancel-btn").style.display = "";
+  document.getElementById("a-name").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function cancelEditAccount() {
+  editingAccountId = null;
+  ["a-name", "a-rate-flat", "a-rate-below", "a-rate-above"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("a-min").value = 8;
+  document.getElementById("a-mode").value = "tiered";
+  toggleAcctRateFields();
+  document.getElementById("a-form-title").textContent = "添加股票户口 Add Account";
+  document.getElementById("a-save-btn").textContent = "添加户口";
+  document.getElementById("a-cancel-btn").style.display = "none";
+}
+function delAccount(id) {
+  const a = accountById(id);
+  if (!a) return;
+  const used = db.transactions.filter(t => t.accountId === id).length
+             + db.dividends.filter(d => d.accountId === id).length
+             + db.cashflows.filter(cf => cf.accountId === id).length;
+  if (used) { alert(`「${a.name}」底下还有 ${used} 笔记录，不能删。要删的话先把那些记录改到别的户口。`); return; }
+  if (!confirm(`删除户口「${a.name}」？`)) return;
+  db.accounts = db.accounts.filter(x => x.id !== id);
+  if (editingAccountId === id) cancelEditAccount();
+  save();
+}
+function renderAccountsTable() {
+  const body = document.getElementById("a-body");
+  if (!body) return;
+  const rows = db.accounts.filter(a => matchClientFilter(a.clientId));
+  body.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="7">还没有股票户口。加一个（如 APEX / CGS）才能记交易。</td></tr>`;
+  for (const a of rows) {
+    const n = db.transactions.filter(t => t.accountId === a.id).length;
+    body.innerHTML += `<tr><td>${clientLabel(clientById(a.clientId))}</td>
+      <td><span class="acct-tag">${a.name}</span></td>
+      <td>${rateLabel(a)}</td><td class="num">${fmt(a.minBrokerage || 0)}</td>
+      <td>${a.costMethod === "fifo" ? "FIFO" : "Average"}</td><td class="num">${n}</td>
+      <td><button class="action small ghost" onclick="editAccount('${a.id}')">编辑</button>
+          <button class="action danger small" onclick="delAccount('${a.id}')">删除</button></td></tr>`;
+  }
+}
+// 把「某投资者的户口」填进各个下拉选单（尽量保住原本选的那个）
+function fillAccountSelects() {
+  for (const [selId, clientSelId] of [["t-account", "t-client"], ["v-account", "v-client"], ["cf-account", "cf-client"]]) {
+    const sel = document.getElementById(selId);
+    const cid = document.getElementById(clientSelId).value;
+    if (!sel) continue;
+    const prev = sel.value;
+    const list = accountsForClient(cid);
+    sel.innerHTML = list.length ? list.map(a => `<option value="${a.id}">${a.name}</option>`).join("")
+                                : `<option value="">（请先在总览加户口）</option>`;
+    if (list.some(a => a.id === prev)) sel.value = prev;
+  }
+}
+
 function saveClient() {
   const code = document.getElementById("c-code").value.trim().toUpperCase();
   const name = document.getElementById("c-name").value.trim();
@@ -1490,7 +1758,12 @@ function saveClient() {
     Object.assign(clientById(editingClientId), data);
     cancelEditClient();
   } else {
-    db.clients.push({ id: uid(), ...data });
+    const nc = { id: uid(), ...data };
+    db.clients.push(nc);
+    // 新投资者顺手开一个预设户口（用刚填的费率），不然他连交易都记不了
+    db.accounts.push({ id: uid(), clientId: nc.id, name: DEFAULT_ACCT_NAME,
+      brokerageMode: mode, minBrokerage: min, costMethod,
+      rateFlat: data.rateFlat, rateBelow: data.rateBelow, rateAbove: data.rateAbove });
     ["c-code", "c-name", "c-account", "c-email", "c-phone", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
   }
   save();
@@ -1543,7 +1816,8 @@ function saveSettings() {
 
 // ---------- Transactions ----------
 function autoFees() {
-  const c = clientById(document.getElementById("t-client").value);
+  // 费率跟着【户口】走（不同股票行收费不一样），不再是投资者层级
+  const c = accountById(document.getElementById("t-account").value);
   const qty = parseFloat(document.getElementById("t-qty").value.replace(/,/g, ""));
   const price = parseFloat(document.getElementById("t-price").value);
   const preview = document.getElementById("t-preview");
@@ -1565,7 +1839,7 @@ function updatePreview() {
     stamp: parseFloat(document.getElementById("t-stamp").value) || 0,
     clearing: parseFloat(document.getElementById("t-clearing").value) || 0
   };
-  const c = clientById(document.getElementById("t-client").value);
+  const c = accountById(document.getElementById("t-account").value);
   const gross = qty * price;
   let rateInfo = "";
   if (c && gross > 0) {
@@ -1580,6 +1854,7 @@ function updatePreview() {
 
 function addTransaction() {
   const clientId = document.getElementById("t-client").value;
+  const accountId = document.getElementById("t-account").value;
   const date = document.getElementById("t-date").value;
   const ticker = document.getElementById("t-ticker").value.trim().toUpperCase();
   const code = document.getElementById("t-code").value.trim().toUpperCase();
@@ -1590,6 +1865,7 @@ function addTransaction() {
   const stamp = parseFloat(document.getElementById("t-stamp").value) || 0;
   const clearing = parseFloat(document.getElementById("t-clearing").value) || 0;
   if (!clientId || !clientById(clientId)) { alert("请先在「投资者」页添加投资者"); return; }
+  if (!accountId || !accountById(accountId)) { alert("请先在「总览」页给这位投资者加一个股票户口（如 APEX / CGS）"); return; }
   if (!date || !ticker || !(qty > 0) || !(price > 0)) { alert("请填完整：日期、股票、股数、价格"); return; }
   if (type === "sell") {
     // 修改模式：算持仓时先排除正在修改的这一笔，才不会误判
@@ -1597,18 +1873,21 @@ function addTransaction() {
     if (editingTxId) db.transactions = all.filter(t => t.id !== editingTxId);
     const { pos } = computePortfolio();
     db.transactions = all;
-    const p = pos[clientId + "|" + ticker];
+    const p = pos[posKeyOf(clientId, accountId, ticker)];
     const have = p ? p.qty : 0;
-    if (qty > have + 1e-9) { alert(`这个投资者的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return; }
+    if (qty > have + 1e-9) {
+      const an = acctLabel(accountById(accountId));
+      alert(`这个投资者在【${an}】户口的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return;
+    }
   }
   if (code) db.symbols[ticker] = normalizeSymbol(code); // 存代码给抓价用
   if (editingTxId) {
     const t = db.transactions.find(x => x.id === editingTxId);
-    if (t) Object.assign(t, { clientId, date, ticker, type, qty, price, brokerage, stamp, clearing });
+    if (t) Object.assign(t, { clientId, accountId, date, ticker, type, qty, price, brokerage, stamp, clearing });
     cancelEditTx();
     document.getElementById("t-preview").textContent = "已保存修改 ✓";
   } else {
-    db.transactions.push({ id: uid(), clientId, date, ticker, type, qty, price, brokerage, stamp, clearing });
+    db.transactions.push({ id: uid(), clientId, accountId, date, ticker, type, qty, price, brokerage, stamp, clearing });
     ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
     document.getElementById("t-preview").textContent = "已添加 ✓";
   }
@@ -1621,6 +1900,8 @@ function editTx(id) {
   if (!t) return;
   editingTxId = id;
   document.getElementById("t-client").value = t.clientId;
+  fillAccountSelects(); // 投资者换了，户口清单要跟着换，才选得到这笔交易的户口
+  document.getElementById("t-account").value = t.accountId || "";
   document.getElementById("t-date").value = t.date;
   document.getElementById("t-type").value = t.type;
   document.getElementById("t-ticker").value = t.ticker;
@@ -1704,15 +1985,15 @@ function renderTAccount(pos) {
   const showClient = document.getElementById("clientFilter").value === "all";
   const groups = {};
   for (const t of db.transactions) {
-    if (!matchFilter(t.clientId)) continue;
+    if (!matchFilter(t.clientId, t.accountId)) continue;
     if (stockF !== "all" && t.ticker !== stockF) continue;
-    const k = t.clientId + "|" + t.ticker;
+    const k = posKey(t);
     (groups[k] = groups[k] || []).push(t);
   }
   const keys = Object.keys(groups).sort((a, b) => {
     const openA = (pos[a] && pos[a].qty > 0) ? 0 : 1;
     const openB = (pos[b] && pos[b].qty > 0) ? 0 : 1;
-    return openA - openB || a.split("|")[1].localeCompare(b.split("|")[1]);
+    return openA - openB || a.split("|")[2].localeCompare(b.split("|")[2]);
   });
   if (!keys.length) { wrap.innerHTML = `<div class="form-card" style="text-align:center;color:var(--muted)">没有交易记录</div>`; return; }
   let html = "";
@@ -1720,7 +2001,8 @@ function renderTAccount(pos) {
     const list = groups[k].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
     const p = pos[k] || { qty: 0, cost: 0, realized: 0 };
     const c = clientById(k.split("|")[0]);
-    const ticker = k.split("|")[1];
+    const acct = accountById(k.split("|")[1]);
+    const ticker = k.split("|")[2];
     let bQty = 0, bNet = 0, sQty = 0, sNet = 0, bRows = "", sRows = "";
     for (const t of list) {
       const row = `<div class="tacct-row"><span style="color:var(--muted)">${t.date}</span><span>${t.qty.toLocaleString()} @${t.price.toFixed(4)}</span></div>`;
@@ -1740,7 +2022,7 @@ function renderTAccount(pos) {
       ? `结余 ${p.qty.toLocaleString()} 股 · 平均成本 ${(p.cost / p.qty).toFixed(4)}${p.realized ? ` · 已实现 ${pnlFmt(p.realized)}` : ""}`
       : `结余 0 股 ✓ 平仓`;
     html += `<div class="tacct-card">
-      <div class="tacct-head"><span style="font-weight:600;font-size:15px"><b>${ticker}</b>${showClient ? ` <span class="hint">${clientLabel(c)}</span>` : ""}</span>${badge}</div>
+      <div class="tacct-head"><span style="font-weight:600;font-size:15px"><b>${ticker}</b> <span class="acct-tag">${acctLabel(acct)}</span>${showClient ? ` <span class="hint">${clientLabel(c)}</span>` : ""}</span>${badge}</div>
       <div class="tacct-cols">
         <div class="tacct-col"><div style="color:var(--green);font-weight:600;margin-bottom:5px">买入 Buy</div>${bRows || `<div style="color:var(--muted)">—</div>`}</div>
         <div class="tacct-col right"><div style="color:var(--red);font-weight:600;margin-bottom:5px">卖出 Sell</div>${sRows || `<div style="color:var(--muted)">—</div>`}</div>
@@ -1897,16 +2179,19 @@ function autoRecordDividends() {
       const code = (db.symbols[t.ticker] || "").replace(/\.KL$/, "");
       if (t.ticker !== r.stock && !(r.code && code === r.code)) continue;
       if (t.date >= iso) continue;
-      const e = ent[t.clientId] || (ent[t.clientId] = { qty: 0, ticker: t.ticker });
+      const ek = t.clientId + "|" + (t.accountId || "");
+      const e = ent[ek] || (ent[ek] = { qty: 0, ticker: t.ticker });
       e.qty += t.type === "sell" ? -t.qty : t.qty; // 红股 bonus 算加股
     }
-    for (const cid in ent) {
-      const e = ent[cid];
+    for (const ek in ent) {
+      const e = ent[ek];
       if (e.qty <= 0) continue;
-      const key = `autodiv:${cid}|${e.ticker}|${iso}|${dps}`;
-      if (db.settings[key]) continue;
+      const [cid, acctId] = ek.split("|");
+      const oldKey = `autodiv:${cid}|${e.ticker}|${iso}|${dps}`;       // 迁移前的旧键
+      const key = `autodiv:${cid}|${acctId}|${e.ticker}|${iso}|${dps}`;
+      if (db.settings[oldKey] || db.settings[key]) continue;
       db.settings[key] = 1;
-      db.dividends.push({ id: "adv" + uid(), clientId: cid, date: iso, ticker: e.ticker, perShare: dps, qty: e.qty, total: r2(e.qty * dps) });
+      db.dividends.push({ id: "adv" + uid(), clientId: cid, accountId: acctId, date: iso, ticker: e.ticker, perShare: dps, qty: e.qty, total: r2(e.qty * dps) });
       created++;
     }
   }
@@ -1989,14 +2274,17 @@ async function backfillDividends(silent) {
         const held = {};
         for (const t of db.transactions) {
           if (t.ticker !== tk || t.date >= h.exDate) continue;
-          held[t.clientId] = (held[t.clientId] || 0) + (t.type === "sell" ? -t.qty : t.qty); // 红股 bonus 算加股
+          const hk = t.clientId + "|" + (t.accountId || "");
+          held[hk] = (held[hk] || 0) + (t.type === "sell" ? -t.qty : t.qty); // 红股 bonus 算加股
         }
-        for (const cid in held) {
-          if (held[cid] <= 0) continue;
-          const key = `autodiv:${cid}|${tk}|${h.exDate}|${h.dps}`;
-          if (db.settings[key]) continue;
+        for (const hk in held) {
+          if (held[hk] <= 0) continue;
+          const [cid, acctId] = hk.split("|");
+          const oldKey = `autodiv:${cid}|${tk}|${h.exDate}|${h.dps}`;
+          const key = `autodiv:${cid}|${acctId}|${tk}|${h.exDate}|${h.dps}`;
+          if (db.settings[oldKey] || db.settings[key]) continue;
           db.settings[key] = 1;
-          db.dividends.push({ id: "adv" + uid(), clientId: cid, date: h.exDate, ticker: tk, perShare: h.dps, qty: held[cid], total: r2(held[cid] * h.dps) });
+          db.dividends.push({ id: "adv" + uid(), clientId: cid, accountId: acctId, date: h.exDate, ticker: tk, perShare: h.dps, qty: held[hk], total: r2(held[hk] * h.dps) });
           created++;
         }
       }
@@ -2052,7 +2340,8 @@ async function backfillSplits(silent) {
       const h = {};
       for (const t of db.transactions) {
         if (t.ticker !== tk || t.date >= exDate) continue;
-        h[t.clientId] = (h[t.clientId] || 0) + (t.type === "sell" ? -t.qty : t.qty);
+        const hk = t.clientId + "|" + (t.accountId || "");
+        h[hk] = (h[hk] || 0) + (t.type === "sell" ? -t.qty : t.qty);
       }
       return h;
     };
@@ -2072,16 +2361,18 @@ async function backfillSplits(silent) {
             continue;
           }
           db.symbols[s.warrantSymbol] = s.warrantCode + ".KL"; // 让它跟着自动更新价格
-          for (const cid in held) {
-            if (held[cid] <= 0) continue;
-            const key = `autowarrant:${cid}|${s.warrantSymbol}|${s.exDate}`;
-            if (db.settings[key]) continue;
-            const qty = Math.floor(held[cid] * s.perShare); // 不足一张的零头不发
+          for (const hk in held) {
+            if (held[hk] <= 0) continue;
+            const [cid, acctId] = hk.split("|");
+            const oldKey = `autowarrant:${cid}|${s.warrantSymbol}|${s.exDate}`;
+            const key = `autowarrant:${cid}|${acctId}|${s.warrantSymbol}|${s.exDate}`;
+            if (db.settings[oldKey] || db.settings[key]) continue;
+            const qty = Math.floor(held[hk] * s.perShare); // 不足一张的零头不发
             if (qty <= 0) continue;
             db.settings[key] = 1;
-            db.transactions.push({ id: "wrt" + uid(), clientId: cid, date: s.exDate, ticker: s.warrantSymbol,
+            db.transactions.push({ id: "wrt" + uid(), clientId: cid, accountId: acctId, date: s.exDate, ticker: s.warrantSymbol,
               type: "bonus", qty, price: 0, brokerage: 0, stamp: 0, clearing: 0,
-              note: `免费凭单 ${s.ratio}（持 ${held[cid].toLocaleString()} ${tk}）` });
+              note: `免费凭单 ${s.ratio}（持 ${held[hk].toLocaleString()} ${tk}）` });
             wCreated++;
           }
           continue;
@@ -2096,16 +2387,19 @@ async function backfillSplits(silent) {
         const held = {};
         for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
           if (t.ticker !== tk || t.date >= s.exDate) continue;
-          held[t.clientId] = (held[t.clientId] || 0) + (t.type === "sell" ? -t.qty : t.qty);
+          const hk2 = t.clientId + "|" + (t.accountId || "");
+          held[hk2] = (held[hk2] || 0) + (t.type === "sell" ? -t.qty : t.qty);
         }
-        for (const cid in held) {
-          if (held[cid] <= 0) continue;
-          const key = `autosplit:${cid}|${tk}|${s.exDate}|${s.factor}`;
-          if (db.settings[key]) continue;
-          const extra = Math.round(held[cid] * (s.factor - 1)); // 送股为正；并股为负（股数减少）
-          if (extra === 0 || held[cid] + extra <= 0) continue;
+        for (const hk2 in held) {
+          if (held[hk2] <= 0) continue;
+          const [cid, acctId] = hk2.split("|");
+          const oldKey = `autosplit:${cid}|${tk}|${s.exDate}|${s.factor}`;
+          const key = `autosplit:${cid}|${acctId}|${tk}|${s.exDate}|${s.factor}`;
+          if (db.settings[oldKey] || db.settings[key]) continue;
+          const extra = Math.round(held[hk2] * (s.factor - 1)); // 送股为正；并股为负（股数减少）
+          if (extra === 0 || held[hk2] + extra <= 0) continue;
           db.settings[key] = 1;
-          db.transactions.push({ id: "spl" + uid(), clientId: cid, date: s.exDate, ticker: tk,
+          db.transactions.push({ id: "spl" + uid(), clientId: cid, accountId: acctId, date: s.exDate, ticker: tk,
             type: "bonus", qty: extra, price: 0, brokerage: 0, stamp: 0, clearing: 0, note: `${s.type} ${s.ratio}` });
           created++;
         }
@@ -2237,19 +2531,21 @@ async function autoRefreshIPO() {
 function fillDivTickers(posArg) {
   const pos = posArg || computePortfolio().pos;
   const clientId = document.getElementById("v-client").value;
-  const tks = Object.values(pos).filter(p => p.clientId === clientId && p.qty > 0).map(p => p.ticker).sort();
+  const accountId = document.getElementById("v-account").value;
+  const tks = Object.values(pos).filter(p => p.clientId === clientId && p.accountId === accountId && p.qty > 0).map(p => p.ticker).sort();
   const sel = document.getElementById("v-ticker");
   const prev = sel.value;
-  sel.innerHTML = tks.map(t => `<option>${t}</option>`).join("") || "<option value=''>（该投资者无持仓）</option>";
+  sel.innerHTML = tks.map(t => `<option>${t}</option>`).join("") || "<option value=''>（这个户口没有持仓）</option>";
   if (tks.includes(prev)) sel.value = prev;
   prefillDivQty();
 }
 function prefillDivQty() {
   const clientId = document.getElementById("v-client").value;
+  const accountId = document.getElementById("v-account").value;
   const tk = document.getElementById("v-ticker").value;
   if (!clientId || !tk) return;
   const { pos } = computePortfolio();
-  const p = pos[clientId + "|" + tk];
+  const p = pos[posKeyOf(clientId, accountId, tk)];
   document.getElementById("v-qty").value = p ? p.qty : "";
   calcDivTotal();
 }
@@ -2260,13 +2556,15 @@ function calcDivTotal() {
 }
 function addDividend() {
   const clientId = document.getElementById("v-client").value;
+  const accountId = document.getElementById("v-account").value;
   const date = document.getElementById("v-date").value;
   const ticker = document.getElementById("v-ticker").value;
   const perShare = parseFloat(document.getElementById("v-dps").value) || 0;
   const qty = parseFloat(document.getElementById("v-qty").value) || 0;
   const total = parseFloat(document.getElementById("v-total").value);
   if (!clientId || !date || !ticker || !(total > 0)) { alert("请填日期、投资者、股票，并确认总额大于 0"); return; }
-  db.dividends.push({ id: uid(), clientId, date, ticker, perShare, qty, total });
+  if (!accountId || !accountById(accountId)) { alert("请先选股票户口"); return; }
+  db.dividends.push({ id: uid(), clientId, accountId, date, ticker, perShare, qty, total });
   ["v-dps", "v-total"].forEach(id => document.getElementById(id).value = "");
   save();
 }
@@ -2279,12 +2577,14 @@ function delDiv(id) {
 // ---------- Cash Flow 现金账 ----------
 function addCashflow() {
   const clientId = document.getElementById("cf-client").value;
+  const accountId = document.getElementById("cf-account").value;
   const date = document.getElementById("cf-date").value;
   const type = document.getElementById("cf-type").value;
   const amount = parseFloat(document.getElementById("cf-amount").value.replace(/,/g, ""));
   const note = document.getElementById("cf-note").value.trim();
   if (!clientId || !date || !(amount > 0)) { alert("请填投资者、日期，金额要大于 0"); return; }
-  db.cashflows.push({ id: uid(), clientId, date, type, amount, note });
+  if (!accountId || !accountById(accountId)) { alert("请先选股票户口"); return; }
+  db.cashflows.push({ id: uid(), clientId, accountId, date, type, amount, note });
   document.getElementById("cf-amount").value = "";
   document.getElementById("cf-note").value = "";
   save();
@@ -2297,10 +2597,10 @@ function delCashflow(id) {
 function renderCashflow(pos, realizedByTx) {
   // 汇总（按上方 filter 范围）
   let dep = 0, wd = 0, buyNet = 0, sellNet = 0, div = 0, realised = 0, mv = 0, mvKnown = true;
-  for (const cf of db.cashflows) if (matchFilter(cf.clientId)) { if (cf.type === "deposit") dep += cf.amount; else wd += cf.amount; }
-  for (const t of db.transactions) if (matchFilter(t.clientId)) { const n = netAmount(t); if (t.type === "buy") buyNet += n; else sellNet += n; }
-  for (const dv of db.dividends) if (matchFilter(dv.clientId)) div += dv.total;
-  for (const p of Object.values(pos)) if (matchFilter(p.clientId)) { realised += p.realized; if (p.qty > 0) { const pr = db.prices[p.ticker]; if (pr) mv += pr.price * p.qty; else mvKnown = false; } }
+  for (const cf of db.cashflows) if (matchFilter(cf.clientId, cf.accountId)) { if (cf.type === "deposit") dep += cf.amount; else wd += cf.amount; }
+  for (const t of db.transactions) if (matchFilter(t.clientId, t.accountId)) { const n = netAmount(t); if (t.type === "buy") buyNet += n; else sellNet += n; }
+  for (const dv of db.dividends) if (matchFilter(dv.clientId, dv.accountId)) div += dv.total;
+  for (const p of Object.values(pos)) if (matchFilter(p.clientId, p.accountId)) { realised += p.realized; if (p.qty > 0) { const pr = db.prices[p.ticker]; if (pr) mv += pr.price * p.qty; else mvKnown = false; } }
   const cash = dep - wd - buyNet + sellNet + div;
   const equity = cash + mv;
   const netDep = dep - wd;
@@ -2326,15 +2626,15 @@ function renderCashflow(pos, realizedByTx) {
   }
   hint.textContent = "";
   const ev = [];
-  for (const cf of db.cashflows) if (cf.clientId === f)
+  for (const cf of db.cashflows) if (cf.clientId === f && matchAccountFilter(cf.accountId))
     ev.push({ date: cf.date, k: cf.type === "deposit" ? 0 : 5, label: (cf.type === "deposit" ? "入金 Deposit" : "出金 Withdraw") + (cf.note ? ` · ${cf.note}` : ""), in: cf.type === "deposit" ? cf.amount : 0, out: cf.type === "withdraw" ? cf.amount : 0, del: cf.id });
-  for (const t of db.transactions) if (t.clientId === f) {
+  for (const t of db.transactions) if (t.clientId === f && matchAccountFilter(t.accountId)) {
     const n = netAmount(t);
     if (t.type === "bonus") ev.push({ date: t.date, k: 1, label: `🎁 红股 ${t.ticker} +${t.qty.toLocaleString()} 股（不涉及现金）`, in: 0, out: 0 });
     else if (t.type === "buy") ev.push({ date: t.date, k: 1, label: `买入 ${t.ticker} ${t.qty.toLocaleString()}`, in: 0, out: n });
     else { const r = realizedByTx[t.id]; ev.push({ date: t.date, k: 2, label: `卖出 ${t.ticker} ${t.qty.toLocaleString()}` + (r !== undefined ? `（已实现 ${pnlFmt(r)}）` : ""), in: n, out: 0 }); }
   }
-  for (const dv of db.dividends) if (dv.clientId === f)
+  for (const dv of db.dividends) if (dv.clientId === f && matchAccountFilter(dv.accountId))
     ev.push({ date: dv.date, k: 3, label: `股息 ${dv.ticker}`, in: dv.total, out: 0 });
   ev.sort((a, b) => a.date.localeCompare(b.date) || a.k - b.k);
   body.innerHTML = ev.length ? "" : `<tr><td class="empty" colspan="6">这个投资者还没有任何记录</td></tr>`;
@@ -2364,17 +2664,17 @@ function exportJSON() {
 function exportCSV() {
   const { realizedByTx } = computePortfolio();
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
-  let csv = "﻿record_type,investor_code,investor,account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l\n";
+  let csv = "﻿record_type,investor_code,investor,account,stock_account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l\n";
   for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(t.clientId);
     const r = realizedByTx[t.id];
-    csv += ["transaction", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", t.date, t.ticker, t.type, t.qty, t.price,
+    csv += ["transaction", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", acctLabel(accountById(t.accountId)), t.date, t.ticker, t.type, t.qty, t.price,
       (t.qty * t.price).toFixed(2), (t.brokerage || 0).toFixed(2), (t.stamp || 0).toFixed(2), (t.clearing || 0).toFixed(2),
       netAmount(t).toFixed(2), r !== undefined ? r.toFixed(2) : ""].map(esc).join(",") + "\n";
   }
   for (const d of [...db.dividends].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(d.clientId);
-    csv += ["dividend", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", d.date, d.ticker, "dividend", d.qty, d.perShare,
+    csv += ["dividend", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", acctLabel(accountById(d.accountId)), d.date, d.ticker, "dividend", d.qty, d.perShare,
       "", "", "", "", d.total.toFixed(2), d.total.toFixed(2)].map(esc).join(",") + "\n";
   }
   download(`portfolio-export-${today()}.csv`, csv, "text/csv");
@@ -2390,6 +2690,7 @@ function importJSON(ev) {
       if (!confirm(`导入会覆盖现有数据（${d.clients ? d.clients.length : 0} 个投资者、${d.transactions.length} 笔交易、${d.dividends.length} 笔股息）。继续？`)) return;
       localStorage.setItem(STORE_KEY, JSON.stringify(d));
       db = load();
+      ensureAccounts();
       save();
       alert("导入成功！");
     } catch (e) { alert("导入失败：不是有效的备份文件"); }
@@ -2525,6 +2826,9 @@ setSuper(isSuper); // 套用上次的 super 状态（决定员工页显不显示
 toggleStaffScope();
 if (viewerRole === "client") applyClientModeUI(); // 上次是投资者登入，先用缓存进只读模式
 if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注册页（Google 自动登入成功会收起）
+// 旧资料没有股票户口 -> 建预设户口并把旧记录归位。数字不会变，只是多了一层归属。
+// 一定要放在这里（helpers 定义之后），放在 db 那一行会碰到 const 的暂时死区。
+if (ensureAccounts()) localStorage.setItem(STORE_KEY, JSON.stringify(db));
 renderAll();
 autoRefreshExDiv();
 autoRefreshEntitlements();
