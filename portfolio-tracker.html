@@ -225,6 +225,11 @@
       <p class="hint" style="margin:0 0 12px">填好资料，然后用 Gmail 完成注册</p>
       <div class="field" style="margin-bottom:10px"><label>你的名字 Name</label><input type="text" id="reg-name" placeholder="如 Tan Ah Kow" style="width:100%"></div>
       <div class="field" style="margin-bottom:14px"><label>手机号码 Phone</label><input type="tel" id="reg-phone" placeholder="如 012-345 6789" style="width:100%"></div>
+      <label style="display:flex; align-items:flex-start; gap:8px; margin-bottom:14px; font-size:13px; color:var(--text); cursor:pointer; line-height:1.55">
+        <input type="checkbox" id="reg-agree" style="min-width:0; width:15px; height:15px; margin-top:2px; flex:none; accent-color:var(--blue)">
+        <span>我已阅读并同意 <a href="terms.html" target="_blank" rel="noopener">《使用条款、免责声明与隐私政策》</a><br>
+        I have read and agree to the <a href="terms.html" target="_blank" rel="noopener">Terms of Use, Disclaimer &amp; Privacy Policy</a></span>
+      </label>
       <div id="gsi-button-reg" style="display:flex; justify-content:center"></div>
       <p class="net-preview" id="reg-status" style="text-align:center"></p>
       <p class="hint" style="text-align:center; margin-top:8px">注册后你的 Google Drive 会自动出现一个「Portfolio」记录表</p>
@@ -732,6 +737,8 @@ async function registerClient() {
   const st = document.getElementById("reg-status");
   if (!name) { st.textContent = "请输入你的名字，然后再按一次 Google 按钮。"; return; }
   if (phone.replace(/[^0-9]/g, "").length < 9) { st.textContent = "请输入有效的手机号码，然后再按一次 Google 按钮。"; return; }
+  // 银行式同意流程：没勾同意条款就不给注册（勾选状态会随注册时间一起留在系统记录里）
+  if (!document.getElementById("reg-agree").checked) { st.textContent = "请先勾选同意《使用条款、免责声明与隐私政策》，然后再按一次 Google 按钮。"; return; }
   st.textContent = "注册中…（顺便在你的 Drive 建立记录表，等几秒）";
   try {
     const r = await fetch(cloudUrl(), { method: "POST",
