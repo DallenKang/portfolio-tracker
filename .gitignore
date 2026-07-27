@@ -1,21 +1,36 @@
-# Claude Code 本地设置，不上传
-.claude/
+# ===================================================================
+# 这个 repo 是【公开】的 —— 下面每一条都别删。
+# 注意：.gitignore 不支援行内註解，註解一定要自己一行，
+#      写成「档名 # 说明」会让整行失效（踩过，密钥差点外泄）。
+# ===================================================================
 
-# Python 临时文件
-__pycache__/
+# ---- 含密钥：外泄等於整个後端被接管 ----
 
-# 数据备份（含顾客资料，绝对不上传公开 repo）
+# 後端程式，内含後备主密钥 + OAuth Client ID
+apps-script.gs
+# 上面那份的去敏感版，仍含内部资讯
+apps-script-REDACTED.gs
+# 搬家步骤，最後面写着後备主密钥
+搬家步骤-InnerCircle.txt
+# 域名与 DNS 设定步骤
+域名步骤-InnerCircle.txt
+# 早期的上线步骤
+上线步骤-顾客Portal.txt
+
+# ---- 含真人资料：投资者的姓名、电话、交易记录 ----
 portfolio-backup-*.json
 portfolio-export-*.csv
 
-# Apps Script 含 Google Sheet 密码，绝对不上传公开 repo
-apps-script.gs
+# ---- 内部文件：给自己和 AI 看的，不给外人 ----
 
-# 内部操作文件，不上传（含後备主密钥）
-上线步骤-顾客Portal.txt
-搬家步骤-InnerCircle.txt
-域名步骤-InnerCircle.txt
-
-# Claude Code institutional files - keep out of public repo
+# Claude Code 的专案规则
 CLAUDE.md
+# 完整进度与交接说明
 进度总表-InnerCircle.md
+
+# 注意：AGENTS.md 和 codex/ 是【故意】要上传的 —— 已确认不含密钥与个资，
+#      这样换电脑 git clone 就能接手，不用靠 USB 或 OneDrive。
+
+# ---- 工具杂项 ----
+.claude/
+__pycache__/
