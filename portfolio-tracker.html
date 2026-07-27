@@ -112,6 +112,14 @@
   body.client-mode #clientFilter { pointer-events: none; opacity: 0.75; }
   /* 员工权限页只有 super 看得到（後端也会挡，这里只是不显示） */
   body.not-super .tab-btn[data-tab="staff"], body.client-mode .tab-btn[data-tab="staff"] { display: none; }
+  /* 存云端失败 = 会掉资料，要看得见 */
+  #sync-warn {
+    background: #5c1f26; border: 1px solid #a83244; color: #ffd6db;
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; font-size: 14px; line-height: 1.6;
+  }
+  #sync-warn b { color: #fff; }
+  .cloud-bad { color: #ff8a95 !important; font-weight: 600; }
+
   .staff-clients { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .staff-clients label {
     display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
@@ -181,11 +189,17 @@
 </div>
 
 <h1>📈 Inner Circle Ptracker</h1>
-<p class="subtitle" id="app-subtitle">按顾客管理 · 费用自动计算 · 股息自动入账 · 数据云端同步</p>
+<p class="subtitle" id="app-subtitle">多组合管理 · 费用自动计算 · 股息自动入账 · 数据云端同步</p>
 
 <div class="filter-bar" id="signin-banner" style="display:none">
   <span id="banner-text">👋 你的投资组合</span>
   <button class="action ghost small" id="banner-signout" style="display:none" onclick="googleSignOut(); location.reload()">登出</button>
+</div>
+
+<div id="sync-warn" style="display:none">
+  ⚠️ <b>刚才的改动还没存到云端。</b>你的记录还在这台电脑上，没有掉。
+  下面「数据库」页有详细讯息 —— 多数情况是登入过期，重新登入後会自动补存。
+  <button class="action small" style="margin-left:8px" onclick="pushCloud(false)">立即重试</button>
 </div>
 
 <!-- 登入 / 注册页（未登入时显示） -->
@@ -221,7 +235,7 @@
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="dashboard">📊 总览</button>
-  <button class="tab-btn" data-tab="clients">👥 顾客 Clients</button>
+  <button class="tab-btn" data-tab="clients">👥 用户 Users</button>
   <button class="tab-btn" data-tab="transactions">📝 交易 P&L</button>
   <button class="tab-btn" data-tab="holdings">💼 持仓</button>
   <button class="tab-btn" data-tab="dividends">💰 股息</button>
@@ -233,8 +247,8 @@
 </div>
 
 <div class="filter-bar">
-  <label>查看顾客 Filter:</label>
-  <select id="clientFilter" onchange="filterChanged()"><option value="all">全部顾客 All Clients</option></select>
+  <label>查看用户 Filter:</label>
+  <select id="clientFilter" onchange="filterChanged()"><option value="all">全部用户 All Users</option></select>
 </div>
 
 <!-- ============ DASHBOARD ============ -->
@@ -250,7 +264,7 @@
     <div class="card"><div class="label">总回报 Total Return</div><div class="value" id="d-total-return">-</div></div>
   </div>
 
-  <h2 class="section">各顾客摘要 Client Summary</h2>
+  <h2 class="section">各用户摘要 User Summary</h2>
   <div class="table-wrap">
     <table>
       <thead><tr><th>顾客</th><th>户口</th><th class="num">持仓成本</th><th class="num">已实现 P/(L)</th><th class="num">股息</th><th class="num">Brokerage</th></tr></thead>
@@ -270,12 +284,12 @@
 <!-- ============ CLIENTS ============ -->
 <div class="tab" id="tab-clients">
   <div class="form-card">
-    <h3 id="c-form-title">添加顾客 Add Client</h3>
+    <h3 id="c-form-title">添加用户 Add User</h3>
     <div class="form-row">
-      <div class="field"><label>Client Code</label><input type="text" id="c-code" placeholder="如 A0123" style="text-transform:uppercase"></div>
+      <div class="field"><label>User Code</label><input type="text" id="c-code" placeholder="如 A0123" style="text-transform:uppercase"></div>
       <div class="field"><label>姓名 Name</label><input type="text" id="c-name" placeholder="顾客姓名"></div>
       <div class="field"><label>户口种类 Account Type</label><input type="text" id="c-account" placeholder="如 Retailer / Cash / Margin"></div>
-      <div class="field"><label>顾客 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="customer@gmail.com" style="min-width:200px"></div>
+      <div class="field"><label>用户 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="customer@gmail.com" style="min-width:200px"></div>
       <div class="field"><label>手机号码 Phone</label><input type="tel" id="c-phone" placeholder="012-345 6789" style="min-width:140px"></div>
       <div class="field"><label>Brokerage 模式</label>
         <select id="c-mode" onchange="toggleRateFields()">
@@ -296,12 +310,12 @@
       <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
-    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的顾客，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出），每个顾客可不同。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
+    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的用户，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出），每个用户可不同。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
   </div>
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Client Code</th><th>姓名</th><th>户口种类</th><th>Gmail（顾客登入）</th><th>电话</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <thead><tr><th>User Code</th><th>姓名</th><th>户口种类</th><th>Gmail（用户登入）</th><th>电话</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
       <tbody id="c-body"></tbody>
     </table>
   </div>
@@ -352,7 +366,7 @@
   <div class="form-card">
     <h3 id="t-form-title">添加交易 Add Transaction</h3>
     <div class="form-row">
-      <div class="field"><label>顾客 Client</label><select id="t-client" onchange="autoFees(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>用户 User</label><select id="t-client" onchange="autoFees(); clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
       <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
       <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()"><datalist id="tickerList"></datalist></div>
@@ -406,7 +420,7 @@
   <div class="form-card">
     <h3>记录股息 Record Dividend</h3>
     <div class="form-row">
-      <div class="field"><label>顾客 Client</label><select id="v-client" onchange="fillDivTickers(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>用户 User</label><select id="v-client" onchange="fillDivTickers(); clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="v-date"></div>
       <div class="field"><label>股票 Counter</label><select id="v-ticker" onchange="prefillDivQty()"></select></div>
       <div class="field"><label>每股股息 DPS</label><input type="number" step="any" id="v-dps" placeholder="0.00" oninput="calcDivTotal()"></div>
@@ -414,7 +428,7 @@
       <div class="field"><label>总额 Total</label><input type="number" step="any" id="v-total"></div>
       <button class="action success" onclick="addDividend()">记录</button>
     </div>
-    <p class="hint">选顾客和股票后自动填入该顾客的持仓股数，输入 DPS 直接算出拿到多少钱。</p>
+    <p class="hint">选用户和股票后自动填入该用户的持仓股数，输入 DPS 直接算出拿到多少钱。</p>
   </div>
   <div class="table-wrap">
     <table>
@@ -429,7 +443,7 @@
   <div class="form-card">
     <h3>记录出入金 Deposit / Withdraw</h3>
     <div class="form-row">
-      <div class="field"><label>顾客 Client</label><select id="cf-client" onchange="clientMismatchCheck()"></select></div>
+      <div class="field"><label>用户 User</label><select id="cf-client" onchange="clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="cf-date"></div>
       <div class="field"><label>类型 Type</label><select id="cf-type"><option value="deposit">入金 Deposit</option><option value="withdraw">出金 Withdraw</option></select></div>
       <div class="field"><label>金额 Amount (RM)</label><input type="text" inputmode="decimal" id="cf-amount" placeholder="1,000.00" oninput="fmtMoney(this)"></div>
@@ -469,11 +483,11 @@
       <button class="action" onclick="backfillSplits(false).then(() => backfillDividends(true))">🎁 检查红股/拆股（近5年）</button>
       <span class="hint" id="x-status" style="margin:0">-</span>
     </div>
-    <p class="hint">数据来自 i3investor。打开网页时如果数据超过 12 小时会自动刷新。<span class="gold">金色行</span> = 你的顾客有持仓的 counter，记得提醒顾客！</p>
+    <p class="hint">数据来自 i3investor。打开网页时如果数据超过 12 小时会自动刷新。<span class="gold">金色行</span> = 有用户持仓的 counter，记得提醒他！</p>
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Ex Date</th><th>Stock</th><th class="num">Dividend</th><th class="num">现价</th><th>公布日期</th><th>顾客持有</th></tr></thead>
+      <thead><tr><th>Ex Date</th><th>Stock</th><th class="num">Dividend</th><th class="num">现价</th><th>公布日期</th><th>用户持有</th></tr></thead>
       <tbody id="x-body"></tbody>
     </table>
   </div>
@@ -481,7 +495,7 @@
   <h2 class="section">🎁 红股 / 拆股 / 送股 <span class="hint" style="font-weight:400">Bonus Issue · Share Dividend · Consolidation（不常有，留意比例）</span></h2>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Ex Date</th><th>Stock</th><th>类型</th><th>比例 Ratio</th><th class="num">倍数</th><th class="num">现价</th><th>公布日期</th><th>顾客持有</th></tr></thead>
+      <thead><tr><th>Ex Date</th><th>Stock</th><th>类型</th><th>比例 Ratio</th><th class="num">倍数</th><th class="num">现价</th><th>公布日期</th><th>用户持有</th></tr></thead>
       <tbody id="ent-body"></tbody>
     </table>
   </div>
@@ -509,13 +523,13 @@
       <div class="field"><label>名字 Name</label><input type="text" id="s-name" placeholder="如 Admin / Remisier A"></div>
       <div class="field"><label>权限 Role</label>
         <select id="s-role" onchange="toggleStaffScope()">
-          <option value="staff">员工 Staff — 只看指定顾客</option>
+          <option value="staff">员工 Staff — 只看指定用户</option>
           <option value="super">Super — 看全部，可以管员工</option>
         </select>
       </div>
     </div>
     <div id="s-scope-wrap">
-      <label style="font-size:13px;color:var(--muted)">这个人可以看哪些顾客？（可复选，同一个顾客可以给几个人看）</label>
+      <label style="font-size:13px;color:var(--muted)">这个人可以看哪些用户？（可复选，同一个用户可以给几个人看）</label>
       <div class="staff-clients" id="s-clients"></div>
       <div style="margin-top:8px">
         <button class="action small ghost" onclick="toggleAllStaffClients(true)">全选</button>
@@ -531,12 +545,12 @@
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Gmail</th><th>名字</th><th>权限</th><th>可看顾客</th><th></th></tr></thead>
+      <thead><tr><th>Gmail</th><th>名字</th><th>权限</th><th>可看用户</th><th></th></tr></thead>
       <tbody id="s-body"></tbody>
     </table>
   </div>
   <p class="hint" style="margin-top:10px">
-    ⚠️ 权限是<b>後台在管的</b>——员工就算改了网页也拿不到别人的资料，存档时也动不了不属於他的顾客。<br>
+    ⚠️ 权限是<b>後台在管的</b>——员工就算改了网页也拿不到别人的资料，存档时也动不了不属於他的用户。<br>
     ⚠️ 至少要留一个 Super，不然没人能管员工了。<br>
     改完记得让对方<b>重新登入</b>才会生效。
   </p>
@@ -654,8 +668,34 @@ function authGetParam() {
 function authPostFields() {
   return googleIdToken ? { idToken: googleIdToken } : cloud.token ? { token: cloud.token } : {};
 }
-function setCloudStatus(msg) { const el = document.getElementById("cloud-status"); if (el) el.textContent = msg; }
+function setCloudStatus(msg) {
+  const el = document.getElementById("cloud-status"); if (el) el.textContent = msg;
+  // 存云端失败是会掉资料的事，光一行小字不够 -> 整条变红并显示顶部横幅
+  const bad = /失败|过期|没存|未存/.test(msg);
+  if (el) el.classList.toggle("cloud-bad", bad);
+  const b = document.getElementById("sync-warn");
+  if (b) b.style.display = bad ? "" : "none";
+}
 function parseJwt(t) { try { return JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch (e) { return {}; } }
+// Google 的登入凭证大约 1 小时就过期。过期後每次存云端都会失败，
+// 而使用者只会看到一行小字 —— 继续 key 下去会以为有存，其实全在本机。
+// 所以：存之前先看凭证还剩多久，快过期就先默默换一张新的。
+function tokenExpiresInMs() {
+  if (!googleIdToken) return Infinity;
+  const p = parseJwt(googleIdToken);
+  return p.exp ? (p.exp * 1000 - Date.now()) : Infinity;
+}
+async function ensureFreshToken() {
+  if (!googleIdToken) return;                    // 用後备密钥的不受影响
+  if (tokenExpiresInMs() > 5 * 60 * 1000) return; // 还有 5 分钟以上，不用换
+  await new Promise(resolve => {
+    tokenRefreshResolve = resolve;
+    try { google.accounts.id.prompt(); } catch (e) { resolve(); }
+    setTimeout(() => { if (tokenRefreshResolve) { tokenRefreshResolve = null; resolve(); } }, 4000);
+  });
+}
+let tokenRefreshResolve = null;
+let pendingRetry = false; // 有资料因为登入过期没存上去 -> 重新登入後要自动补存
 
 // --- 角色：owner（你，全功能）/ client（顾客，只读看自己）---
 let viewerRole = localStorage.getItem("viewer-role") || "owner";
@@ -669,7 +709,7 @@ function setSuper(v) {
 function applyClientModeUI() {
   document.body.classList.add("client-mode");
   const c = db.clients[0];
-  document.getElementById("banner-text").textContent = c ? `👋 你好，${c.name} — 你的投资组合` : "顾客只读模式";
+  document.getElementById("banner-text").textContent = c ? `👋 你好，${c.name} — 你的投资组合` : "用户只读模式";
   document.getElementById("signin-banner").style.display = "";
   document.getElementById("banner-signout").style.display = "";
   document.getElementById("app-subtitle").textContent = "你的持仓 · 盈亏 · 股息 · Cashflow — 可自己记录，自动同步到你的 Drive";
@@ -738,7 +778,16 @@ async function onGoogleCredential(resp) {
   googleEmail = parseJwt(googleIdToken).email || "";
   document.getElementById("cloud-signin-hint").textContent = "已登入：" + googleEmail;
   document.getElementById("gsi-signout").style.display = "";
+  // 这次登入是为了换一张没过期的凭证（ensureFreshToken 在等）-> 拿到就好，不要重载资料
+  if (tokenRefreshResolve) { const r = tokenRefreshResolve; tokenRefreshResolve = null; r(); return; }
   if (authMode === "register") { await registerClient(); return; } // 走注册流程
+  // 之前有资料因为凭证过期没存上去 -> 现在凭证是新的，立刻补存，别让它掉了
+  if (pendingRetry) {
+    pendingRetry = false;
+    setCloudStatus("✓ 已重新登入，正在补存刚才没存上去的记录…");
+    await pushCloud(true);
+    return;
+  }
   setCloudStatus("✓ 已用 Gmail 登入，正在从云端载入…");
   document.getElementById("signin-status").textContent = "登入中…";
   await pullCloud(true);
@@ -761,14 +810,18 @@ function googleSignOut() {
   document.getElementById("cloud-signin-hint").textContent = "已登出。用 Gmail 登入即可同步。";
   setCloudStatus("已登出。");
 }
-function handleCloudErr(e, prefix) {
+function handleCloudErr(e, prefix, wasPush) {
   const msg = String((e && e.message) || e);
   if (/unauthorized/i.test(msg) && googleIdToken) {
     googleIdToken = null;
-    setCloudStatus(prefix + "：登入过期，请重新用 Gmail 登入");
+    if (wasPush) pendingRetry = true; // 这笔没存上去 -> 重新登入後自动补存（见 onGoogleCredential）
+    setCloudStatus(prefix + (wasPush
+      ? "：登入过期，记录还没存到云端。正在重新登入，登入後会自动补存。"
+      : "：登入过期，请重新用 Gmail 登入"));
     if (typeof google !== "undefined" && google.accounts) google.accounts.id.prompt();
     return;
   }
+  if (wasPush) pendingRetry = true; // 网路等其他原因失败，也记住要补
   setCloudStatus(prefix + "：" + msg);
 }
 
@@ -794,6 +847,7 @@ function cloudPayload() {
 }
 async function pushCloud(silent) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
+  await ensureFreshToken(); // 凭证快过期就先换一张，免得存到一半失败
   setCloudStatus("⬆️ 存到云端中…");
   try {
     // 顾客用 saveMine：后台只更新他自己的记录（安全隔离）；Owner 用完整 save
@@ -805,19 +859,50 @@ async function pushCloud(silent) {
     const j = await r.json();
     if (j.error) throw new Error(j.error);
     let msg = `✓ 已存到云端（${new Date().toLocaleString()}）`;
-    if (j.keptNewer && j.keptNewer.length) msg += ` · 注意：${j.keptNewer.length} 个顾客刚自己更新过，保留了他们的新记录`;
+    if (j.keptNewer && j.keptNewer.length) msg += ` · 注意：${j.keptNewer.length} 个用户刚自己更新过，保留了他们的新记录`;
+    pendingRetry = false; // 存成功了，没有欠着的
     setCloudStatus(msg);
-  } catch (e) { handleCloudErr(e, "⬆️ 存云端失败"); }
+  } catch (e) { handleCloudErr(e, "⬆️ 存云端失败", true); }
 }
 function schedulePush() {
   if (!cloudReady()) return;
   clearTimeout(pushTimer);
+  pendingPush = true;
   setCloudStatus("⏳ 即将自动存到云端…");
-  pushTimer = setTimeout(() => pushCloud(true), 1500);
+  pushTimer = setTimeout(async () => { await pushCloud(true); pendingPush = false; }, 1500);
 }
-async function pullCloud(silent) {
+
+// ---- 定期从云端拉：顾客自己更新了记录，owner 这边要看得到 ----
+// 只有 owner / 员工需要（顾客只有自己的资料，没有别人会改）。
+// 这也是配额考量：Apps Script 每天 20,000 次呼叫，只让少数几个管理者定期拉才不会爆。
+const AUTO_PULL_MS = 3 * 60 * 1000;
+let pullTimer = null, pendingPush = false;
+function startAutoPull() {
+  clearInterval(pullTimer);
+  if (viewerRole === "client") return;      // 顾客不需要
+  pullTimer = setInterval(async () => {
+    if (!cloudReady()) return;
+    if (pendingPush) return;                // 本机还有没推上去的改动 -> 这轮跳过，绝不能覆盖
+    if (document.hidden) return;            // 分页在背景 -> 省配额
+    const before = db.transactions.length;
+    await pullCloud(true, true);            // silent + 只在真的有变化时才讲
+    const diff = db.transactions.length - before;
+    if (diff !== 0) setCloudStatus(`🔄 云端有新记录，已自动更新（${diff > 0 ? "+" : ""}${diff} 笔）· ${new Date().toLocaleTimeString()}`);
+  }, AUTO_PULL_MS);
+}
+// 切回这个分页时立刻拉一次（背景那段时间是跳过的，回来要马上补上最新的）
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden || viewerRole === "client") return;
+  if (!cloudReady() || pendingPush) return;
+  const before = db.transactions.length;
+  await pullCloud(true, true);
+  const diff = db.transactions.length - before;
+  if (diff !== 0) setCloudStatus(`🔄 云端有新记录，已自动更新（${diff > 0 ? "+" : ""}${diff} 笔）· ${new Date().toLocaleTimeString()}`);
+});
+// quiet = 背景自动拉，不要一直闪「载入中」，也不要重跑补记（那些开页时跑过了）
+async function pullCloud(silent, quiet) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
-  setCloudStatus("⬇️ 从云端载入中…");
+  if (!quiet) setCloudStatus("⬇️ 从云端载入中…");
   try {
     // 用 POST 传认证（idToken 很长，放网址会被 Google 跳转丢掉）
     const r = await fetch(cloudUrl(), { method: "POST",
@@ -846,11 +931,13 @@ async function pullCloud(silent) {
     if (j.role === "client") enterClientMode(); else exitClientMode(); // 后台说你是谁，就进哪个模式
     hideAuthScreen(); // 认证成功 -> 收起登入页，显示 app
     renderAll();
+    if (quiet) return; // 背景自动拉：资料已更新，画面已重画，其余的开页时做过了
     setCloudStatus(j.role === "client"
       ? `✓ 已载入你的投资组合（${db.transactions.length} 笔交易）· 只读`
       : `✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
     if (autoRecordDividends() > 0) save(); // 云端数据到齐后，补自动入账该记的股息
     startAutoPrices(); // 数据到齐后自动抓最新价
+    startAutoPull();   // 之後每 3 分钟自动拉一次，顾客更新了这边看得到
     // 先补红股/拆股（股数会变），再补股息（按调整后的股数算）
     backfillSplits(true).then(() => backfillDividends(true));
   } catch (e) { handleCloudErr(e, "⬇️ 载入失败"); }
@@ -1026,18 +1113,18 @@ function renderAll() {
   const { pos, realizedByTx, intradayTx } = computePortfolio();
   const filterSel = document.getElementById("clientFilter");
   const prevFilter = filterSel.value || "all";
-  filterSel.innerHTML = `<option value="all">全部顾客 All Clients</option>` +
+  filterSel.innerHTML = `<option value="all">全部用户 All Users</option>` +
     db.clients.map(c => `<option value="${c.id}">${clientLabel(c)}</option>`).join("");
   filterSel.value = [...filterSel.options].some(o => o.value === prevFilter) ? prevFilter : "all";
-  if (viewerRole === "client" && db.clients.length) filterSel.value = db.clients[0].id; // 顾客只能看自己
+  if (viewerRole === "client" && db.clients.length) filterSel.value = db.clients[0].id; // 用户只能看自己
 
   // 顾客下拉
   const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)} (${rateLabel(c)})</option>`).join("");
   const tSel = document.getElementById("t-client"), vSel = document.getElementById("v-client"), cfSel = document.getElementById("cf-client");
   const tPrev = tSel.value, vPrev = vSel.value, cfPrev = cfSel.value;
-  tSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
-  vSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
-  cfSel.innerHTML = clientOpts || "<option value=''>请先添加顾客</option>";
+  tSel.innerHTML = clientOpts || "<option value=''>请先添加用户</option>";
+  vSel.innerHTML = clientOpts || "<option value=''>请先添加用户</option>";
+  cfSel.innerHTML = clientOpts || "<option value=''>请先添加用户</option>";
   if ([...tSel.options].some(o => o.value === tPrev)) tSel.value = tPrev;
   if ([...vSel.options].some(o => o.value === vPrev)) vSel.value = vPrev;
   if ([...cfSel.options].some(o => o.value === cfPrev)) cfSel.value = cfPrev;
@@ -1051,7 +1138,7 @@ function renderAll() {
   const txCount = {};
   db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
   const cBody = document.getElementById("c-body");
-  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="10">还没有顾客，先在上面添加</td></tr>`;
+  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="10">还没有用户，先在上面添加</td></tr>`;
   for (const c of db.clients) {
     cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td><td>${c.email || "-"}</td><td>${c.phone || "-"}</td>
       <td>${rateLabel(c)}</td><td class="num">${fmt(c.minBrokerage || 0)}</td>
@@ -1232,7 +1319,7 @@ function renderAll() {
 
   // 各顾客摘要
   const dcBody = document.getElementById("d-client-body");
-  dcBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="6">还没有顾客</td></tr>`;
+  dcBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="6">还没有用户</td></tr>`;
   for (const c of db.clients) {
     if (!matchFilter(c.id)) continue;
     let cost = 0, realized = 0, divs = 0, brk = 0;
@@ -1285,7 +1372,7 @@ function renderStaffForm() {
   const picked = new Set([...wrap.querySelectorAll("input:checked")].map(cb => cb.value)); // 重画时保留已勾的
   wrap.innerHTML = db.clients.length
     ? db.clients.map(c => `<label><input type="checkbox" value="${c.id}"${picked.has(c.id) ? " checked" : ""}>${clientLabel(c)}</label>`).join("")
-    : `<span class="hint">还没有顾客</span>`;
+    : `<span class="hint">还没有用户</span>`;
 }
 function saveStaff() {
   const email = document.getElementById("s-email").value.trim().toLowerCase();
@@ -1427,7 +1514,7 @@ function cancelEditClient() {
   document.getElementById("c-mode").value = "tiered";
   document.getElementById("c-costmethod").value = "average";
   toggleRateFields();
-  document.getElementById("c-form-title").textContent = "添加顾客 Add Client";
+  document.getElementById("c-form-title").textContent = "添加用户 Add User";
   document.getElementById("c-save-btn").textContent = "添加";
   document.getElementById("c-cancel-btn").style.display = "none";
 }
@@ -1757,7 +1844,7 @@ function renderExDiv(pos) {
     xBody.innerHTML = `<tr><td class="empty" colspan="6">还没有数据，按上面「刷新列表」</td></tr>`;
     return;
   }
-  // 持仓对照：股票名（或 Bursa 代码）-> 哪些顾客持有多少股
+  // 持仓对照：股票名（或 Bursa 代码）-> 哪些用户持有多少股
   const holdings = Object.values(pos).filter(p => p.qty > 0);
   const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
   const todayISO = today();
@@ -1773,7 +1860,7 @@ function renderExDiv(pos) {
     const dps = m ? parseFloat(m[1]) : null;
     let holderCell = "";
     if (holders.length) {
-      holderCell = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有顾客持有</span>`;
+      holderCell = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有用户持有</span>`;
       for (const h of holders) {
         const c = clientById(h.clientId);
         holderCell += `<div style="font-size:12px;margin-top:3px">${clientLabel(c)}: ${h.qty.toLocaleString()} 股${dps ? ` ≈ <b class="gold">RM ${fmtN(h.qty * dps)}</b>` : ""}</div>`;
@@ -1819,7 +1906,7 @@ function autoRecordDividends() {
   return created;
 }
 
-// 红股/拆股/送股 预告：抓 i3investor 的 entitlement 列表，标出哪个顾客持有、会拿到多少
+// 红股/拆股/送股 预告：抓 i3investor 的 entitlement 列表，标出哪个用户持有、会拿到多少
 async function refreshEntitlements(silent) {
   try {
     const r = await fetch(apiUrl("/api/entitlements"));
@@ -1850,7 +1937,7 @@ function renderEntitlements(pos) {
     const holders = holdings.filter(p => p.ticker === r.stock || (r.code && codeOf(p.ticker) === r.code));
     let who = "";
     if (holders.length) {
-      who = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有顾客持有</span>`;
+      who = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有用户持有</span>`;
       for (const h of holders) {
         const c = clientById(h.clientId);
         const extra = r.factor ? Math.round(h.qty * (r.factor - 1)) : null;
@@ -1873,7 +1960,7 @@ function renderEntitlements(pos) {
 }
 
 // 历史股息补记：抓每只股近5年的派息，按「每个顾客在 ex-date 当天的持股」自动记进股息+Cashflow
-// 顾客持有期间派过的息都会补齐（不只未来的）。已记过/已删过的用 autodiv 键跳过。
+// 用户持有期间派过的息都会补齐（不只未来的）。已记过/已删过的用 autodiv 键跳过。
 async function backfillDividends(silent) {
   if (viewerRole === "client") return 0; // 顾客只读
   const status = document.getElementById("x-status");
@@ -2146,7 +2233,7 @@ function fillDivTickers(posArg) {
   const tks = Object.values(pos).filter(p => p.clientId === clientId && p.qty > 0).map(p => p.ticker).sort();
   const sel = document.getElementById("v-ticker");
   const prev = sel.value;
-  sel.innerHTML = tks.map(t => `<option>${t}</option>`).join("") || "<option value=''>（该顾客无持仓）</option>";
+  sel.innerHTML = tks.map(t => `<option>${t}</option>`).join("") || "<option value=''>（该用户无持仓）</option>";
   if (tks.includes(prev)) sel.value = prev;
   prefillDivQty();
 }
@@ -2227,7 +2314,7 @@ function renderCashflow(pos, realizedByTx) {
   const hint = document.getElementById("cf-ledger-hint");
   if (f === "all") {
     hint.textContent = "（在上方「查看顾客」选一个顾客，看他的明细账本）";
-    body.innerHTML = `<tr><td class="empty" colspan="6">选一个顾客查看流水账</td></tr>`;
+    body.innerHTML = `<tr><td class="empty" colspan="6">选一个用户查看流水账</td></tr>`;
     return;
   }
   hint.textContent = "";
@@ -2243,7 +2330,7 @@ function renderCashflow(pos, realizedByTx) {
   for (const dv of db.dividends) if (dv.clientId === f)
     ev.push({ date: dv.date, k: 3, label: `股息 ${dv.ticker}`, in: dv.total, out: 0 });
   ev.sort((a, b) => a.date.localeCompare(b.date) || a.k - b.k);
-  body.innerHTML = ev.length ? "" : `<tr><td class="empty" colspan="6">这个顾客还没有任何记录</td></tr>`;
+  body.innerHTML = ev.length ? "" : `<tr><td class="empty" colspan="6">这个用户还没有任何记录</td></tr>`;
   let bal = 0;
   for (const e of ev) {
     bal += (e.in || 0) - (e.out || 0);
