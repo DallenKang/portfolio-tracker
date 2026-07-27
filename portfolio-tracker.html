@@ -105,7 +105,7 @@
   /* 未登入：只显示登入/注册页 */
   body.signed-out > *:not(#auth-screen) { display: none !important; }
 
-  /* 顾客模式：可记录自己的交易/股息/出入金，但看不到管理页 */
+  /* 投资者模式：可记录自己的交易/股息/出入金，但看不到管理页 */
   body.client-mode .tab-btn[data-tab="clients"], body.client-mode .tab-btn[data-tab="database"] { display: none; }
   body.client-mode #tab-holdings .form-card { display: none; } /* 价格自动抓，不用手动 */
   body.client-mode #tab-exdiv .form-card button { display: none; } /* 补记按钮是 owner 的 */
@@ -183,7 +183,7 @@
 </head>
 <body>
 
-<!-- IPO 抓不到时，最顶端全站可见的红色横幅（提醒用户来找 Claude） -->
+<!-- IPO 抓不到时，最顶端全站可见的红色横幅（提醒投资者来找 Claude） -->
 <div id="sys-error-banner" style="display:none;background:var(--red);color:#fff;padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:15px;font-weight:600">
   ⚠️ 系统错误：IPO 数据抓不到了（很可能数据源被封/挂了，不是「没有 IPO」）。请<b>截图发给 Claude</b> 修复。
 </div>
@@ -235,7 +235,7 @@
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="dashboard">📊 总览</button>
-  <button class="tab-btn" data-tab="clients">👥 用户 Users</button>
+  <button class="tab-btn" data-tab="clients">👥 投资者 Investors</button>
   <button class="tab-btn" data-tab="transactions">📝 交易 P&L</button>
   <button class="tab-btn" data-tab="holdings">💼 持仓</button>
   <button class="tab-btn" data-tab="dividends">💰 股息</button>
@@ -247,8 +247,8 @@
 </div>
 
 <div class="filter-bar">
-  <label>查看用户 Filter:</label>
-  <select id="clientFilter" onchange="filterChanged()"><option value="all">全部用户 All Users</option></select>
+  <label>查看投资者 Filter:</label>
+  <select id="clientFilter" onchange="filterChanged()"><option value="all">全部投资者 All Investors</option></select>
 </div>
 
 <!-- ============ DASHBOARD ============ -->
@@ -264,10 +264,10 @@
     <div class="card"><div class="label">总回报 Total Return</div><div class="value" id="d-total-return">-</div></div>
   </div>
 
-  <h2 class="section">各用户摘要 User Summary</h2>
+  <h2 class="section">各投资者摘要 Investor Summary</h2>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>顾客</th><th>户口</th><th class="num">持仓成本</th><th class="num">已实现 P/(L)</th><th class="num">股息</th><th class="num">Brokerage</th></tr></thead>
+      <thead><tr><th>投资者</th><th>户口</th><th class="num">持仓成本</th><th class="num">已实现 P/(L)</th><th class="num">股息</th><th class="num">Brokerage</th></tr></thead>
       <tbody id="d-client-body"></tbody>
     </table>
   </div>
@@ -275,7 +275,7 @@
   <h2 class="section">今天收到的股息</h2>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>顾客</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">金额</th></tr></thead>
+      <thead><tr><th>投资者</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">金额</th></tr></thead>
       <tbody id="d-today-body"></tbody>
     </table>
   </div>
@@ -284,12 +284,12 @@
 <!-- ============ CLIENTS ============ -->
 <div class="tab" id="tab-clients">
   <div class="form-card">
-    <h3 id="c-form-title">添加用户 Add User</h3>
+    <h3 id="c-form-title">添加投资者 Add Investor</h3>
     <div class="form-row">
-      <div class="field"><label>User Code</label><input type="text" id="c-code" placeholder="如 A0123" style="text-transform:uppercase"></div>
-      <div class="field"><label>姓名 Name</label><input type="text" id="c-name" placeholder="顾客姓名"></div>
+      <div class="field"><label>Investor Code</label><input type="text" id="c-code" placeholder="如 A0123" style="text-transform:uppercase"></div>
+      <div class="field"><label>姓名 Name</label><input type="text" id="c-name" placeholder="投资者姓名"></div>
       <div class="field"><label>户口种类 Account Type</label><input type="text" id="c-account" placeholder="如 Retailer / Cash / Margin"></div>
-      <div class="field"><label>用户 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="customer@gmail.com" style="min-width:200px"></div>
+      <div class="field"><label>投资者 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="investor@gmail.com" style="min-width:200px"></div>
       <div class="field"><label>手机号码 Phone</label><input type="tel" id="c-phone" placeholder="012-345 6789" style="min-width:140px"></div>
       <div class="field"><label>Brokerage 模式</label>
         <select id="c-mode" onchange="toggleRateFields()">
@@ -310,12 +310,12 @@
       <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
-    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的用户，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出），每个用户可不同。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
+    <p class="hint">分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出），每个投资者可不同。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
   </div>
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>User Code</th><th>姓名</th><th>户口种类</th><th>Gmail（用户登入）</th><th>电话</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <thead><tr><th>Investor Code</th><th>姓名</th><th>户口种类</th><th>Gmail（投资者登入）</th><th>电话</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
       <tbody id="c-body"></tbody>
     </table>
   </div>
@@ -353,7 +353,7 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>顾客</th><th>股票</th><th>代码 Code</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
+        <th>投资者</th><th>股票</th><th>代码 Code</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
         <th class="num">现价</th><th class="num">市值</th><th class="num">未实现 P/(L)</th><th class="num">%</th>
       </tr></thead>
       <tbody id="h-body"></tbody>
@@ -366,7 +366,7 @@
   <div class="form-card">
     <h3 id="t-form-title">添加交易 Add Transaction</h3>
     <div class="form-row">
-      <div class="field"><label>用户 User</label><select id="t-client" onchange="autoFees(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>投资者 Investor</label><select id="t-client" onchange="autoFees(); clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
       <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
       <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()"><datalist id="tickerList"></datalist></div>
@@ -395,7 +395,7 @@
     <table>
       <thead><tr id="t-head">
         <th class="sortable" data-key="date" data-label="日期" onclick="setTxSort('date')">日期</th>
-        <th class="sortable" data-key="client" data-label="顾客" onclick="setTxSort('client')">顾客</th>
+        <th class="sortable" data-key="client" data-label="投资者" onclick="setTxSort('client')">投资者</th>
         <th class="sortable" data-key="ticker" data-label="股票" onclick="setTxSort('ticker')">股票</th>
         <th class="sortable" data-key="type" data-label="类型" onclick="setTxSort('type')">类型</th>
         <th class="num sortable" data-key="qty" data-label="股数" onclick="setTxSort('qty')">股数</th>
@@ -420,7 +420,7 @@
   <div class="form-card">
     <h3>记录股息 Record Dividend</h3>
     <div class="form-row">
-      <div class="field"><label>用户 User</label><select id="v-client" onchange="fillDivTickers(); clientMismatchCheck()"></select></div>
+      <div class="field"><label>投资者 Investor</label><select id="v-client" onchange="fillDivTickers(); clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="v-date"></div>
       <div class="field"><label>股票 Counter</label><select id="v-ticker" onchange="prefillDivQty()"></select></div>
       <div class="field"><label>每股股息 DPS</label><input type="number" step="any" id="v-dps" placeholder="0.00" oninput="calcDivTotal()"></div>
@@ -428,11 +428,11 @@
       <div class="field"><label>总额 Total</label><input type="number" step="any" id="v-total"></div>
       <button class="action success" onclick="addDividend()">记录</button>
     </div>
-    <p class="hint">选用户和股票后自动填入该用户的持仓股数，输入 DPS 直接算出拿到多少钱。</p>
+    <p class="hint">选投资者和股票后自动填入该投资者的持仓股数，输入 DPS 直接算出拿到多少钱。</p>
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>日期</th><th>顾客</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">总额</th><th></th></tr></thead>
+      <thead><tr><th>日期</th><th>投资者</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">总额</th><th></th></tr></thead>
       <tbody id="v-body"></tbody>
     </table>
   </div>
@@ -443,7 +443,7 @@
   <div class="form-card">
     <h3>记录出入金 Deposit / Withdraw</h3>
     <div class="form-row">
-      <div class="field"><label>用户 User</label><select id="cf-client" onchange="clientMismatchCheck()"></select></div>
+      <div class="field"><label>投资者 Investor</label><select id="cf-client" onchange="clientMismatchCheck()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="cf-date"></div>
       <div class="field"><label>类型 Type</label><select id="cf-type"><option value="deposit">入金 Deposit</option><option value="withdraw">出金 Withdraw</option></select></div>
       <div class="field"><label>金额 Amount (RM)</label><input type="text" inputmode="decimal" id="cf-amount" placeholder="1,000.00" oninput="fmtMoney(this)"></div>
@@ -483,11 +483,11 @@
       <button class="action" onclick="backfillSplits(false).then(() => backfillDividends(true))">🎁 检查红股/拆股（近5年）</button>
       <span class="hint" id="x-status" style="margin:0">-</span>
     </div>
-    <p class="hint">数据来自 i3investor。打开网页时如果数据超过 12 小时会自动刷新。<span class="gold">金色行</span> = 有用户持仓的 counter，记得提醒他！</p>
+    <p class="hint">数据来自 i3investor。打开网页时如果数据超过 12 小时会自动刷新。<span class="gold">金色行</span> = 有投资者持仓的 counter，记得提醒他！</p>
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Ex Date</th><th>Stock</th><th class="num">Dividend</th><th class="num">现价</th><th>公布日期</th><th>用户持有</th></tr></thead>
+      <thead><tr><th>Ex Date</th><th>Stock</th><th class="num">Dividend</th><th class="num">现价</th><th>公布日期</th><th>投资者持有</th></tr></thead>
       <tbody id="x-body"></tbody>
     </table>
   </div>
@@ -495,7 +495,7 @@
   <h2 class="section">🎁 红股 / 拆股 / 送股 <span class="hint" style="font-weight:400">Bonus Issue · Share Dividend · Consolidation（不常有，留意比例）</span></h2>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Ex Date</th><th>Stock</th><th>类型</th><th>比例 Ratio</th><th class="num">倍数</th><th class="num">现价</th><th>公布日期</th><th>用户持有</th></tr></thead>
+      <thead><tr><th>Ex Date</th><th>Stock</th><th>类型</th><th>比例 Ratio</th><th class="num">倍数</th><th class="num">现价</th><th>公布日期</th><th>投资者持有</th></tr></thead>
       <tbody id="ent-body"></tbody>
     </table>
   </div>
@@ -523,13 +523,13 @@
       <div class="field"><label>名字 Name</label><input type="text" id="s-name" placeholder="如 Admin / Remisier A"></div>
       <div class="field"><label>权限 Role</label>
         <select id="s-role" onchange="toggleStaffScope()">
-          <option value="staff">员工 Staff — 只看指定用户</option>
+          <option value="staff">员工 Staff — 只看指定投资者</option>
           <option value="super">Super — 看全部，可以管员工</option>
         </select>
       </div>
     </div>
     <div id="s-scope-wrap">
-      <label style="font-size:13px;color:var(--muted)">这个人可以看哪些用户？（可复选，同一个用户可以给几个人看）</label>
+      <label style="font-size:13px;color:var(--muted)">这个人可以看哪些投资者？（可复选，同一个投资者可以给几个人看）</label>
       <div class="staff-clients" id="s-clients"></div>
       <div style="margin-top:8px">
         <button class="action small ghost" onclick="toggleAllStaffClients(true)">全选</button>
@@ -545,12 +545,12 @@
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Gmail</th><th>名字</th><th>权限</th><th>可看用户</th><th></th></tr></thead>
+      <thead><tr><th>Gmail</th><th>名字</th><th>权限</th><th>可看投资者</th><th></th></tr></thead>
       <tbody id="s-body"></tbody>
     </table>
   </div>
   <p class="hint" style="margin-top:10px">
-    ⚠️ 权限是<b>後台在管的</b>——员工就算改了网页也拿不到别人的资料，存档时也动不了不属於他的用户。<br>
+    ⚠️ 权限是<b>後台在管的</b>——员工就算改了网页也拿不到别人的资料，存档时也动不了不属於他的投资者。<br>
     ⚠️ 至少要留一个 Super，不然没人能管员工了。<br>
     改完记得让对方<b>重新登入</b>才会生效。
   </p>
@@ -565,7 +565,7 @@
     <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
     <button class="action danger" onclick="clearAll()">🗑️ 清空全部数据</button>
   </div>
-  <p class="hint" style="margin-bottom:16px">数据存在这台电脑这个浏览器。请定期导出 JSON 备份。CSV 格式跟你的 Excel 类似，每一行一笔交易（含 client、gross、三项费用、net、P/L）。</p>
+  <p class="hint" style="margin-bottom:16px">数据主要存在云端（下面的 Google Sheet），这台电脑只是本机副本 —— 换电脑或换浏览器，登入後会重新载入。JSON 备份是额外多一层保险，建议偶尔导一次。CSV 格式跟你的 Excel 类似，每一行一笔交易（含 investor、gross、三项费用、net、P/L）。</p>
 
   <h2 class="section">☁️ Google Sheet 云端同步</h2>
   <div class="form-card">
@@ -617,7 +617,7 @@ function load() {
     return { version: 2, clients: [], staff: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null };
   }
   if (d.version !== 2) {
-    // 旧版数据：建一个默认顾客，旧的 fees 全部当 brokerage
+    // 旧版数据：建一个默认投资者，旧的 fees 全部当 brokerage
     const def = { id: uid(), name: "Default", account: "Cash", brokerageRate: 0.18, minBrokerage: 8 };
     d = {
       version: 2,
@@ -639,7 +639,7 @@ function load() {
   if (!d.exdiv) d.exdiv = null;     // {fetchedAt, rows} ex-dividend 缓存
   if (!d.ipo) d.ipo = null;         // {fetchedAt, rows} IPO 上市提醒缓存
   if (!d.ent) d.ent = null;         // {fetchedAt, rows} 红股/拆股/送股 缓存
-  // 旧顾客只有单一 brokerageRate 的，转成 flat 模式
+  // 旧投资者只有单一 brokerageRate 的，转成 flat 模式
   for (const c of d.clients || []) {
     if (!c.brokerageMode) {
       c.brokerageMode = "flat";
@@ -651,7 +651,7 @@ function load() {
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 let db = load();
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); if (viewerRole === "client" || cloud.auto) schedulePush(); } // 顾客一律自动同步
+function save() { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); if (viewerRole === "client" || cloud.auto) schedulePush(); } // 投资者一律自动同步
 
 // ---------- Google Sheet 云端同步（Gmail 登入认证）----------
 const CLOUD_KEY = "portfolio-cloud-config";
@@ -697,9 +697,9 @@ async function ensureFreshToken() {
 let tokenRefreshResolve = null;
 let pendingRetry = false; // 有资料因为登入过期没存上去 -> 重新登入後要自动补存
 
-// --- 角色：owner（你，全功能）/ client（顾客，只读看自己）---
+// --- 角色：owner（你，全功能）/ client（投资者，只读看自己）---
 let viewerRole = localStorage.getItem("viewer-role") || "owner";
-// super = 看得到全部顾客 + 可以管员工。由後台每次载入时告诉前端，前端不能自己决定。
+// super = 看得到全部投资者 + 可以管员工。由後台每次载入时告诉前端，前端不能自己决定。
 let isSuper = localStorage.getItem("is-super") === "1";
 function setSuper(v) {
   isSuper = !!v;
@@ -709,7 +709,7 @@ function setSuper(v) {
 function applyClientModeUI() {
   document.body.classList.add("client-mode");
   const c = db.clients[0];
-  document.getElementById("banner-text").textContent = c ? `👋 你好，${c.name} — 你的投资组合` : "用户只读模式";
+  document.getElementById("banner-text").textContent = c ? `👋 你好，${c.name} — 你的投资组合` : "投资者只读模式";
   document.getElementById("signin-banner").style.display = "";
   document.getElementById("banner-signout").style.display = "";
   document.getElementById("app-subtitle").textContent = "你的持仓 · 盈亏 · 股息 · Cashflow — 可自己记录，自动同步到你的 Drive";
@@ -725,7 +725,7 @@ function exitClientMode() {
   document.body.classList.remove("client-mode");
 }
 
-// --- 新顾客注册 ---
+// --- 新投资者注册 ---
 async function registerClient() {
   const name = document.getElementById("reg-name").value.trim();
   const phone = document.getElementById("reg-phone").value.trim();
@@ -745,7 +745,7 @@ async function registerClient() {
     }
     st.textContent = "";
     authMode = "signin";
-    await pullCloud(true); // 注册成功，载入他的组合并进入顾客模式
+    await pullCloud(true); // 注册成功，载入他的组合并进入投资者模式
     if (j.linked) setCloudStatus("✓ 已接上你原有的投资组合（由你的 remisier 记录）");
   } catch (e) {
     st.textContent = "注册失败：" + e.message + "（再试一次）";
@@ -799,7 +799,7 @@ function initGoogleSignIn() {
     const el = document.getElementById(id);
     if (el) google.accounts.id.renderButton(el, { theme: "filled_blue", size: "large", text: txt });
   }
-  google.accounts.id.prompt(); // 老顾客：自动登入，不用再点
+  google.accounts.id.prompt(); // 老投资者：自动登入，不用再点
   return true;
 }
 function googleSignOut() {
@@ -850,7 +850,7 @@ async function pushCloud(silent) {
   await ensureFreshToken(); // 凭证快过期就先换一张，免得存到一半失败
   setCloudStatus("⬆️ 存到云端中…");
   try {
-    // 顾客用 saveMine：后台只更新他自己的记录（安全隔离）；Owner 用完整 save
+    // 投资者用 saveMine：后台只更新他自己的记录（安全隔离）；Owner 用完整 save
     const payload = viewerRole === "client"
       ? { action: "saveMine", data: { transactions: db.transactions, dividends: db.dividends, cashflows: db.cashflows, symbols: db.symbols } }
       : { action: "save", data: cloudPayload() };
@@ -859,7 +859,7 @@ async function pushCloud(silent) {
     const j = await r.json();
     if (j.error) throw new Error(j.error);
     let msg = `✓ 已存到云端（${new Date().toLocaleString()}）`;
-    if (j.keptNewer && j.keptNewer.length) msg += ` · 注意：${j.keptNewer.length} 个用户刚自己更新过，保留了他们的新记录`;
+    if (j.keptNewer && j.keptNewer.length) msg += ` · 注意：${j.keptNewer.length} 个投资者刚自己更新过，保留了他们的新记录`;
     pendingRetry = false; // 存成功了，没有欠着的
     setCloudStatus(msg);
   } catch (e) { handleCloudErr(e, "⬆️ 存云端失败", true); }
@@ -872,14 +872,14 @@ function schedulePush() {
   pushTimer = setTimeout(async () => { await pushCloud(true); pendingPush = false; }, 1500);
 }
 
-// ---- 定期从云端拉：顾客自己更新了记录，owner 这边要看得到 ----
-// 只有 owner / 员工需要（顾客只有自己的资料，没有别人会改）。
+// ---- 定期从云端拉：投资者自己更新了记录，owner 这边要看得到 ----
+// 只有 owner / 员工需要（投资者只有自己的资料，没有别人会改）。
 // 这也是配额考量：Apps Script 每天 20,000 次呼叫，只让少数几个管理者定期拉才不会爆。
 const AUTO_PULL_MS = 3 * 60 * 1000;
 let pullTimer = null, pendingPush = false;
 function startAutoPull() {
   clearInterval(pullTimer);
-  if (viewerRole === "client") return;      // 顾客不需要
+  if (viewerRole === "client") return;      // 投资者不需要
   pullTimer = setInterval(async () => {
     if (!cloudReady()) return;
     if (pendingPush) return;                // 本机还有没推上去的改动 -> 这轮跳过，绝不能覆盖
@@ -934,10 +934,10 @@ async function pullCloud(silent, quiet) {
     if (quiet) return; // 背景自动拉：资料已更新，画面已重画，其余的开页时做过了
     setCloudStatus(j.role === "client"
       ? `✓ 已载入你的投资组合（${db.transactions.length} 笔交易）· 只读`
-      : `✓ 已从云端载入（${db.clients.length} 个顾客、${db.transactions.length} 笔交易）`);
+      : `✓ 已从云端载入（${db.clients.length} 个投资者、${db.transactions.length} 笔交易）`);
     if (autoRecordDividends() > 0) save(); // 云端数据到齐后，补自动入账该记的股息
     startAutoPrices(); // 数据到齐后自动抓最新价
-    startAutoPull();   // 之後每 3 分钟自动拉一次，顾客更新了这边看得到
+    startAutoPull();   // 之後每 3 分钟自动拉一次，投资者更新了这边看得到
     // 先补红股/拆股（股数会变），再补股息（按调整后的股数算）
     backfillSplits(true).then(() => backfillDividends(true));
   } catch (e) { handleCloudErr(e, "⬇️ 载入失败"); }
@@ -966,7 +966,7 @@ const r2 = x => Math.round(x * 100) / 100;
 const ceil2 = x => Math.ceil(x * 100 - 1e-7) / 100;
 
 // ---------- Fee engine（马来西亚 Bursa 规则）----------
-// Brokerage: gross × 顾客 rate%，不低于最低 brokerage（四舍五入到 cent）
+// Brokerage: gross × 投资者 rate%，不低于最低 brokerage（四舍五入到 cent）
 //   - flat 模式：统一 rate
 //   - tiered 模式：gross ≥ RM100K 用低 rate，< RM100K 用高 rate
 // Stamp duty: 每 RM1,000 收 stampPer1000（gross 向上取整到千），cap stampCap
@@ -995,9 +995,9 @@ function netAmount(t) {
   return t.type === "buy" ? gross + fees : gross - fees;
 }
 
-// ---------- Core: 按 (顾客, 股票) 回放交易（用 Net Amount）----------
+// ---------- Core: 按 (投资者, 股票) 回放交易（用 Net Amount）----------
 // 步骤：1) 先做 Intraday（同股同日买卖）配对，算即日盈亏，不碰过夜持仓
-//       2) 剩下的过夜股数，按该顾客的成本法（average / fifo）算
+//       2) 剩下的过夜股数，按该投资者的成本法（average / fifo）算
 function clientCostMethod(clientId) {
   const c = clientById(clientId);
   return (c && c.costMethod === "fifo") ? "fifo" : "average";
@@ -1088,16 +1088,16 @@ function matchFilter(clientId) {
   return f === "all" || f === clientId;
 }
 
-// 「查看顾客」换人时，交易/股息/Cashflow 表单的顾客自动跟着换（选 All 则不动）
+// 「查看投资者」换人时，交易/股息/Cashflow 表单的投资者自动跟着换（选 All 则不动）
 function filterChanged() {
   const f = document.getElementById("clientFilter").value;
   if (f !== "all") {
     for (const id of ["t-client", "v-client", "cf-client"]) document.getElementById(id).value = f;
   }
   renderAll();
-  autoFees(); // 顾客换了，rate 不同，重算表单里的费用
+  autoFees(); // 投资者换了，rate 不同，重算表单里的费用
 }
-// 表单顾客跟上方「查看顾客」不同 -> 红色警告（避免入错人）
+// 表单投资者跟上方「查看投资者」不同 -> 红色警告（避免入错人）
 function clientMismatchCheck() {
   const f = document.getElementById("clientFilter").value;
   for (const id of ["t-client", "v-client", "cf-client"]) {
@@ -1105,7 +1105,7 @@ function clientMismatchCheck() {
     const mismatch = f !== "all" && el.value && el.value !== f;
     el.style.borderColor = mismatch ? "var(--red)" : "";
     el.style.background = mismatch ? "rgba(231,76,60,0.45)" : "";
-    el.title = mismatch ? "⚠ 跟上面「查看顾客」选的不是同一个人，小心入错账" : "";
+    el.title = mismatch ? "⚠ 跟上面「查看投资者」选的不是同一个人，小心入错账" : "";
   }
 }
 
@@ -1113,32 +1113,32 @@ function renderAll() {
   const { pos, realizedByTx, intradayTx } = computePortfolio();
   const filterSel = document.getElementById("clientFilter");
   const prevFilter = filterSel.value || "all";
-  filterSel.innerHTML = `<option value="all">全部用户 All Users</option>` +
+  filterSel.innerHTML = `<option value="all">全部投资者 All Investors</option>` +
     db.clients.map(c => `<option value="${c.id}">${clientLabel(c)}</option>`).join("");
   filterSel.value = [...filterSel.options].some(o => o.value === prevFilter) ? prevFilter : "all";
-  if (viewerRole === "client" && db.clients.length) filterSel.value = db.clients[0].id; // 用户只能看自己
+  if (viewerRole === "client" && db.clients.length) filterSel.value = db.clients[0].id; // 投资者只能看自己
 
-  // 顾客下拉
+  // 投资者下拉
   const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)} (${rateLabel(c)})</option>`).join("");
   const tSel = document.getElementById("t-client"), vSel = document.getElementById("v-client"), cfSel = document.getElementById("cf-client");
   const tPrev = tSel.value, vPrev = vSel.value, cfPrev = cfSel.value;
-  tSel.innerHTML = clientOpts || "<option value=''>请先添加用户</option>";
-  vSel.innerHTML = clientOpts || "<option value=''>请先添加用户</option>";
-  cfSel.innerHTML = clientOpts || "<option value=''>请先添加用户</option>";
+  tSel.innerHTML = clientOpts || "<option value=''>请先添加投资者</option>";
+  vSel.innerHTML = clientOpts || "<option value=''>请先添加投资者</option>";
+  cfSel.innerHTML = clientOpts || "<option value=''>请先添加投资者</option>";
   if ([...tSel.options].some(o => o.value === tPrev)) tSel.value = tPrev;
   if ([...vSel.options].some(o => o.value === vPrev)) vSel.value = vPrev;
   if ([...cfSel.options].some(o => o.value === cfPrev)) cfSel.value = cfPrev;
   clientMismatchCheck();
 
-  // 员工权限页（顾客清单会变，勾选框要跟着更新）
+  // 员工权限页（投资者清单会变，勾选框要跟着更新）
   renderStaffForm();
   renderStaffTable();
 
-  // 顾客表
+  // 投资者表
   const txCount = {};
   db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
   const cBody = document.getElementById("c-body");
-  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="10">还没有用户，先在上面添加</td></tr>`;
+  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="10">还没有投资者，先在上面添加</td></tr>`;
   for (const c of db.clients) {
     cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td><td>${c.email || "-"}</td><td>${c.phone || "-"}</td>
       <td>${rateLabel(c)}</td><td class="num">${fmt(c.minBrokerage || 0)}</td>
@@ -1154,7 +1154,7 @@ function renderAll() {
   document.getElementById("s-stamp-rate").value = db.settings.stampPer1000;
   document.getElementById("s-stamp-cap").value = db.settings.stampCap;
 
-  // 持仓：按顾客分组（顾客标题行 -> 仓位 -> 小计）
+  // 持仓：按投资者分组（投资者标题行 -> 仓位 -> 小计）
   const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId));
   let totalCost = 0, totalValue = 0, totalUnrealized = 0, hasPrice = false;
   const hBody = document.getElementById("h-body");
@@ -1205,7 +1205,7 @@ function renderAll() {
   renderCashflow(pos, realizedByTx);
 
   // 交易表
-  // 股票筛选下拉（跟随顾客 filter 的范围）
+  // 股票筛选下拉（跟随投资者 filter 的范围）
   const stockSel = document.getElementById("stockFilter");
   const stockPrev = stockSel.value || "all";
   const stockList = [...new Set(db.transactions.filter(t => matchFilter(t.clientId)).map(t => t.ticker))].sort();
@@ -1215,7 +1215,7 @@ function renderAll() {
 
   const tBody = document.getElementById("t-body");
   const txs = db.transactions.filter(t => matchFilter(t.clientId) && (stockF === "all" || t.ticker === stockF));
-  // 按时间顺序先算「每笔之后的累计持仓」（按 顾客+股票 各自算）
+  // 按时间顺序先算「每笔之后的累计持仓」（按 投资者+股票 各自算）
   const runAfter = {};
   {
     const run = {};
@@ -1317,9 +1317,9 @@ function renderAll() {
   setCard("d-brokerage", fmt(totalBrokerage));
   setPnlCard("d-total-return", (hasPrice ? totalUnrealized : 0) + totalRealized + divTotal);
 
-  // 各顾客摘要
+  // 各投资者摘要
   const dcBody = document.getElementById("d-client-body");
-  dcBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="6">还没有用户</td></tr>`;
+  dcBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="6">还没有投资者</td></tr>`;
   for (const c of db.clients) {
     if (!matchFilter(c.id)) continue;
     let cost = 0, realized = 0, divs = 0, brk = 0;
@@ -1357,7 +1357,7 @@ function toggleRateFields() {
   document.getElementById("f-rate-above").style.display = mode === "tiered" ? "" : "none";
 }
 // ---------- 员工权限（只有 super 用得到）----------
-// 存的是 clients 栏（顾客 id 用逗号分隔，"*" = 全部）。後台 guardStaffSave 才是真正的把关，
+// 存的是 clients 栏（投资者 id 用逗号分隔，"*" = 全部）。後台 guardStaffSave 才是真正的把关，
 // 这里只是让 Dallen 不用去 Google Sheet 手打那串 id。
 let editingStaffId = null;
 function toggleStaffScope() {
@@ -1372,7 +1372,7 @@ function renderStaffForm() {
   const picked = new Set([...wrap.querySelectorAll("input:checked")].map(cb => cb.value)); // 重画时保留已勾的
   wrap.innerHTML = db.clients.length
     ? db.clients.map(c => `<label><input type="checkbox" value="${c.id}"${picked.has(c.id) ? " checked" : ""}>${clientLabel(c)}</label>`).join("")
-    : `<span class="hint">还没有用户</span>`;
+    : `<span class="hint">还没有投资者</span>`;
 }
 function saveStaff() {
   const email = document.getElementById("s-email").value.trim().toLowerCase();
@@ -1383,7 +1383,7 @@ function saveStaff() {
   if (!name) { st.textContent = "请填名字"; return; }
   if (db.staff.some(s => s.email === email && s.id !== editingStaffId)) { st.textContent = "这个 Gmail 已经在名单里了"; return; }
   const picked = [...document.querySelectorAll("#s-clients input:checked")].map(cb => cb.value);
-  if (role === "staff" && !picked.length) { st.textContent = "请至少勾一个顾客，不然他登入後什么都看不到"; return; }
+  if (role === "staff" && !picked.length) { st.textContent = "请至少勾一个投资者，不然他登入後什么都看不到"; return; }
   // 不能把最後一个 super 降级，否则没人管得了员工名单
   if (editingStaffId && role !== "super") {
     const others = db.staff.filter(s => s.id !== editingStaffId && s.role === "super");
@@ -1441,7 +1441,7 @@ function renderStaffTable() {
   body.innerHTML = db.staff.length ? "" : `<tr><td class="empty" colspan="5">还没有员工。加进来的人就能用自己的 Gmail 登入。</td></tr>`;
   for (const s of db.staff) {
     let scope;
-    if (s.role === "super" || !String(s.clients || "").trim() || s.clients === "*") scope = "<b>全部顾客</b>";
+    if (s.role === "super" || !String(s.clients || "").trim() || s.clients === "*") scope = "<b>全部投资者</b>";
     else {
       const ids = String(s.clients).split(",").map(x => x.trim()).filter(Boolean);
       const names = ids.map(id => { const c = clientById(id); return c ? (c.code || c.name) : `<span class="pnl-neg">${id}(已删)</span>`; });
@@ -1468,11 +1468,11 @@ function saveClient() {
   const min = parseFloat(document.getElementById("c-min").value) || 0;
   const costMethod = document.getElementById("c-costmethod").value;
   if (!name) { alert("请填姓名"); return; }
-  // 第二防线：email / 电话不能跟别的顾客重复
+  // 第二防线：email / 电话不能跟别的投资者重复
   const normPhone = v => { let d = String(v || "").replace(/[^0-9]/g, ""); if (d.startsWith("60") && d.length >= 11) d = "0" + d.slice(2); return d; };
   const others = db.clients.filter(c => c.id !== editingClientId);
-  if (email && others.some(c => (c.email || "").toLowerCase() === email)) { alert(`这个 Gmail 已经登记给别的顾客了：${others.find(c => (c.email || "").toLowerCase() === email).name}`); return; }
-  if (phone && others.some(c => normPhone(c.phone) && normPhone(c.phone) === normPhone(phone))) { alert(`这个电话号码已经登记给别的顾客了：${others.find(c => normPhone(c.phone) === normPhone(phone)).name}`); return; }
+  if (email && others.some(c => (c.email || "").toLowerCase() === email)) { alert(`这个 Gmail 已经登记给别的投资者了：${others.find(c => (c.email || "").toLowerCase() === email).name}`); return; }
+  if (phone && others.some(c => normPhone(c.phone) && normPhone(c.phone) === normPhone(phone))) { alert(`这个电话号码已经登记给别的投资者了：${others.find(c => normPhone(c.phone) === normPhone(phone)).name}`); return; }
   if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
   if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
   const data = { code, name, account, email, phone, brokerageMode: mode, minBrokerage: min, costMethod,
@@ -1503,7 +1503,7 @@ function editClient(id) {
   document.getElementById("c-min").value = c.minBrokerage || 0;
   document.getElementById("c-costmethod").value = c.costMethod === "fifo" ? "fifo" : "average";
   toggleRateFields();
-  document.getElementById("c-form-title").textContent = "编辑顾客：" + c.name;
+  document.getElementById("c-form-title").textContent = "编辑投资者：" + c.name;
   document.getElementById("c-save-btn").textContent = "保存";
   document.getElementById("c-cancel-btn").style.display = "";
 }
@@ -1514,14 +1514,14 @@ function cancelEditClient() {
   document.getElementById("c-mode").value = "tiered";
   document.getElementById("c-costmethod").value = "average";
   toggleRateFields();
-  document.getElementById("c-form-title").textContent = "添加用户 Add User";
+  document.getElementById("c-form-title").textContent = "添加投资者 Add Investor";
   document.getElementById("c-save-btn").textContent = "添加";
   document.getElementById("c-cancel-btn").style.display = "none";
 }
 function delClient(id) {
   const n = db.transactions.filter(t => t.clientId === id).length + db.dividends.filter(d => d.clientId === id).length;
-  if (n > 0) { alert(`这个顾客还有 ${n} 条记录，不能删除。请先删除他的交易和股息记录。`); return; }
-  if (!confirm("确定删除这个顾客？")) return;
+  if (n > 0) { alert(`这个投资者还有 ${n} 条记录，不能删除。请先删除他的交易和股息记录。`); return; }
+  if (!confirm("确定删除这个投资者？")) return;
   db.clients = db.clients.filter(c => c.id !== id);
   save();
 }
@@ -1582,7 +1582,7 @@ function addTransaction() {
   const brokerage = parseFloat(document.getElementById("t-brokerage").value) || 0;
   const stamp = parseFloat(document.getElementById("t-stamp").value) || 0;
   const clearing = parseFloat(document.getElementById("t-clearing").value) || 0;
-  if (!clientId || !clientById(clientId)) { alert("请先在「顾客」页添加顾客"); return; }
+  if (!clientId || !clientById(clientId)) { alert("请先在「投资者」页添加投资者"); return; }
   if (!date || !ticker || !(qty > 0) || !(price > 0)) { alert("请填完整：日期、股票、股数、价格"); return; }
   if (type === "sell") {
     // 修改模式：算持仓时先排除正在修改的这一笔，才不会误判
@@ -1592,7 +1592,7 @@ function addTransaction() {
     db.transactions = all;
     const p = pos[clientId + "|" + ticker];
     const have = p ? p.qty : 0;
-    if (qty > have + 1e-9) { alert(`这个顾客的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return; }
+    if (qty > have + 1e-9) { alert(`这个投资者的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return; }
   }
   if (code) db.symbols[ticker] = normalizeSymbol(code); // 存代码给抓价用
   if (editingTxId) {
@@ -1797,7 +1797,7 @@ async function fetchAllPrices(auto) {
         ok++;
       } else failed.push(tk + (q && q.error ? "（代码错误?）" : ""));
     }
-    if (viewerRole === "client") { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); } // 顾客：价格只存本地显示
+    if (viewerRole === "client") { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); } // 投资者：价格只存本地显示
     else save();
     let msg = `✓ ${auto ? "自动" : ""}更新了 ${ok} 个 counter 的最新价（${new Date().toLocaleTimeString()}）`;
     if (failed.length) msg += ` · 失败: ${failed.join(", ")}`;
@@ -1844,7 +1844,7 @@ function renderExDiv(pos) {
     xBody.innerHTML = `<tr><td class="empty" colspan="6">还没有数据，按上面「刷新列表」</td></tr>`;
     return;
   }
-  // 持仓对照：股票名（或 Bursa 代码）-> 哪些用户持有多少股
+  // 持仓对照：股票名（或 Bursa 代码）-> 哪些投资者持有多少股
   const holdings = Object.values(pos).filter(p => p.qty > 0);
   const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
   const todayISO = today();
@@ -1860,7 +1860,7 @@ function renderExDiv(pos) {
     const dps = m ? parseFloat(m[1]) : null;
     let holderCell = "";
     if (holders.length) {
-      holderCell = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有用户持有</span>`;
+      holderCell = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有投资者持有</span>`;
       for (const h of holders) {
         const c = clientById(h.clientId);
         holderCell += `<div style="font-size:12px;margin-top:3px">${clientLabel(c)}: ${h.qty.toLocaleString()} 股${dps ? ` ≈ <b class="gold">RM ${fmtN(h.qty * dps)}</b>` : ""}</div>`;
@@ -1872,10 +1872,10 @@ function renderExDiv(pos) {
       <td>${holderCell}</td></tr>`;
   }
 }
-// 股息自动入账：ex-date 一到，按每个顾客 ex-date 前的持股自动记股息（自动进 Cashflow）
+// 股息自动入账：ex-date 一到，按每个投资者 ex-date 前的持股自动记股息（自动进 Cashflow）
 // 记过的用 settings 里的 autodiv 键去重（跟着云端同步，删了也不会重生）
 function autoRecordDividends() {
-  if (viewerRole === "client") return 0; // 顾客只读，不产生记录
+  if (viewerRole === "client") return 0; // 投资者只读，不产生记录
   if (!db.exdiv || !db.exdiv.rows) return 0;
   const todayISO = today();
   let created = 0;
@@ -1906,7 +1906,7 @@ function autoRecordDividends() {
   return created;
 }
 
-// 红股/拆股/送股 预告：抓 i3investor 的 entitlement 列表，标出哪个用户持有、会拿到多少
+// 红股/拆股/送股 预告：抓 i3investor 的 entitlement 列表，标出哪个投资者持有、会拿到多少
 async function refreshEntitlements(silent) {
   try {
     const r = await fetch(apiUrl("/api/entitlements"));
@@ -1937,7 +1937,7 @@ function renderEntitlements(pos) {
     const holders = holdings.filter(p => p.ticker === r.stock || (r.code && codeOf(p.ticker) === r.code));
     let who = "";
     if (holders.length) {
-      who = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有用户持有</span>`;
+      who = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有投资者持有</span>`;
       for (const h of holders) {
         const c = clientById(h.clientId);
         const extra = r.factor ? Math.round(h.qty * (r.factor - 1)) : null;
@@ -1959,10 +1959,10 @@ function renderEntitlements(pos) {
   }
 }
 
-// 历史股息补记：抓每只股近5年的派息，按「每个顾客在 ex-date 当天的持股」自动记进股息+Cashflow
-// 用户持有期间派过的息都会补齐（不只未来的）。已记过/已删过的用 autodiv 键跳过。
+// 历史股息补记：抓每只股近5年的派息，按「每个投资者在 ex-date 当天的持股」自动记进股息+Cashflow
+// 投资者持有期间派过的息都会补齐（不只未来的）。已记过/已删过的用 autodiv 键跳过。
 async function backfillDividends(silent) {
-  if (viewerRole === "client") return 0; // 顾客只读
+  if (viewerRole === "client") return 0; // 投资者只读
   const status = document.getElementById("x-status");
   const tickers = [...new Set(db.transactions.map(t => t.ticker))].filter(tk => db.symbols[tk]);
   if (!tickers.length) { if (!silent) alert("还没有股票设了 Bursa 代码"); return 0; }
@@ -1978,7 +1978,7 @@ async function backfillDividends(silent) {
       if (!Array.isArray(hist)) continue;
       for (const h of hist) {
         if (!(h.dps > 0) || h.exDate > today()) continue;
-        // 每个顾客在这个 ex-date 之前的持股
+        // 每个投资者在这个 ex-date 之前的持股
         const held = {};
         for (const t of db.transactions) {
           if (t.ticker !== tk || t.date >= h.exDate) continue;
@@ -2003,17 +2003,17 @@ async function backfillDividends(silent) {
   }
 }
 
-// 红股/拆股自动调整：抓每只股近5年的红股/拆股，按「顾客在 ex-date 当天的持股」补记增加的股数
+// 红股/拆股自动调整：抓每只股近5年的红股/拆股，按「投资者在 ex-date 当天的持股」补记增加的股数
 // 记成一笔 type="bonus" 的交易（价格0、没费用）-> 持仓股数增加、总成本不变、每股成本自动摊薄
 async function backfillSplits(silent) {
-  if (viewerRole === "client") return 0; // 顾客只读
+  if (viewerRole === "client") return 0; // 投资者只读
   const status = document.getElementById("x-status");
   const tickers = [...new Set(db.transactions.map(t => t.ticker))].filter(tk => db.symbols[tk]);
   if (!tickers.length) { if (!silent) alert("还没有股票设了 Bursa 代码"); return 0; }
   if (!silent) status.textContent = "检查红股/拆股中…（查 Pick@Stock 每只股的记录）";
   try {
     // 主源 Pick@Stock（持牌 Bursa 数据），i3investor 交叉核对。
-    // 关键：i3 把「免费凭单」也写成 Bonus Issue，照它跑会平白多给客户股票（EDELTEQ / MINOX 实例）。
+    // 关键：i3 把「免费凭单」也写成 Bonus Issue，照它跑会平白多给投资者股票（EDELTEQ / MINOX 实例）。
     const codeOf = tk => (db.symbols[tk] || "").replace(/\.KL$/, "");
     // 只查母股（4 位数代码）。凭单代码是母股+WA（如 0278WA），去查会拿回母股的记录 -> 重复套用
     const codes = [...new Set(tickers.map(codeOf))].filter(c => /^\d{4}$/.test(c));
@@ -2037,10 +2037,10 @@ async function backfillSplits(silent) {
       if (!Array.isArray(data[c])) failed.push(c);
     }
     let created = 0, wCreated = 0;
-    const needManual = []; // 供股这些不能自动算的，列给用户看
+    const needManual = []; // 供股这些不能自动算的，列给投资者看
     const needCheck = [];  // 只有一个来源有、分不清是红股还是凭单 -> 一定要人工看
     const wExpired = [];   // 凭单早就到期了，不算进持仓
-    // ex-date 当天顾客手上有多少股（不含当天新产生的红股/凭单，因为配额是按除权前的持股算）
+    // ex-date 当天投资者手上有多少股（不含当天新产生的红股/凭单，因为配额是按除权前的持股算）
     const heldAt = (tk, exDate) => {
       const h = {};
       for (const t of db.transactions) {
@@ -2054,7 +2054,7 @@ async function backfillSplits(silent) {
       if (!Array.isArray(list)) continue;
       for (const s of list) {
         if (s.exDate > today()) continue;
-        // 免费凭单：母股股数不变，但顾客确实多了一批凭单 -> 开一个新 counter 记进持仓
+        // 免费凭单：母股股数不变，但投资者确实多了一批凭单 -> 开一个新 counter 记进持仓
         if (s.isWarrant && s.perShare > 0) {
           if (!s.warrantSymbol) continue;
           const held = heldAt(tk, s.exDate);
@@ -2079,13 +2079,13 @@ async function backfillSplits(silent) {
           }
           continue;
         }
-        if (!s.autoApply) { // 供股(要出钱)之类 -> 不自动，提醒用户
+        if (!s.autoApply) { // 供股(要出钱)之类 -> 不自动，提醒投资者
           const anyHeld = db.transactions.some(t => t.ticker === tk && t.date < s.exDate);
           if (anyHeld) (s.needCheck ? needCheck : needManual).push(`${tk} ${s.exDate} ${s.type} ${s.ratio}`);
           continue;
         }
         if (!(s.factor > 0) || s.factor === 1) continue;
-        // 每个顾客在 ex-date 之前的持股（含更早的红股调整，所以按日期顺序处理）
+        // 每个投资者在 ex-date 之前的持股（含更早的红股调整，所以按日期顺序处理）
         const held = {};
         for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
           if (t.ticker !== tk || t.date >= s.exDate) continue;
@@ -2142,7 +2142,7 @@ async function autoRefreshEntitlements() {
 }
 
 // ---------- IPO 上市提醒 ----------
-const IPO_CACHE_V = 4; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后用户看到旧格式）
+const IPO_CACHE_V = 4; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后投资者看到旧格式）
 async function refreshIPO() {
   const status = document.getElementById("ipo-status");
   status.textContent = "刷新中…（要等 10-20 秒）";
@@ -2159,7 +2159,7 @@ async function refreshIPO() {
     status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`
       + (data.rows.length === 0 && data.cardsSeen ? `（数据源正常，读到 ${data.cardsSeen} 家历史 IPO，只是目前没有未上市的）` : "");
   } catch (e) {
-    // 抓取失败：顶端全站横幅 + IPO 区红框，别让用户面对一片空白（很可能是数据源又被封了）
+    // 抓取失败：顶端全站横幅 + IPO 区红框，别让投资者面对一片空白（很可能是数据源又被封了）
     document.getElementById("sys-error-banner").style.display = "block";
     status.textContent = "⚠️ 抓取失败：" + e.message;
     document.getElementById("ipo-list").innerHTML =
@@ -2233,7 +2233,7 @@ function fillDivTickers(posArg) {
   const tks = Object.values(pos).filter(p => p.clientId === clientId && p.qty > 0).map(p => p.ticker).sort();
   const sel = document.getElementById("v-ticker");
   const prev = sel.value;
-  sel.innerHTML = tks.map(t => `<option>${t}</option>`).join("") || "<option value=''>（该用户无持仓）</option>";
+  sel.innerHTML = tks.map(t => `<option>${t}</option>`).join("") || "<option value=''>（该投资者无持仓）</option>";
   if (tks.includes(prev)) sel.value = prev;
   prefillDivQty();
 }
@@ -2258,7 +2258,7 @@ function addDividend() {
   const perShare = parseFloat(document.getElementById("v-dps").value) || 0;
   const qty = parseFloat(document.getElementById("v-qty").value) || 0;
   const total = parseFloat(document.getElementById("v-total").value);
-  if (!clientId || !date || !ticker || !(total > 0)) { alert("请填日期、顾客、股票，并确认总额大于 0"); return; }
+  if (!clientId || !date || !ticker || !(total > 0)) { alert("请填日期、投资者、股票，并确认总额大于 0"); return; }
   db.dividends.push({ id: uid(), clientId, date, ticker, perShare, qty, total });
   ["v-dps", "v-total"].forEach(id => document.getElementById(id).value = "");
   save();
@@ -2276,7 +2276,7 @@ function addCashflow() {
   const type = document.getElementById("cf-type").value;
   const amount = parseFloat(document.getElementById("cf-amount").value.replace(/,/g, ""));
   const note = document.getElementById("cf-note").value.trim();
-  if (!clientId || !date || !(amount > 0)) { alert("请填顾客、日期，金额要大于 0"); return; }
+  if (!clientId || !date || !(amount > 0)) { alert("请填投资者、日期，金额要大于 0"); return; }
   db.cashflows.push({ id: uid(), clientId, date, type, amount, note });
   document.getElementById("cf-amount").value = "";
   document.getElementById("cf-note").value = "";
@@ -2308,13 +2308,13 @@ function renderCashflow(pos, realizedByTx) {
   setPnlCard("cf-true", trueP);
   if (!mvKnown) document.getElementById("cf-true").textContent = "≈ " + document.getElementById("cf-true").textContent;
 
-  // 账本：只有选单一顾客才显示流水（全部顾客时混在一起没意义）
+  // 账本：只有选单一投资者才显示流水（全部投资者时混在一起没意义）
   const f = document.getElementById("clientFilter").value;
   const body = document.getElementById("cf-body");
   const hint = document.getElementById("cf-ledger-hint");
   if (f === "all") {
-    hint.textContent = "（在上方「查看顾客」选一个顾客，看他的明细账本）";
-    body.innerHTML = `<tr><td class="empty" colspan="6">选一个用户查看流水账</td></tr>`;
+    hint.textContent = "（在上方「查看投资者」选一个投资者，看他的明细账本）";
+    body.innerHTML = `<tr><td class="empty" colspan="6">选一个投资者查看流水账</td></tr>`;
     return;
   }
   hint.textContent = "";
@@ -2330,7 +2330,7 @@ function renderCashflow(pos, realizedByTx) {
   for (const dv of db.dividends) if (dv.clientId === f)
     ev.push({ date: dv.date, k: 3, label: `股息 ${dv.ticker}`, in: dv.total, out: 0 });
   ev.sort((a, b) => a.date.localeCompare(b.date) || a.k - b.k);
-  body.innerHTML = ev.length ? "" : `<tr><td class="empty" colspan="6">这个用户还没有任何记录</td></tr>`;
+  body.innerHTML = ev.length ? "" : `<tr><td class="empty" colspan="6">这个投资者还没有任何记录</td></tr>`;
   let bal = 0;
   for (const e of ev) {
     bal += (e.in || 0) - (e.out || 0);
@@ -2357,7 +2357,7 @@ function exportJSON() {
 function exportCSV() {
   const { realizedByTx } = computePortfolio();
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
-  let csv = "﻿record_type,client_code,client,account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l\n";
+  let csv = "﻿record_type,investor_code,investor,account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l\n";
   for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(t.clientId);
     const r = realizedByTx[t.id];
@@ -2380,7 +2380,7 @@ function importJSON(ev) {
     try {
       const d = JSON.parse(reader.result);
       if (!Array.isArray(d.transactions) || !Array.isArray(d.dividends)) throw new Error("bad format");
-      if (!confirm(`导入会覆盖现有数据（${d.clients ? d.clients.length : 0} 个顾客、${d.transactions.length} 笔交易、${d.dividends.length} 笔股息）。继续？`)) return;
+      if (!confirm(`导入会覆盖现有数据（${d.clients ? d.clients.length : 0} 个投资者、${d.transactions.length} 笔交易、${d.dividends.length} 笔股息）。继续？`)) return;
       localStorage.setItem(STORE_KEY, JSON.stringify(d));
       db = load();
       save();
@@ -2391,7 +2391,7 @@ function importJSON(ev) {
   ev.target.value = "";
 }
 function clearAll() {
-  if (!confirm("⚠️ 确定清空全部数据（包括所有顾客和交易）？此操作不可恢复！建议先导出 JSON 备份。")) return;
+  if (!confirm("⚠️ 确定清空全部数据（包括所有投资者和交易）？此操作不可恢复！建议先导出 JSON 备份。")) return;
   if (!confirm("再确认一次：真的要删除所有记录？")) return;
   db = { version: 2, clients: [], settings: { ...DEFAULT_SETTINGS }, transactions: [], dividends: [], cashflows: [], prices: {}, symbols: {}, exdiv: null, ipo: null, ent: null };
   save();
@@ -2439,7 +2439,7 @@ function applyTableSort(tbody) {
   // 用布尔旗标挡不住：旗标早就放开了，会变成自己触发自己的无限循环）
   const watch = sortWatch.get(tbody.id);
   if (watch) watch.disconnect();
-  // 持仓表有「👤 顾客」分组行 -> 只在每一组里面排，不打散分组；「小计」永远钉在该组最后
+  // 持仓表有「👤 投资者」分组行 -> 只在每一组里面排，不打散分组；「小计」永远钉在该组最后
   const blocks = [];
   let cur = null;
   for (const r of rows) {
@@ -2516,7 +2516,7 @@ document.getElementById("v-date").value = today();
 document.getElementById("cf-date").value = today();
 setSuper(isSuper); // 套用上次的 super 状态（决定员工页显不显示），登入後後台会再确认一次
 toggleStaffScope();
-if (viewerRole === "client") applyClientModeUI(); // 上次是顾客登入，先用缓存进只读模式
+if (viewerRole === "client") applyClientModeUI(); // 上次是投资者登入，先用缓存进只读模式
 if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注册页（Google 自动登入成功会收起）
 renderAll();
 autoRefreshExDiv();
