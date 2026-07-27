@@ -1022,9 +1022,11 @@ async function pullCloud(silent, quiet) {
     hideAuthScreen(); // 认证成功 -> 收起登入页，显示 app
     renderAll();
     if (quiet) return; // 背景自动拉：资料已更新，画面已重画，其余的开页时做过了
+    // 後台版本号：改了 apps-script 之後靠这个确认「新版本」真的部署上去了（储存 ≠ 上线）
+    const backendVer = j.version ? ` · 後台 ${j.version}` : "";
     setCloudStatus(j.role === "client"
       ? `✓ 已载入你的投资组合（${db.transactions.length} 笔交易）· 只读`
-      : `✓ 已从云端载入（${db.clients.length} 个投资者、${db.transactions.length} 笔交易）`);
+      : `✓ 已从云端载入（${db.clients.length} 个投资者、${db.transactions.length} 笔交易）${backendVer}`);
     if (autoRecordDividends() > 0) save(); // 云端数据到齐后，补自动入账该记的股息
     startAutoPrices(); // 数据到齐后自动抓最新价
     startAutoPull();   // 之後每 3 分钟自动拉一次，投资者更新了这边看得到
