@@ -1034,6 +1034,24 @@ document.addEventListener("visibilitychange", async () => {
   const diff = db.transactions.length - before;
   if (diff !== 0) setCloudStatus(`🔄 云端有新记录，已自动更新（${diff > 0 ? "+" : ""}${diff} 笔）· ${new Date().toLocaleTimeString()}`);
 });
+// 自动补记的结果一定要讲出来。
+// 股息/红股只在「你（owner/员工）登入」时才补 —— 投资者那边是只读的，不产生记录。
+// 以前这段静静跑完，你不知道它有没有做事、也不知道该不该等它存完才关网页。
+function reportAutoBackfill(divCount, splitCount) {
+  if (viewerRole === "client") return;
+  const bits = [];
+  if (divCount) bits.push(`${divCount} 笔股息`);
+  if (splitCount) bits.push(`${splitCount} 笔红股/拆股/凭单`);
+  if (!bits.length) {
+    setCloudStatus(`✓ 已是最新 · 这次没有需要补记的股息或红股 · ${new Date().toLocaleTimeString()}`);
+    return;
+  }
+  const msg = `🆕 这次自动帮投资者补记了 ${bits.join("、")}`;
+  // 没勾自动同步的话，补出来的东西只存在这台电脑，下次从云端载入就没了 -> 必须讲清楚
+  setCloudStatus(cloud.auto
+    ? `${msg} · 正在存到云端…`
+    : `${msg} · ⚠️「自动同步」没勾，这些还没上云端！请按下面的「⬆️ 把本机存到云端」，否则会丢掉`);
+}
 // quiet = 背景自动拉，不要一直闪「载入中」，也不要重跑补记（那些开页时跑过了）
 async function pullCloud(silent, quiet) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
@@ -1086,11 +1104,15 @@ async function pullCloud(silent, quiet) {
     setCloudStatus(j.role === "client"
       ? `✓ 已载入你的投资组合（${db.transactions.length} 笔交易）· 只读`
       : `✓ 已从云端载入（${db.clients.length} 个投资者、${db.transactions.length} 笔交易）${backendVer}`);
-    if (autoRecordDividends() > 0) save(); // 云端数据到齐后，补自动入账该记的股息
+    const autoDiv = autoRecordDividends(); // 云端数据到齐后，补自动入账该记的股息
+    if (autoDiv > 0) save();
     startAutoPrices(); // 数据到齐后自动抓最新价
     startAutoPull();   // 之後每 3 分钟自动拉一次，投资者更新了这边看得到
-    // 先补红股/拆股（股数会变），再补股息（按调整后的股数算）
-    backfillSplits(true).then(() => backfillDividends(true));
+    // 先补红股/拆股（股数会变），再补股息（按调整后的股数算），跑完把结果讲出来
+    backfillSplits(true).then(async (nSplit) => {
+      const nDiv = await backfillDividends(true);
+      reportAutoBackfill(autoDiv + (nDiv || 0), nSplit || 0);
+    });
   } catch (e) { handleCloudErr(e, "⬇️ 载入失败"); }
 }
 function initCloudUI() {
