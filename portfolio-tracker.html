@@ -105,6 +105,14 @@
   /* 未登入：只显示登入/注册页 */
   body.signed-out > *:not(#auth-screen) { display: none !important; }
 
+  /* 同步中横幅：登入时先开画面，这条告诉人「还在拿最新的」，同步完自动收起 */
+  /* 显示/隐藏是用 JS 直接设 style.display（元素上有 inline display:none，class 盖不过它） */
+  #sync-banner { align-items: center; gap: 9px; background: rgba(52, 152, 219, 0.12);
+    border: 1px solid rgba(52, 152, 219, 0.35); color: var(--text); padding: 9px 14px;
+    border-radius: 8px; margin-bottom: 12px; font-size: 13.5px; }
+  .sync-dot { width: 13px; height: 13px; flex: none; border: 2px solid rgba(52, 152, 219, 0.3);
+    border-top-color: var(--blue); border-radius: 50%; animation: auth-spin 0.8s linear infinite; }
+
   /* 股票户口标签（APEX / CGS…），让人一眼看出这笔货在哪个户口 */
   .acct-tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 9px;
     background: rgba(52, 152, 219, 0.16); color: var(--blue); border: 1px solid rgba(52, 152, 219, 0.3); vertical-align: middle; }
@@ -196,6 +204,12 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+
+<!-- 登入时先显示上次的资料，这条说明云端还在同步（同步完自己会消失） -->
+<div id="sync-banner" style="display:none">
+  <span class="sync-dot"></span>
+  <span>正在跟云端同步最新记录…<span class="hint" style="margin-left:6px">现在看到的是上次的资料</span></span>
+</div>
 
 <!-- IPO 抓不到时，最顶端全站可见的红色横幅（提醒投资者来找 Claude） -->
 <div id="sys-error-banner" style="display:none;background:var(--red);color:#fff;padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:15px;font-weight:600">
@@ -837,6 +851,24 @@ function authIdle() {
   const el = document.getElementById("auth-busy");
   if (el) el.classList.remove("on");
 }
+// --- 秒开：本机已经有「同一个人」上次的资料，就先把画面开出来，云端回来再换 ---
+// Apps Script 一趟要 3~5 秒，让人盯着转圈太久（有投资者反映过）。
+// 只在 Gmail 对得上时才这样做 —— 换一个人登入同一台机器，绝不能先看到上一个人的资料。
+const CACHE_OWNER_KEY = "cache-owner";
+let fastShown = false; // 这次登入有没有走「先开画面」那条路
+function markCacheOwner(email) {
+  if (email) localStorage.setItem(CACHE_OWNER_KEY, String(email).toLowerCase());
+}
+function canFastShow(email) {
+  const owner = localStorage.getItem(CACHE_OWNER_KEY);
+  if (!owner || !email) return false;
+  if (owner !== String(email).toLowerCase()) return false;
+  return db.clients.length > 0 || db.transactions.length > 0; // 空的就没什么好先显示
+}
+function syncBanner(on) {
+  const el = document.getElementById("sync-banner");
+  if (el) el.style.display = on ? "flex" : "none";
+}
 function showAuthScreen() {
   document.body.classList.add("signed-out");
   document.getElementById("auth-screen").style.display = "";
@@ -875,7 +907,16 @@ async function onGoogleCredential(resp) {
   }
   setCloudStatus("✓ 已用 Gmail 登入，正在从云端载入…");
   document.getElementById("signin-status").textContent = "";
-  authBusy("登入中，正在载入你的投资组合…", "第一次登入或换电脑时会慢一点，请稍等。");
+  if (canFastShow(googleEmail)) {
+    // 同一个人、同一台机器 -> 立刻开画面，云端资料 3~5 秒後自己换上
+    fastShown = true;
+    hideAuthScreen();
+    renderAll();
+    syncBanner(true);
+  } else {
+    // 第一次登入 / 换装置 / 换人 -> 没有可信的本机资料，照旧等
+    authBusy("登入中，正在载入你的投资组合…", "第一次登入或换装置时会慢一点，请稍等。");
+  }
   await pullCloud(true);
 }
 function initGoogleSignIn() {
@@ -891,13 +932,18 @@ function initGoogleSignIn() {
 function googleSignOut() {
   googleIdToken = null; googleEmail = null;
   localStorage.removeItem("viewer-role");
+  // 标记刻意保留：他自己再登入就能秒开。换成别人登入一样挡得住 —— canFastShow 是比对 Gmail，
+  // 不是比对「有没有登出过」。清掉只会让习惯登出的人每次都慢，换不到实际的安全。
+  fastShown = false;
+  syncBanner(false);
   if (typeof google !== "undefined" && google.accounts) google.accounts.id.disableAutoSelect();
   document.getElementById("gsi-signout").style.display = "none";
   document.getElementById("cloud-signin-hint").textContent = "已登出。用 Gmail 登入即可同步。";
   setCloudStatus("已登出。");
 }
 function handleCloudErr(e, prefix, wasPush) {
-  authIdle(); // 出错就把等待遮罩收掉，不然会一直转
+  authIdle();       // 出错就把等待遮罩收掉，不然会一直转
+  syncBanner(false); // 同步中的横幅也一样
   const msg = String((e && e.message) || e);
   if (/unauthorized/i.test(msg) && googleIdToken) {
     googleIdToken = null;
@@ -1003,6 +1049,14 @@ async function pullCloud(silent, quiet) {
       }
       throw new Error(j.error);
     }
+    // 秒开那几秒内他刚好记了一笔？那笔还没推上去，云端资料一盖就没了。
+    // 规则跟自动拉一样：本机有未推的改动就不覆盖，让它先推上去，下一轮再同步。
+    // （只挡自动的；手动按「从云端载入到本机」= silent 为 false，一定照做。）
+    if (silent && pendingPush && fastShown) {
+      syncBanner(false);
+      setCloudStatus("⬆️ 你刚记的还没存上云端，先存那笔，稍後再同步");
+      return;
+    }
     const d = j.data || {};
     setSuper(j.isSuper === true); // 後台说了算：只有 super 看得到员工页
     db.staff = d.staff || [];
@@ -1020,6 +1074,9 @@ async function pullCloud(silent, quiet) {
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
     if (j.role === "client") enterClientMode(); else exitClientMode(); // 后台说你是谁，就进哪个模式
     hideAuthScreen(); // 认证成功 -> 收起登入页，显示 app
+    syncBanner(false);          // 最新资料到了，收起「同步中」
+    fastShown = false;
+    markCacheOwner(googleEmail); // 记住这份本机资料是谁的 -> 下次他登入可以秒开
     renderAll();
     if (quiet) return; // 背景自动拉：资料已更新，画面已重画，其余的开页时做过了
     // 後台版本号：改了 apps-script 之後靠这个确认「新版本」真的部署上去了（储存 ≠ 上线）
