@@ -290,6 +290,8 @@
   <select id="clientFilter" onchange="filterChanged()"><option value="all">全部投资者 All Investors</option></select>
   <label>股票户口 Account:</label>
   <select id="accountFilter" onchange="renderAll()"><option value="all">全部户口 All Accounts</option></select>
+  <label>股票 Counter:</label>
+  <select id="stockFilter" onchange="renderAll()"><option value="all">全部股票 All</option></select>
 </div>
 
 <!-- ============ DASHBOARD ============ -->
@@ -464,9 +466,7 @@
     <label>视图:</label>
     <button class="action small" id="btn-view-journal" onclick="setTxView('journal')">📃 流水</button>
     <button class="action small ghost" id="btn-view-tacct" onclick="setTxView('taccount')">📒 T-Account</button>
-    <label style="margin-left:10px">股票 Filter:</label>
-    <select id="stockFilter" onchange="renderAll()"><option value="all">全部股票 All</option></select>
-    <span class="hint" id="stock-summary" style="margin:0"></span>
+    <span class="hint" id="stock-summary" style="margin:0 0 0 10px"></span>
   </div>
   <div class="table-wrap" id="journal-wrap">
     <table>
@@ -508,6 +508,7 @@
     </div>
     <p class="hint">选投资者和股票后自动填入该投资者的持仓股数，输入 DPS 直接算出拿到多少钱。</p>
   </div>
+  <p class="net-preview" id="div-summary" style="display:none"></p>
   <div class="table-wrap">
     <table>
       <thead><tr><th>日期</th><th>投资者</th><th>户口</th><th>股票</th><th class="num">每股股息</th><th class="num">股数</th><th class="num">总额</th><th></th></tr></thead>
@@ -529,7 +530,8 @@
       <div class="field" style="flex:1;min-width:160px"><label>备注 Note（可空）</label><input type="text" id="cf-note" placeholder="如 现金 / 支票"></div>
       <button class="action success" onclick="addCashflow()">记录</button>
     </div>
-    <p class="hint">只需手动记「入金」和「出金」。买卖、股息会自动算进账本（不用重复输入）。买卖盈亏、户口总值会一起显示。</p>
+    <p class="hint">⚠️ 上方的「股票 Counter」筛选对这一页不生效 —— 出入金跟个别股票无关，只算一支股票的话余额会是假的。<br>
+    只需手动记「入金」和「出金」。买卖、股息会自动算进账本（不用重复输入）。买卖盈亏、户口总值会一起显示。</p>
   </div>
 
   <div class="cards">
@@ -1349,6 +1351,15 @@ function renderAll() {
     acctList.map(a => `<option value="${a.id}">${a.name}${filterSel.value === "all" ? " · " + clientLabel(clientById(a.clientId)) : ""}</option>`).join("");
   acctSel.value = [...acctSel.options].some(o => o.value === acctPrev) ? acctPrev : "all";
 
+  // 股票筛选：跟着投资者+户口的范围走，放在持仓渲染之前才套得到
+  const stockSel = document.getElementById("stockFilter");
+  const stockPrev = stockSel.value || "all";
+  const stockList = [...new Set(db.transactions.filter(t => matchFilter(t.clientId, t.accountId)).map(t => t.ticker))].sort();
+  stockSel.innerHTML = `<option value="all">全部股票 All</option>` + stockList.map(t => `<option>${t}</option>`).join("");
+  stockSel.value = [...stockSel.options].some(o => o.value === stockPrev) ? stockPrev : "all";
+  const stockF = stockSel.value;
+  const matchStock = tk => stockF === "all" || tk === stockF;
+
   fillAccountSelects();
   renderAccountsTable();
 
@@ -1376,7 +1387,7 @@ function renderAll() {
   document.getElementById("s-stamp-cap").value = db.settings.stampCap;
 
   // 持仓：按投资者分组（投资者标题行 -> 仓位 -> 小计）
-  const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId, p.accountId));
+  const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId, p.accountId) && matchStock(p.ticker));
   let totalCost = 0, totalValue = 0, totalUnrealized = 0, hasPrice = false;
   const hBody = document.getElementById("h-body");
   hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="11">没有持仓</td></tr>`;
@@ -1429,14 +1440,6 @@ function renderAll() {
   renderCashflow(pos, realizedByTx);
 
   // 交易表
-  // 股票筛选下拉（跟随投资者 filter 的范围）
-  const stockSel = document.getElementById("stockFilter");
-  const stockPrev = stockSel.value || "all";
-  const stockList = [...new Set(db.transactions.filter(t => matchFilter(t.clientId, t.accountId)).map(t => t.ticker))].sort();
-  stockSel.innerHTML = `<option value="all">全部股票 All</option>` + stockList.map(t => `<option>${t}</option>`).join("");
-  stockSel.value = [...stockSel.options].some(o => o.value === stockPrev) ? stockPrev : "all";
-  const stockF = stockSel.value;
-
   const tBody = document.getElementById("t-body");
   const txs = db.transactions.filter(t => matchFilter(t.clientId, t.accountId) && (stockF === "all" || t.ticker === stockF));
   // 按时间顺序先算「每笔之后的累计持仓」（按 投资者+户口+股票 各自算）
@@ -1486,7 +1489,7 @@ function renderAll() {
   }
   tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="14">没有交易记录</td></tr>`;
   let totalBrokerage = 0;
-  for (const t of db.transactions) if (matchFilter(t.clientId, t.accountId)) totalBrokerage += t.brokerage || 0;
+  for (const t of db.transactions) if (matchFilter(t.clientId, t.accountId) && matchStock(t.ticker)) totalBrokerage += t.brokerage || 0;
   for (const t of txs) {
     const c = clientById(t.clientId);
     const gross = t.qty * t.price;
@@ -1516,7 +1519,7 @@ function renderAll() {
 
   // 股息表
   const vBody = document.getElementById("v-body");
-  const dvs = [...db.dividends].filter(d => matchFilter(d.clientId, d.accountId)).sort((a, b) => b.date.localeCompare(a.date));
+  const dvs = [...db.dividends].filter(d => matchFilter(d.clientId, d.accountId) && matchStock(d.ticker)).sort((a, b) => b.date.localeCompare(a.date));
   vBody.innerHTML = dvs.length ? "" : `<tr><td class="empty" colspan="8">没有股息记录</td></tr>`;
   let divTotal = 0, divToday = 0;
   const todayRows = [];
@@ -1529,9 +1532,27 @@ function renderAll() {
       <td><button class="action danger small" onclick="delDiv('${d.id}')">删除</button></td></tr>`;
   }
 
+  // 股息小结：这支股票总共拿了多少，以及【各个户口分别】拿了多少
+  const divSum = document.getElementById("div-summary");
+  if (divSum) {
+    if (!dvs.length) { divSum.style.display = "none"; }
+    else {
+      const byAcct = {};
+      for (const d of dvs) byAcct[d.accountId || ""] = (byAcct[d.accountId || ""] || 0) + d.total;
+      const keys = Object.keys(byAcct).sort((a, b) =>
+        acctLabel(accountById(a)).localeCompare(acctLabel(accountById(b))));
+      const parts = keys.map(k =>
+        `<span class="acct-tag">${acctLabel(accountById(k))}</span> <b class="gold">${fmtN(byAcct[k])}</b>`);
+      divSum.style.display = "";
+      divSum.innerHTML = (stockF === "all" ? "全部股票" : `<b>${stockF}</b>`)
+        + ` · ${dvs.length} 笔 · 合计 <b class="gold">${fmt(divTotal)}</b>`
+        + (keys.length > 1 ? `<br><span class="hint">分户口：</span>${parts.join(" &nbsp; ")}` : "");
+    }
+  }
+
   // Dashboard cards
   let totalRealized = 0;
-  for (const p of Object.values(pos)) if (matchFilter(p.clientId, p.accountId)) totalRealized += p.realized;
+  for (const p of Object.values(pos)) if (matchFilter(p.clientId, p.accountId) && matchStock(p.ticker)) totalRealized += p.realized;
   setCard("d-cost", fmt(totalCost));
   document.getElementById("d-value").textContent = hasPrice ? fmt(totalValue) : (held.length ? "请先更新现价" : fmt(0));
   setPnlCard("d-unrealized", hasPrice ? totalUnrealized : null);
