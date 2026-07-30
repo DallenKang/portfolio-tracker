@@ -448,8 +448,8 @@
       <div class="field"><label>股票户口 Account</label><select id="t-account" onchange="autoFees()"></select></div>
       <div class="field"><label>日期 Date</label><input type="date" id="t-date"></div>
       <div class="field"><label>类型</label><select id="t-type" onchange="autoFees()"><option value="buy">买入 Buy</option><option value="sell">卖出 Sell</option></select></div>
-      <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()"><datalist id="tickerList"></datalist></div>
-      <div class="field"><label>Bursa 代码 Code</label><input type="text" id="t-code" placeholder="如 9407" style="text-transform:uppercase"></div>
+      <div class="field"><label>股票 Counter</label><input type="text" id="t-ticker" list="tickerList" placeholder="如 PARAGON" style="text-transform:uppercase" oninput="prefillCode()" onchange="syncCodeToTicker()"><datalist id="tickerList"></datalist></div>
+      <div class="field"><label>Bursa 代码 Code</label><input type="text" id="t-code" placeholder="如 9407" style="text-transform:uppercase" oninput="markCodeOwner()"></div>
       <div class="field"><label>股数 Qty</label><input type="text" inputmode="numeric" id="t-qty" placeholder="1,000" oninput="fmtQty(this); autoFees()"></div>
       <div class="field"><label>价格 Price</label><input type="number" step="any" id="t-price" placeholder="0.0000" oninput="autoFees()"></div>
     </div>
@@ -458,6 +458,7 @@
       <div class="field"><label>Stamp Duty</label><input type="number" step="any" id="t-stamp" class="fee"></div>
       <div class="field"><label>Clearing Fee</label><input type="number" step="any" id="t-clearing" class="fee"></div>
       <button class="action" id="t-add-btn" onclick="addTransaction()">添加交易</button>
+      <button class="action ghost" onclick="clearTxForm()" title="清掉股票、代码、股数、价格、费用（投资者、户口、日期不动）">🧹 清空重填</button>
       <button class="action ghost" id="t-cancel-btn" style="display:none" onclick="cancelEditTx()">取消修改</button>
     </div>
     <p class="net-preview" id="t-preview">输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。</p>
@@ -2010,6 +2011,7 @@ function addTransaction() {
   } else {
     db.transactions.push({ id: uid(), clientId, accountId, date, ticker, type, qty, price, brokerage, stamp, clearing });
     ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
+    document.getElementById("t-code").dataset.forTicker = "";
     document.getElementById("t-preview").textContent = "已添加 ✓";
   }
   save();
@@ -2027,6 +2029,7 @@ function editTx(id) {
   document.getElementById("t-type").value = t.type;
   document.getElementById("t-ticker").value = t.ticker;
   document.getElementById("t-code").value = db.symbols[t.ticker] ? db.symbols[t.ticker].replace(/\.KL$/, "") : "";
+  document.getElementById("t-code").dataset.forTicker = t.ticker; // 代码属于这支股票
   document.getElementById("t-qty").value = t.qty.toLocaleString("en-US");
   document.getElementById("t-price").value = t.price;
   document.getElementById("t-brokerage").value = t.brokerage || 0;
@@ -2042,6 +2045,7 @@ function editTx(id) {
 function cancelEditTx() {
   editingTxId = null;
   ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("t-code").dataset.forTicker = "";
   document.getElementById("t-form-title").textContent = "添加交易 Add Transaction";
   document.getElementById("t-add-btn").textContent = "添加交易";
   document.getElementById("t-cancel-btn").style.display = "none";
@@ -2051,7 +2055,40 @@ function cancelEditTx() {
 function prefillCode() {
   const tk = document.getElementById("t-ticker").value.trim().toUpperCase();
   const el = document.getElementById("t-code");
-  if (tk && db.symbols[tk] && !el.value) el.value = db.symbols[tk].replace(/\.KL$/, "");
+  if (tk && db.symbols[tk] && !el.value) {
+    el.value = db.symbols[tk].replace(/\.KL$/, "");
+    el.dataset.forTicker = tk;
+  }
+}
+// 手打代码时记住它是给哪支股票的
+function markCodeOwner() {
+  document.getElementById("t-code").dataset.forTicker =
+    document.getElementById("t-ticker").value.trim().toUpperCase();
+}
+// 代码栏是【跟着股票走】的。换了股票还留着上一支的代码，存档时 db.symbols 会把新股票
+// 绑上旧代码，之後那支股票一直抓错价 —— 市值、未实现盈亏全错，而且不会报错。
+// 只在【离开股票栏】时同步，不是每打一个字就动，免得手打代码打到一半被清掉。
+function syncCodeToTicker() {
+  const tk = document.getElementById("t-ticker").value.trim().toUpperCase();
+  const el = document.getElementById("t-code");
+  if (!tk) { el.value = ""; el.dataset.forTicker = ""; return; }  // 股票清空 -> 代码跟着清
+  if (db.symbols[tk]) {                                           // 认识这支 -> 用它自己的代码
+    el.value = db.symbols[tk].replace(/\.KL$/, "");
+    el.dataset.forTicker = tk;
+    return;
+  }
+  if (el.dataset.forTicker && el.dataset.forTicker !== tk) {      // 代码是别支股票的 -> 不能留
+    el.value = "";
+    el.dataset.forTicker = "";
+  }
+}
+// 输错了想重来：清掉这一笔的内容，但保留投资者/户口/日期（下一笔通常一样）
+function clearTxForm() {
+  ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"]
+    .forEach(id => document.getElementById(id).value = "");
+  document.getElementById("t-code").dataset.forTicker = "";
+  document.getElementById("t-preview").textContent = "已清空，可以重新输入。";
+  document.getElementById("t-ticker").focus();
 }
 // 股数输入加千分位（1000 -> 1,000），并保持光标位置
 function fmtQty(el) {
