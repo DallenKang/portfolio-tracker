@@ -987,12 +987,29 @@ async function pushCloud(silent) {
   try {
     // 投资者用 saveMine：后台只更新他自己的记录（安全隔离）；Owner 用完整 save
     const payload = viewerRole === "client"
-      ? { action: "saveMine", data: { transactions: db.transactions, dividends: db.dividends, cashflows: db.cashflows, symbols: db.symbols } }
+      ? { action: "saveMine", data: { accounts: db.accounts, transactions: db.transactions, dividends: db.dividends, cashflows: db.cashflows, symbols: db.symbols } }
       : { action: "save", data: cloudPayload() };
     const r = await fetch(cloudUrl(), { method: "POST",
       body: JSON.stringify({ ...payload, ...authPostFields() }) });
     const j = await r.json();
+    // 後台一次只让一个人写（不排队会静静盖掉别人刚存的）。撞到就等一下再试，
+    // 资料还在本机所以不会掉；pendingPush 保持着，自动同步也不会趁这时覆盖。
+    if (j.error === "busy") {
+      if (busyRetries < 4) {
+        busyRetries++;
+        busyRetryPending = true;
+        const wait = busyRetries * 3;
+        setCloudStatus(`⏳ 云端正忙（有人同时在存），${wait} 秒後自动重试…（第 ${busyRetries} 次）`);
+        setTimeout(() => pushCloud(true), wait * 1000);
+        return;
+      }
+      busyRetryPending = false;
+      pendingRetry = true; // 交给「重新登入後自动补存」那条後路，不会丢
+      setCloudStatus("⚠️ 云端一直很忙，这笔还没存上去。已记住，下次同步会自动补存。");
+      return;
+    }
     if (j.error) throw new Error(j.error);
+    busyRetries = 0; busyRetryPending = false;
     let msg = `✓ 已存到云端（${new Date().toLocaleString()}）`;
     if (j.keptNewer && j.keptNewer.length) msg += ` · 注意：${j.keptNewer.length} 个投资者刚自己更新过，保留了他们的新记录`;
     pendingRetry = false; // 存成功了，没有欠着的
@@ -1004,7 +1021,8 @@ function schedulePush() {
   clearTimeout(pushTimer);
   pendingPush = true;
   setCloudStatus("⏳ 即将自动存到云端…");
-  pushTimer = setTimeout(async () => { await pushCloud(true); pendingPush = false; }, 1500);
+  // 还在等重试的话，pendingPush 要留着 —— 不然自动同步会把本机这笔覆盖掉
+  pushTimer = setTimeout(async () => { await pushCloud(true); if (!busyRetryPending) pendingPush = false; }, 1500);
 }
 
 // ---- 定期从云端拉：投资者自己更新了记录，owner 这边要看得到 ----
@@ -1012,6 +1030,7 @@ function schedulePush() {
 // 这也是配额考量：Apps Script 每天 20,000 次呼叫，只让少数几个管理者定期拉才不会爆。
 const AUTO_PULL_MS = 3 * 60 * 1000;
 let pullTimer = null, pendingPush = false;
+let busyRetries = 0, busyRetryPending = false; // 云端同一时间只让一个人存 -> 撞到就排队重试
 function startAutoPull() {
   clearInterval(pullTimer);
   if (viewerRole === "client") return;      // 投资者不需要
