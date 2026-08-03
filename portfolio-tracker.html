@@ -2614,9 +2614,17 @@ async function refreshIPO() {
     save();
     renderIPO();
     document.getElementById("sys-error-banner").style.display = "none"; // 抓到了，收起顶部警告
-    // 数据源健康（sourceOk）但 0 家 = 真的没有新股在排队，不是故障
-    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main`
-      + (data.rows.length === 0 && data.cardsSeen ? `（数据源正常，读到 ${data.cardsSeen} 家历史 IPO，只是目前没有未上市的）` : "");
+    // 0 家的时候只有一种情况可以说「正常」：後台明确讲了页面上未来的卡也是 0 张（futureSeen）。
+    // 以前只凭「读到卡片」就说「目前没有未上市的」—— 那句话本身让一个坏掉的功能看起来很健康，
+    // 结果一个都抓不到还照样报平安（2026-08-03 审计才发现）。拿不准就不要安慰人。
+    let tail = "";
+    if (data.rows.length === 0) {
+      tail = data.futureSeen === 0
+        ? `（数据源正常，目前确实没有新股在排队）`
+        : `（⚠️ 读到 ${data.cardsSeen || "?"} 张卡但一笔都没解出来 —— 这是故障，不是没有 IPO，请截图发给 Claude）`;
+    }
+    status.textContent = `✓ 已更新（${new Date().toLocaleString()}），共 ${data.rows.length} 家 ACE/Main` + tail;
+    if (data.rows.length === 0 && data.futureSeen !== 0) document.getElementById("sys-error-banner").style.display = "block";
   } catch (e) {
     // 抓取失败：顶端全站横幅 + IPO 区红框，别让投资者面对一片空白（很可能是数据源又被封了）
     document.getElementById("sys-error-banner").style.display = "block";

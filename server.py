@@ -211,6 +211,25 @@ MON3 = {"Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04", "May": "05", "Jun": 
         "Jul": "07", "Aug": "08", "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12"}
 
 
+def scan_ipo_cards(page):
+    # 页面上有几张 IPO 卡，其中「上市日在未来」的有几张。
+    # 健不健康不能只看「读到卡片」—— 要能分辨「真的没有新股」vs「有但解不出来」。
+    today = __import__("datetime").date.today().isoformat()
+    seen = future = 0
+    for c in re.split(r'<div class="card mb-3', page)[1:]:
+        yr = re.search(r'title="(20\d\d)"', c)
+        mo = re.search(r'text-uppercase">([A-Z][a-z]{2})', c)
+        dy = re.search(r"<h3>(\d{1,2})</h3>", c)
+        cm = re.search(r'/v2/stocks/view/([0-9A-Z]+)">([^<]+)</a></h4>', c)
+        if not (yr and mo and dy and cm):   # 不要求 Board：未上市的卡本来就没有
+            continue
+        seen += 1
+        iso = "%s-%s-%s" % (yr.group(1), MON3.get(mo.group(1), "00"), dy.group(1).zfill(2))
+        if iso >= today:
+            future += 1
+    return {"seen": seen, "future": future}
+
+
 def parse_ipos(page):
     # 从 KLSE Screener /v2/ipos 解析即将上市的 ACE / Main 公司（iSaham 2026-07 起被 Cloudflare 锁死，改用这里）
     today = __import__("datetime").date.today().isoformat()
@@ -221,11 +240,15 @@ def parse_ipos(page):
         dy = re.search(r"<h3>(\d{1,2})</h3>", c)
         cm = re.search(r'/v2/stocks/view/([0-9A-Z]+)">([^<]+)</a></h4><span[^>]*>([^<]+)</span>', c)
         board = re.search(r"Board:\s*</span>\s*<strong>([^<]+)", c)
-        if not (yr and mo and dy and cm and board):
+        # Board 只有【已上市】的卡才有；还没上市的没有这一栏。
+        # 以前把它列为必要条件 -> 每个「即将上市」的 IPO 都被丢掉，而那正是这功能唯一的用途。
+        if not (yr and mo and dy and cm):
             continue
         iso = "%s-%s-%s" % (yr.group(1), MON3.get(mo.group(1), "00"), dy.group(1).zfill(2))
-        bd = board.group(1).strip()
-        if iso < today or ("ACE" not in bd and "Main" not in bd):  # 只要未上市的 ACE / Main
+        if iso < today:                      # 只要还没上市的
+            continue
+        bd = board.group(1).strip() if board else ""   # 没这一栏 = 板块还没公布
+        if bd and "ACE" not in bd and "Main" not in bd:  # 有写才筛；没写不能当作不合格
             continue
         close = re.search(r"Close:</span>\s*([0-9]{1,2}\s[A-Za-z]{3})", c)
         sec = re.search(r"Sector:\s*</span>\s*<strong>([^<]+)", c)
@@ -238,7 +261,7 @@ def parse_ipos(page):
             "stockCode": cm.group(1),
             "code": cm.group(2).strip(),
             "name": squash(strip_tags(cm.group(3))),
-            "market": "Main" if "Main" in bd else "ACE",
+            "market": "Main" if "Main" in bd else ("ACE" if "ACE" in bd else "待公布"),
             "price": "%.2f" % float(price.group(1)) if price else "",
             "listingDate": "%s-%s-%s" % (dy.group(1).zfill(2), mo.group(1), yr.group(1)),
             "closeDate": (close.group(1).replace(" ", "-") + "-" + yr.group(1)) if close else "",
@@ -585,7 +608,15 @@ class Handler(SimpleHTTPRequestHandler):
             if "/v2/stocks/view/" not in page:
                 self.send_json({"error": "IPO source unavailable (blocked or changed)"}, status=502)
                 return
+            scan = scan_ipo_cards(page)
             rows = parse_ipos(page)
+            # 有未来的卡、却一笔都解不出来 = 解析规则跟页面对不上，必须报错不能报平安。
+            # 2026-08 踩过：读到 100 张卡解出 0 笔，系统照样说 sourceOk，坏了好几个星期没人知道。
+            if scan["future"] > 0 and not rows:
+                self.send_json({"error": "IPO parser broken: %d upcoming card(s) on page but 0 parsed"
+                                         % scan["future"],
+                                "cardsSeen": scan["seen"], "futureSeen": scan["future"]}, status=502)
+                return
             for r in rows:
                 try:
                     n = collect_news(r["stockCode"])  # 目标价 + 超额认购
@@ -597,7 +628,8 @@ class Handler(SimpleHTTPRequestHandler):
                     pass
                 if r.get("oversub"):
                     r["oversub"] = fmt_oversub(r["oversub"])
-            self.send_json({"source": KLSE_IPO_URL, "version": WORKER_VERSION, "rows": rows})
+            self.send_json({"source": KLSE_IPO_URL, "version": WORKER_VERSION, "sourceOk": True,
+                            "cardsSeen": scan["seen"], "futureSeen": scan["future"], "rows": rows})
         except Exception as e:
             self.send_json({"error": str(e)}, status=502)
 
