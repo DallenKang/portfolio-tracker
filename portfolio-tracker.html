@@ -2601,7 +2601,9 @@ async function autoRefreshEntitlements() {
 }
 
 // ---------- IPO 上市提醒 ----------
-const IPO_CACHE_V = 4; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后投资者看到旧格式）
+const IPO_CACHE_V = 5; // 数据格式升级时 +1：旧缓存自动作废，强制拿新数据（避免升级后投资者看到旧格式）
+// v5：修好「未上市的 IPO 全被丢掉」之後 +1。大家手上是一份【空的】快取而且有效 12 小时，
+//     不作废的话修好了也要等半天才看得到 —— 而 UNIPAC 只剩两天截止。
 async function refreshIPO() {
   const status = document.getElementById("ipo-status");
   status.textContent = "刷新中…（要等 10-20 秒）";
