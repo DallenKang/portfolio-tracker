@@ -501,6 +501,7 @@
         <th class="num sortable" data-key="clearing" data-label="Clearing" onclick="setTxSort('clearing')">Clearing</th>
         <th class="num sortable" data-key="net" data-label="Net Amount" onclick="setTxSort('net')">Net Amount</th>
         <th class="num sortable" data-key="pl" data-label="P/(L)" onclick="setTxSort('pl')">P/(L)</th>
+        <th class="num sortable" data-key="plpct" data-label="P/L (%)" onclick="setTxSort('plpct')">P/L (%)</th>
         <th></th>
       </tr></thead>
       <tbody id="t-body"></tbody>
@@ -1168,6 +1169,14 @@ const fmt = n => CCY + " " + Number(n).toLocaleString(undefined, { minimumFracti
 const fmtN = n => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pnlClass = n => n > 0 ? "pos" : n < 0 ? "neg" : "";
 const pnlFmt = n => n < 0 ? "(" + fmtN(-n) + ")" : fmtN(n);
+// 已实现盈亏的百分比 = 赚了多少 ÷ 卖掉那批股的成本。
+// 成本 0（白拿的免费凭单）除下去是 Infinity，不能显示成百分比。
+const plPct = (realized, cost) => {
+  if (realized === undefined) return "-";
+  if (!(cost > 0)) return `<span class="hint">白拿</span>`;
+  const pct = realized / cost * 100;
+  return `<span class="${pnlClass(realized)}">${pct.toFixed(2)}%</span>`;
+};
 const today = () => new Date().toISOString().slice(0, 10);
 const clientById = id => db.clients.find(c => c.id === id);
 const clientLabel = c => c ? (c.code ? `[${c.code}] ${c.name}` : c.name) : "?";
@@ -1258,6 +1267,7 @@ function acctCostMethod(accountId, clientId) {
 function computePortfolio() {
   const pos = {};            // "clientId|accountId|ticker" -> {clientId, accountId, ticker, qty, cost, realized}
   const realizedByTx = {};   // 卖出交易 -> 已实现盈亏
+  const costByTx = {};       // 卖出交易 -> 那批股的成本（只用来算百分比，不参与任何盈亏计算）
   const intradayTx = {};     // 交易 id -> true（即日配对的，用来打标签）
   const groups = {};
   for (const t of db.transactions) {
@@ -1267,7 +1277,7 @@ function computePortfolio() {
   for (const key in groups) {
     const first = groups[key][0];
     const method = acctCostMethod(first.accountId, first.clientId);
-    const p = pos[key] = { clientId: first.clientId, accountId: first.accountId || "", ticker: first.ticker, qty: 0, cost: 0, realized: 0 };
+    const p = pos[key] = { clientId: first.clientId, accountId: first.accountId || "", ticker: first.ticker, qty: 0, cost: 0, realized: 0, soldCost: 0 };
     let lots = []; // FIFO 批次：{qty, cps（每股净成本）}
     const byDate = {};
     for (const t of groups[key]) (byDate[t.date] = byDate[t.date] || []).push(t);
@@ -1297,9 +1307,11 @@ function computePortfolio() {
       const sellPps = sellQty > 0 ? sellNet / sellQty : 0; // 当天每股卖出净收
       const intradayQty = Math.min(buyQty, sellQty);
       let dayRealized = 0;
+      let dayCost = 0;   // 卖掉的那些股本身的成本 -> 拿来算 P/L %
       // 1) Intraday 配对
       if (intradayQty > 0) {
         dayRealized += intradayQty * (sellPps - buyCps);
+        dayCost += intradayQty * buyCps;
         for (const t of dayTxs) intradayTx[t.id] = true;
       }
       // 2) 当天净买/净卖进出过夜持仓
@@ -1325,14 +1337,19 @@ function computePortfolio() {
         }
         p.qty -= taken; p.cost -= cost;
         dayRealized += q * sellPps - cost;
+        dayCost += cost;
       }
       p.realized += dayRealized;
+      p.soldCost += dayCost;
       // 当天盈亏按股数比例分到当天的卖出交易上（多数情况一天一笔）
-      if (sellQty > 0) for (const t of sells) realizedByTx[t.id] = dayRealized * (t.qty / sellQty);
+      if (sellQty > 0) for (const t of sells) {
+        realizedByTx[t.id] = dayRealized * (t.qty / sellQty);
+        costByTx[t.id] = dayCost * (t.qty / sellQty);
+      }
       if (p.qty < 1e-9) { p.qty = 0; p.cost = 0; lots = []; }
     }
   }
-  return { pos, realizedByTx, intradayTx };
+  return { pos, realizedByTx, costByTx, intradayTx };
 }
 
 // ---------- Render ----------
@@ -1372,7 +1389,7 @@ function clientMismatchCheck() {
 }
 
 function renderAll() {
-  const { pos, realizedByTx, intradayTx } = computePortfolio();
+  const { pos, realizedByTx, costByTx, intradayTx } = computePortfolio();
   const filterSel = document.getElementById("clientFilter");
   const prevFilter = filterSel.value || "all";
   filterSel.innerHTML = `<option value="all">全部投资者 All Investors</option>` +
@@ -1535,6 +1552,7 @@ function renderAll() {
     gross: t => t.qty * t.price, brokerage: t => t.brokerage || 0, stamp: t => t.stamp || 0,
     clearing: t => t.clearing || 0, net: t => netAmount(t),
     pl: t => (realizedByTx[t.id] !== undefined ? realizedByTx[t.id] : -Infinity),
+    plpct: t => (realizedByTx[t.id] !== undefined && costByTx[t.id] > 0 ? realizedByTx[t.id] / costByTx[t.id] : -Infinity),
   };
   if (txSort) {
     const f = txSortVal[txSort.key];
@@ -1583,6 +1601,7 @@ function renderAll() {
       <td class="num">${fmtN(t.stamp || 0)}</td><td class="num">${fmtN(t.clearing || 0)}</td>
       <td class="num"><b>${fmtN(netAmount(t))}</b></td>
       <td class="num">${r !== undefined ? `<span class="${pnlClass(r)}">${pnlFmt(r)}</span>` : "-"}</td>
+      <td class="num">${plPct(r, costByTx[t.id])}</td>
       <td style="white-space:nowrap"><button class="action small ghost" onclick="editTx('${t.id}')">✏️ 编辑</button> <button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
   }
 
@@ -2962,20 +2981,21 @@ function exportJSON() {
   download(`portfolio-backup-${today()}.json`, JSON.stringify(db, null, 2), "application/json");
 }
 function exportCSV() {
-  const { realizedByTx } = computePortfolio();
+  const { realizedByTx, costByTx } = computePortfolio();
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
-  let csv = "﻿record_type,investor_code,investor,account,stock_account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l\n";
+  let csv = "﻿record_type,investor_code,investor,account,stock_account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l,p_l_pct\n";
   for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(t.clientId);
     const r = realizedByTx[t.id];
     csv += ["transaction", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", acctLabel(accountById(t.accountId)), t.date, t.ticker, t.type, t.qty, t.price,
       (t.qty * t.price).toFixed(2), (t.brokerage || 0).toFixed(2), (t.stamp || 0).toFixed(2), (t.clearing || 0).toFixed(2),
-      netAmount(t).toFixed(2), r !== undefined ? r.toFixed(2) : ""].map(esc).join(",") + "\n";
+      netAmount(t).toFixed(2), r !== undefined ? r.toFixed(2) : "",
+      (r !== undefined && costByTx[t.id] > 0) ? (r / costByTx[t.id] * 100).toFixed(2) : ""].map(esc).join(",") + "\n";
   }
   for (const d of [...db.dividends].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(d.clientId);
     csv += ["dividend", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", acctLabel(accountById(d.accountId)), d.date, d.ticker, "dividend", d.qty, d.perShare,
-      "", "", "", "", d.total.toFixed(2), d.total.toFixed(2)].map(esc).join(",") + "\n";
+      "", "", "", "", d.total.toFixed(2), d.total.toFixed(2), ""].map(esc).join(",") + "\n";
   }
   download(`portfolio-export-${today()}.csv`, csv, "text/csv");
 }
