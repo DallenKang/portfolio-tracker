@@ -19,7 +19,7 @@ EXDIV_URLS = [
 ]
 IPO_URL = "https://www.isaham.my/ipo"  # iSaham IPO 页（含 ACE / Main 即将上市的完整资料）
 KLSE_IPO_URL = "https://www.klsescreener.com/v2/ipos"  # KLSE Screener IPO 列表（2026-07 起改成主来源，iSaham 被 Cloudflare 锁死）
-WORKER_VERSION = "v12-klse-source"  # 部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+WORKER_VERSION = "v20-house-by-shape"  # 部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 KLSE_NEWS_URL = "https://www.klsescreener.com/v2/news/stock/"  # 个股完整新闻列表（找研究行目标价）
 TARGET_KW = r"fair value|target price|\bTP\b|合理价|目标价|公平价值"  # 目标价关键词（中英）
 RESEARCH_HOUSES = r"PublicInvest|Public Investment Bank|RHB|Kenanga|MIDF|Hong Leong|HLIB|Maybank|CGS|TA Securities|TA Research|AmInvest(?:ment)?|Apex|BIMB|UOB|Mercury|Phillip|Inter-Pacific|Malacca Securities|Malacca|Rakuten|Tradeview|大众投资银行|大众投行|马六甲证券|兴业投资银行|丰隆投资银行|肯纳格|马银行|联昌|艾芬|达证券|大马投资银行|大马投行|乐天|丰隆|兴业"
@@ -103,7 +103,48 @@ def parse_klse_codes(page):
     return out
 
 
+
+# ===== 研究行名字：认【格式】，不认名单 =====
+# 上面那份 RESEARCH_HOUSES 名单是写死的，研究行会改名、合并、新增，追不完。
+# MBSB Research 就是这样被漏掉的。名单命中最好（可正规化、好去重），
+# 名单没中就认「XX Research」这种写法。worker.js 里是同一套逻辑。
+HOUSE_UNKNOWN = "研究行未标明"
+BOARD_TXT = r"(?:on the|its)\s+(ACE|Main)\s+Market|(ACE|Main)\s+Market\s+listing"
+NOT_HOUSE = r"^(?:market|industry|equity|equities|bursa|malaysia|malaysian|securities|research|capital|commission|exchange|the|this|that|its|their|our|his|her|global|regional|local|independent|company|group|berhad|sdn|bhd|ipo|ace|main|analyst|analysts|house|houses|other|another|both|all|some|many|several|one|two)$"
+HOUSE_SHAPE_EN = r"\b([A-Z][A-Za-z&.\-]{1,25}(?:\s[A-Z][A-Za-z&.\-]{1,25})?)\s+(Research|Securities|Investment\s+Bank|Capital)\b"
+HOUSE_SHAPE_CN = r"([一-龥]{2,8})(投行|投资银行|证券|研究)"
+
+
+def house_by_shape(text):
+    for pat, is_cn in ((HOUSE_SHAPE_EN, False), (HOUSE_SHAPE_CN, True)):
+        for m in re.finditer(pat, text):
+            head = m.group(1).strip()
+            if re.match(NOT_HOUSE, head, re.I):   # 通用词，不是公司名
+                continue
+            return head + m.group(2) if is_cn else head + " " + re.sub(r"\s+", " ", m.group(2))
+    return ""
+
+
+def house_from_body(body, near):
+    # near = 目标价数字在正文里的位置。名字要在数字【附近】才算，不能满篇乱抓。
+    win = body[max(0, near - 400):near + 400] if near >= 0 else body
+    m = re.search(RESEARCH_HOUSES, win, re.I)          # 1) 附近 + 名单命中
+    if m:
+        return canon_house(m.group(0))
+    shaped = house_by_shape(win)                        # 2) 附近 + 格式命中
+    if shaped:
+        return canon_house(shaped)
+    m = re.search(RESEARCH_HOUSES, body, re.I)         # 3) 全文名单命中（保住旧行为）
+    if m:
+        return canon_house(m.group(0))
+    return HOUSE_UNKNOWN                                # 4) 认不出就明讲
+
+
 def target_from_body(t):
+    return target_from_body_ex(t)[0]
+
+
+def target_from_body_ex(t):
     # 从「单篇文章正文」里抽目标价：要求「目标价/合理价/fair value」紧贴数字，
     # 避免误抓发售价/盈利等无关数字（给顾客看的，宁可漏掉也不能错）
     for p in (r"(?:目标价|合理价|公平价值)[^0-9]{0,10}(\d+(?:\.\d+)?)\s*(仙|sen|令吉)?",
@@ -113,15 +154,15 @@ def target_from_body(t):
         if m:
             v = float(m.group(1))
             u = (m.group(2) or "").lower()
-            return "%.2f" % (v / 100 if u in ("仙", "sen") or (u == "" and v >= 5) else v)
+            return ("%.2f" % (v / 100 if u in ("仙", "sen") or (u == "" and v >= 5) else v), m.start())
     # 「同等/相同目标价」= 跟 IPO 发售价一样
     if re.search(r"(?:同等|相同)\s*目标价|目标价[^0-9]{0,8}(?:同等|相同)|equal[^.]{0,15}(?:target|fair value)", t, re.I):
         m = re.search(r"(\d+(?:\.\d+)?)\s*仙\s*(?:的)?(?:发售价|新股|IPO)", t) or \
             re.search(r"(?:发售价|IPO price)[^0-9]{0,8}(?:RM)?\s*(\d+(?:\.\d+)?)", t, re.I)
         if m:
             v = float(m.group(1))
-            return "%.2f" % (v / 100 if v >= 5 else v)
-    return ""
+            return ("%.2f" % (v / 100 if v >= 5 else v), m.start())
+    return ("", -1)
 
 
 def oversub_from_news(page):
@@ -140,6 +181,20 @@ def fmt_oversub(s):
     # 超额认购统一成两位小数：7.8x -> 7.80x，26.92x -> 26.92x，空的保持空
     m = re.search(r"(\d+(?:\.\d+)?)", s or "")
     return "%.2fx" % float(m.group(1)) if m else ""
+
+
+def board_from_stock(stock_code):
+    # 未上市的 IPO 卡没有 Board 栏 -> 去个股页的文字里找「ACE / Main Market」。
+    # 要求它跟 "on the" / "listing" 连在一起，避免抓到顺口提一句的段落。
+    # 找不到就维持「待公布」，不猜。
+    try:
+        html = http_get("https://www.klsescreener.com/v2/stocks/view/" + urllib.parse.quote(stock_code), timeout=20)
+        m = re.search(BOARD_TXT, strip_tags(html), re.I)
+        if m:
+            return "Main" if (m.group(1) or m.group(2)) == "Main" else "ACE"
+    except Exception:
+        pass
+    return ""
 
 
 def collect_news(stock_code):
@@ -167,9 +222,10 @@ def collect_news(stock_code):
         except Exception:
             continue
         body = squash(strip_tags(raw_art))
-        price = target_from_body(body)
+        price, idx = target_from_body_ex(body)
         # KLSE Screener 有些文章只是节选（TheStar snapshot），数字被截掉——跟去原文抓（每股最多2次）
-        if not price and orig_fetched < 2 and re.search(RESEARCH_HOUSES, body, re.I):
+        # 名单没命中也可能是新的研究行 -> 格式认得出就同样值得跟去原文抢
+        if not price and orig_fetched < 2 and (re.search(RESEARCH_HOUSES, body, re.I) or house_by_shape(body)):
             om = re.search(r'href="(https?://www\.thestar\.com\.my[^"]+)"', raw_art, re.I)
             if om:
                 orig_fetched += 1
@@ -178,18 +234,19 @@ def collect_news(stock_code):
                 for u in (orig_url, "https://r.jina.ai/" + orig_url):
                     try:
                         ot = squash(strip_tags(http_get(u)))
-                        p2 = target_from_body(ot)
+                        p2, i2 = target_from_body_ex(ot)
                         if p2:
                             price = p2
+                            idx = i2
                             body = ot  # 投行名字也从原文认
                             break
                     except Exception:
                         pass
         if not price:
             continue
-        hm = re.search(RESEARCH_HOUSES, body, re.I)
-        source = canon_house(hm.group(0) if hm else "")
-        key = source or price  # 同一家研究行只取最新一篇
+        source = house_from_body(body, idx)
+        # 认不出名字的不能拿「未标明」当去重键，不然两家不同的研报会互相消掉
+        key = source if (source and source != HOUSE_UNKNOWN) else price
         if key in seen:
             continue
         seen.add(key)
@@ -626,6 +683,11 @@ class Handler(SimpleHTTPRequestHandler):
                         r["oversub"] = n["oversub"]
                 except Exception:
                     pass
+                # 板块：卡片上没写的（还没上市的都没写），去个股页补一下
+                if r.get("market") == "待公布":
+                    b = board_from_stock(r["stockCode"])
+                    if b:
+                        r["market"] = b
                 if r.get("oversub"):
                     r["oversub"] = fmt_oversub(r["oversub"])
             self.send_json({"source": KLSE_IPO_URL, "version": WORKER_VERSION, "sourceOk": True,

@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v19-ipo-upcoming"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v20-house-by-shape"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -29,6 +29,53 @@ function canonHouse(s) {
   const low = s.toLowerCase();
   for (const g of HOUSE_ALIASES) if (g.some(a => a.toLowerCase() === low)) return g[0];
   return s;
+}
+
+// ===== 研究行名字：认【格式】，不认名单 =====
+// 上面那份 RESEARCH_HOUSES 名单是写死的，马来西亚的研究行会改名、合并、新增，追不完。
+// MBSB Research 就是这样被漏掉的（名单里没有 -> 目标价只剩一个孤零零的数字）。
+// 所以改成：名单命中最好（可以正规化、好去重），名单没中就认「XX Research」这种写法。
+const HOUSE_UNKNOWN = "研究行未标明";
+// 通用词，不是公司名 —— 防止抓到 "Market Research"、"Bursa Securities" 这种
+const NOT_HOUSE = /^(?:market|industry|equity|equities|bursa|malaysia|malaysian|securities|research|capital|commission|exchange|the|this|that|its|their|our|his|her|global|regional|local|independent|company|group|berhad|sdn|bhd|ipo|ace|main|analyst|analysts|house|houses|other|another|both|all|some|many|several|one|two)$/i;
+const HOUSE_SHAPE_EN = /\b([A-Z][A-Za-z&.\-]{1,25}(?:\s[A-Z][A-Za-z&.\-]{1,25})?)\s+(Research|Securities|Investment\s+Bank|Capital)\b/g;
+const HOUSE_SHAPE_CN = /([一-龥]{2,8})(投行|投资银行|证券|研究)/g;
+function houseByShape(text) {
+  for (const re of [HOUSE_SHAPE_EN, HOUSE_SHAPE_CN]) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const head = m[1].trim();
+      if (NOT_HOUSE.test(head)) continue;                        // 通用词，跳过继续找
+      if (/^[一-龥]/.test(head)) return head + m[2];     // 大众 + 投资银行
+      return head + " " + m[2].replace(/\s+/g, " ");             // MBSB + Research
+    }
+  }
+  return "";
+}
+// near = 目标价数字在正文里的位置。名字要在数字【附近】才算，不能满篇乱抓。
+function houseFromBody(body, near) {
+  const win = near >= 0 ? body.slice(Math.max(0, near - 400), near + 400) : body;
+  let m = win.match(RESEARCH_HOUSES);          // 1) 目标价附近、名单认得的
+  if (m) return canonHouse(m[0]);
+  const shaped = houseByShape(win);            // 2) 目标价附近、格式认得的（名单没有的新研究行）
+  if (shaped) return canonHouse(shaped);
+  m = body.match(RESEARCH_HOUSES);             // 3) 全文名单命中（保住现在会动的案例，不让它退步）
+  if (m) return canonHouse(m[0]);
+  return HOUSE_UNKNOWN;                        // 4) 认不出就明讲，别给一个来路不明的数字
+}
+
+// 未上市的 IPO 卡没有 Board 那一栏 -> 去个股页的文字里找「ACE Market / Main Market」。
+// 要求它跟 "on the" / "listing" 连在一起，避免抓到顺口提一句的段落。找不到就维持「待公布」，不猜。
+const BOARD_TXT = /(?:on the|its)\s+(ACE|Main)\s+Market|(ACE|Main)\s+Market\s+listing/i;
+async function boardFromStock(stockCode) {
+  try {
+    const html = await fetch("https://www.klsescreener.com/v2/stocks/view/" + stockCode,
+      { headers: { "User-Agent": UA } }).then(r => r.text());
+    const m = stripTags(html).match(BOARD_TXT);
+    if (m) return (m[1] || m[2]) === "Main" ? "Main" : "ACE";
+  } catch (e) {}
+  return "";
 }
 
 // 个股的历史企业行动 —— 主源 Pick@Stock（持牌 Bursa 数据），i3investor 只当交叉核对。
@@ -300,7 +347,9 @@ function parseKlseCodes(html) {
 
 // 从「单篇文章正文」里抽目标价：要求「目标价/合理价/fair value」紧贴数字，
 // 避免误抓发售价/盈利等无关数字（给顾客看的，宁可漏掉也不能错）
-function targetFromBody(t) {
+function targetFromBody(t) { return targetFromBodyEx(t).price; }
+// 除了数字，也回报它在正文里的位置 —— 研究行名字要在这个位置附近才算数
+function targetFromBodyEx(t) {
   const pats = [
     /(?:目标价|合理价|公平价值)[^0-9]{0,10}(\d+(?:\.\d+)?)\s*(仙|sen|令吉)?/i,
     /(?:fair value|target price)[^0-9]{0,10}(?:RM\s*)?(\d+(?:\.\d+)?)\s*(仙|sen|令吉)?/i,
@@ -310,15 +359,16 @@ function targetFromBody(t) {
     const m = t.match(p);
     if (m) {
       const v = +m[1], u = (m[2] || "").toLowerCase();
-      return (u === "仙" || u === "sen" || (u === "" && v >= 5)) ? (v / 100).toFixed(2) : v.toFixed(2);
+      const price = (u === "仙" || u === "sen" || (u === "" && v >= 5)) ? (v / 100).toFixed(2) : v.toFixed(2);
+      return { price, idx: m.index };
     }
   }
   // 「同等/相同目标价」= 跟 IPO 发售价一样
   if (/(?:同等|相同)\s*目标价|目标价[^0-9]{0,8}(?:同等|相同)|equal[^.]{0,15}(?:target|fair value)/i.test(t)) {
     const m = t.match(/(\d+(?:\.\d+)?)\s*仙\s*(?:的)?(?:发售价|新股|IPO)/) || t.match(/(?:发售价|IPO price)[^0-9]{0,8}(?:RM)?\s*(\d+(?:\.\d+)?)/i);
-    if (m) { const v = +m[1]; return (v >= 5 ? v / 100 : v).toFixed(2); }
+    if (m) { const v = +m[1]; return { price: (v >= 5 ? v / 100 : v).toFixed(2), idx: m.index }; }
   }
-  return "";
+  return { price: "", idx: -1 };
 }
 // 从新闻标题抓超额认购倍数（iSaham 字段更新慢/不更新，新闻先有）
 // 同一只股不同标题可能写 7.77 或圆整的 7.8 —— 取「小数位最多」那个（最精确）
@@ -359,9 +409,10 @@ async function collectNews(stockCode) {
     try { rawArt = await fetch("https://www.klsescreener.com" + m[1], { headers: { "User-Agent": UA } }).then(r => r.text()); }
     catch (e) { continue; }
     let body = stripTags(rawArt);
-    let price = targetFromBody(body);
+    let { price, idx } = targetFromBodyEx(body);
     // KLSE Screener 有些文章只是节选（TheStar snapshot），数字被截掉——跟去原文抓（每股最多2次）
-    if (!price && origFetched < 2 && RESEARCH_HOUSES.test(body)) {
+    // 名单没命中也可能是新的研究行 -> 格式认得出就同样值得跟去原文抢
+    if (!price && origFetched < 2 && (RESEARCH_HOUSES.test(body) || houseByShape(body))) {
       const om = rawArt.match(/href="(https?:\/\/www\.thestar\.com\.my[^"]+)"/i);
       if (om) {
         origFetched++;
@@ -370,16 +421,16 @@ async function collectNews(stockCode) {
         for (const u of [origUrl, "https://r.jina.ai/" + origUrl]) {
           try {
             const ot = stripTags(await fetch(u, { headers: { "User-Agent": UA } }).then(r => r.text()));
-            const p2 = targetFromBody(ot);
-            if (p2) { price = p2; body = ot; break; } // 投行名字也从原文认
+            const e2 = targetFromBodyEx(ot);
+            if (e2.price) { price = e2.price; idx = e2.idx; body = ot; break; } // 投行名字也从原文认
           } catch (e) {}
         }
       }
     }
     if (!price) continue;
-    const hm = body.match(RESEARCH_HOUSES);
-    const source = canonHouse(hm ? hm[0] : "");
-    const key = source || price;           // 同一家研究行只取最新一篇
+    const source = houseFromBody(body, idx);
+    // 认不出名字的不能拿「未标明」当去重键，不然两家不同的研报会互相消掉
+    const key = (source && source !== HOUSE_UNKNOWN) ? source : price;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({ price, source, headline: stripTags(m[2]), url: "https://www.klsescreener.com" + m[1] });
@@ -589,6 +640,10 @@ export default {
               if (n.targets.length) r.targets = n.targets;     // [{price, source, headline, url}, ...]
               if (!r.oversub && n.oversub) r.oversub = n.oversub;
             } catch (e) { /* 没有就留空 */ }
+            // 板块：卡片上没写的（还没上市的都没写），去个股页补一下
+            if (r.market === "待公布") {
+              try { const b = await boardFromStock(r.stockCode); if (b) r.market = b; } catch (e) {}
+            }
           }));
           for (const r of rows) if (r.oversub) r.oversub = fmtOversub(r.oversub); // 统一两位小数
           // futureSeen = 页面上「上市日在未来」的卡有几张。
