@@ -387,8 +387,24 @@
       <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
+    <p class="net-preview" id="c-result" style="display:none"></p>
     <p class="hint"><b>这里填的费率与成本法，是用来开他第一个股票户口（APEX）的。</b>真正算钱是看「总览」页那张股票户口表 —— 他有几个户口就有几组收费，要改去那边改。<br>
     分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出）。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
+  </div>
+
+  <!-- 自助注册但一笔记录都没有 = 很可能是既有客户重复注册（他原本那份在另一行） -->
+  <div id="dup-warn" class="form-card" style="display:none; border-color:var(--gold); background:rgba(241,196,15,0.06)"></div>
+
+  <!-- 合并：把重复注册的空白户口并进他原本那一位 -->
+  <div class="form-card" id="merge-card" style="display:none; border-color:var(--gold)">
+    <h3>🔗 合并重复的投资者</h3>
+    <p class="hint" id="merge-desc"></p>
+    <div class="form-row">
+      <div class="field" style="min-width:280px"><label>并进哪一位（保留他原本的交易记录）</label><select id="merge-target" onchange="previewMerge()"></select></div>
+      <button class="action" onclick="doMergeClient()">确认合并</button>
+      <button class="action ghost" onclick="cancelMerge()">取消</button>
+    </div>
+    <p class="net-preview" id="merge-preview"></p>
   </div>
 
   <div class="table-wrap">
@@ -1419,8 +1435,26 @@ function renderAll() {
       <td>${accountsForClient(c.id).map(a => `<span class="acct-tag">${a.name}</span>`).join(" ") || `<span class="hint">未设定</span>`}</td>
       <td class="num">${txCount[c.id] || 0}</td>
       <td><button class="action small ghost" onclick="editClient('${c.id}')">编辑</button>
+          ${looksDuplicate(c) ? `<button class="action small" style="background:var(--gold);color:#1a1a1a" onclick="startMerge('${c.id}')" title="他可能是既有客户重复注册 —— 并回他原本那一位">🔗 合并</button>` : ""}
           <button class="action danger small" onclick="delClient('${c.id}')">删除</button></td></tr>`;
   }
+  // 顶上提醒：有人自助注册了却一笔记录都没有，很可能是旧客户认不出自己
+  const dupWarn = document.getElementById("dup-warn");
+  const suspects = db.clients.filter(looksDuplicate);
+  const orphans = db.clients.filter(c => clientRecCount(c.id) > 0 && !c.email && !c.phone);
+  let warnHtml = "";
+  if (suspects.length) {
+    warnHtml += `<p style="margin:0;font-size:15px"><b>⚠️ 有 ${suspects.length} 位自助注册但一笔记录都没有</b> —— 很可能是既有客户重复注册（他原本那份在另一行，所以他登入看到一片空白）。</p>
+      <p class="hint" style="margin:6px 0 0">${suspects.map(c => `<b>${c.name}</b>${c.phone ? `（${c.phone}）` : ""}`).join(" · ")}
+      <br>确认是重复的话，在他那一行按【🔗 合并】。真的是新客户就不用理。</p>`;
+  }
+  if (orphans.length) {
+    warnHtml += `<p style="margin:${suspects.length ? "12px" : "0"} 0 0;font-size:15px"><b>⚠️ 有 ${orphans.length} 位有交易、但 Gmail 和电话都空着</b> —— 他们自己去注册时系统认不出他们，就会变成上面那种情况。</p>
+      <p class="hint" style="margin:6px 0 0">${orphans.map(c => `<b>${c.name}</b>（${clientRecCount(c.id)} 笔）`).join(" · ")}
+      <br><b>发注册链接给他们之前，先把 Gmail 填上</b>（填了 Gmail 他直接按 Sign In 就进得去，不用注册，也就不会认错人）。</p>`;
+  }
+  dupWarn.innerHTML = warnHtml;
+  dupWarn.style.display = warnHtml ? "" : "none";
 
   // Settings 表单
   document.getElementById("s-clearing-rate").value = db.settings.clearingRate;
@@ -1852,6 +1886,99 @@ function fillAccountSelects() {
   }
 }
 
+// 投资者表单以前成功跟失败长得一模一样（都是什么都不显示）。
+// 失败只跳一个一闪而过的弹窗，按掉就没了，而表单里的资料还在 ->
+// 看起来就像存好了。2026-08 就是这样以为填了 Gmail，其实一笔都没进去。
+function setClientResult(msg, ok) {
+  const el = document.getElementById("c-result");
+  if (!el) return;
+  if (!msg) { el.style.display = "none"; return; }
+  el.style.display = "";
+  el.innerHTML = ok ? `<span class="pos">✓ ${msg}</span>` : `<span class="pnl-neg">⚠️ 没有存入 —— ${msg}</span>`;
+}
+function failClient(msg) { alert(msg); setClientResult(msg, false); }
+
+// ---------- 合并重复注册的投资者 ----------
+// 情境：旧客户的 email/电话没填 -> 他自己去注册 -> 系统认不出他 -> 开了一个全新的空白户口，
+// 他登入看到一片空白，以为交易记录不见了。这里把新的那个并回他原本那一位。
+const clientRecCount = id => db.transactions.filter(t => t.clientId === id).length
+                           + db.dividends.filter(d => d.clientId === id).length
+                           + db.cashflows.filter(c => c.clientId === id).length;
+// 「自助注册进来、却一笔记录都没有」= 重复注册的特徵
+const looksDuplicate = c => clientRecCount(c.id) === 0 && (c.email || c.phone);
+let mergingId = null;
+
+function startMerge(dupId) {
+  const dup = clientById(dupId);
+  if (!dup) return;
+  mergingId = dupId;
+  const sel = document.getElementById("merge-target");
+  const others = db.clients.filter(c => c.id !== dupId)
+    .sort((a, b) => clientRecCount(b.id) - clientRecCount(a.id)); // 记录多的排前面，通常就是本尊
+  sel.innerHTML = others.map(c =>
+    `<option value="${c.id}">${clientLabel(c)} — ${clientRecCount(c.id)} 笔记录${c.email ? "（已有 Gmail）" : ""}</option>`).join("");
+  document.getElementById("merge-desc").innerHTML =
+    `要把 <b>${dup.name}</b>${dup.email ? `（${dup.email}）` : ""} 这一笔<b>重复注册</b>的记录，并进他原本那一位。`;
+  document.getElementById("merge-card").style.display = "";
+  previewMerge();
+  document.getElementById("merge-card").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function cancelMerge() {
+  mergingId = null;
+  document.getElementById("merge-card").style.display = "none";
+}
+function previewMerge() {
+  const dup = clientById(mergingId), target = clientById(document.getElementById("merge-target").value);
+  const box = document.getElementById("merge-preview");
+  if (!dup || !target) { box.textContent = ""; return; }
+  const moves = clientRecCount(dup.id);
+  const bits = [];
+  if (dup.email) bits.push(target.email ? `<span class="pnl-neg">Gmail 冲突：${clientLabel(target)} 已经有 ${target.email}</span>` : `Gmail <b>${dup.email}</b> → ${clientLabel(target)}`);
+  if (dup.phone) bits.push(target.phone ? `<span class="pnl-neg">电话冲突：${clientLabel(target)} 已经有 ${target.phone}</span>` : `电话 <b>${dup.phone}</b> → ${clientLabel(target)}`);
+  if (moves) bits.push(`搬 <b>${moves}</b> 笔记录过去`);
+  bits.push(`然後<b>删掉</b>「${dup.name}」这一行`);
+  box.innerHTML = "会做的事：" + bits.join(" · ");
+}
+function doMergeClient() {
+  const dup = clientById(mergingId), target = clientById(document.getElementById("merge-target").value);
+  if (!dup || !target) { alert("请选要并进哪一位"); return; }
+  if (dup.id === target.id) { alert("不能并进他自己"); return; }
+  // 两边都有 email/电话 -> 不猜哪个才对，请他自己先清掉一个
+  if (dup.email && target.email) { alert(`两边都有 Gmail（${dup.email} / ${target.email}），我不会替你决定留哪个。请先编辑其中一位把 Gmail 清空。`); return; }
+  if (dup.phone && target.phone) { alert(`两边都有电话（${dup.phone} / ${target.phone}）。请先编辑其中一位把电话清空。`); return; }
+  const moves = clientRecCount(dup.id);
+  if (!confirm(`确定要合并吗？\n\n把「${dup.name}」并进「${target.name}」：\n` +
+      (dup.email ? `· Gmail ${dup.email} 交给 ${target.name}\n` : "") +
+      (dup.phone ? `· 电话 ${dup.phone} 交给 ${target.name}\n` : "") +
+      (moves ? `· 搬 ${moves} 笔记录过去\n` : "") +
+      `· 删掉「${dup.name}」这一行\n\n这个动作不能复原。`)) return;
+  // 1) 记录搬家：户口按【名字】对应过去（APEX -> 对方的 APEX），对方没有就照抄一个
+  const map = {};
+  for (const a of accountsForClient(dup.id)) {
+    let t = db.accounts.find(x => x.clientId === target.id && (x.name || "").toLowerCase() === (a.name || "").toLowerCase());
+    if (!t) { t = { ...a, id: uid(), clientId: target.id }; db.accounts.push(t); }
+    map[a.id] = t.id;
+  }
+  const fallback = (accountsForClient(target.id)[0] || {}).id || "";
+  for (const tab of ["transactions", "dividends", "cashflows"]) {
+    for (const r of db[tab]) {
+      if (r.clientId !== dup.id) continue;
+      r.clientId = target.id;
+      r.accountId = map[r.accountId] || fallback;
+    }
+  }
+  // 2) 联络方式交给本尊（这样他下次登入才认得出自己）
+  if (dup.email && !target.email) target.email = dup.email;
+  if (dup.phone && !target.phone) target.phone = dup.phone;
+  // 3) 收掉重复的那一个，连他的股票户口
+  db.clients = db.clients.filter(c => c.id !== dup.id);
+  db.accounts = db.accounts.filter(a => a.clientId !== dup.id);
+  cancelMerge();
+  setClientResult(`已把「${dup.name}」并进「${target.name}」` +
+    (moves ? `，搬了 ${moves} 笔记录` : "") + `。请叫他重新登入。`, true);
+  save();
+}
+
 function saveClient() {
   const code = document.getElementById("c-code").value.trim().toUpperCase();
   const name = document.getElementById("c-name").value.trim();
@@ -1864,14 +1991,14 @@ function saveClient() {
   const rateAbove = parseFloat(document.getElementById("c-rate-above").value);
   const min = parseFloat(document.getElementById("c-min").value) || 0;
   const costMethod = document.getElementById("c-costmethod").value;
-  if (!name) { alert("请填姓名"); return; }
+  if (!name) { failClient("请填姓名"); return; }
   // 第二防线：email / 电话不能跟别的投资者重复
   const normPhone = v => { let d = String(v || "").replace(/[^0-9]/g, ""); if (d.startsWith("60") && d.length >= 11) d = "0" + d.slice(2); return d; };
   const others = db.clients.filter(c => c.id !== editingClientId);
-  if (email && others.some(c => (c.email || "").toLowerCase() === email)) { alert(`这个 Gmail 已经登记给别的投资者了：${others.find(c => (c.email || "").toLowerCase() === email).name}`); return; }
-  if (phone && others.some(c => normPhone(c.phone) && normPhone(c.phone) === normPhone(phone))) { alert(`这个电话号码已经登记给别的投资者了：${others.find(c => normPhone(c.phone) === normPhone(phone)).name}`); return; }
-  if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
-  if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
+  if (email && others.some(c => (c.email || "").toLowerCase() === email)) { failClient(`这个 Gmail 已经登记给别的投资者了：【${others.find(c => (c.email || "").toLowerCase() === email).name}】。同一个 Gmail 不能属于两位投资者。如果那是同一个人重复注册，请在下面那一行按【🔗 合并】。`); return; }
+  if (phone && others.some(c => normPhone(c.phone) && normPhone(c.phone) === normPhone(phone))) { failClient(`这个电话号码已经登记给别的投资者了：【${others.find(c => normPhone(c.phone) === normPhone(phone)).name}】。如果那是同一个人重复注册，请在下面那一行按【🔗 合并】。`); return; }
+  if (mode === "flat" && !(rateFlat >= 0)) { failClient("请填 flat rate"); return; }
+  if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { failClient("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
   const data = { code, name, account, email, phone, brokerageMode: mode, minBrokerage: min, costMethod,
     rateFlat: mode === "flat" ? rateFlat : undefined,
     rateBelow: mode === "tiered" ? rateBelow : undefined,
@@ -1888,6 +2015,7 @@ function saveClient() {
       rateFlat: data.rateFlat, rateBelow: data.rateBelow, rateAbove: data.rateAbove });
     ["c-code", "c-name", "c-account", "c-email", "c-phone", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
   }
+  setClientResult(`已保存：${name}` + (email ? `（Gmail ${email}）` : "") + (phone ? `（电话 ${phone}）` : ""), true);
   save();
 }
 function editClient(id) {
