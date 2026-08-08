@@ -1921,10 +1921,14 @@ function cancelEditClient() {
   document.getElementById("c-cancel-btn").style.display = "none";
 }
 function delClient(id) {
-  const n = db.transactions.filter(t => t.clientId === id).length + db.dividends.filter(d => d.clientId === id).length;
-  if (n > 0) { alert(`这个投资者还有 ${n} 条记录，不能删除。请先删除他的交易和股息记录。`); return; }
+  // 出入金以前没算进来 —— 只有出入金没有交易的投资者会被静静删掉，那笔钱就没了
+  const n = db.transactions.filter(t => t.clientId === id).length
+          + db.dividends.filter(d => d.clientId === id).length
+          + db.cashflows.filter(c => c.clientId === id).length;
+  if (n > 0) { alert(`这个投资者还有 ${n} 条记录（交易/股息/出入金），不能删除。请先处理那些记录。`); return; }
   if (!confirm("确定删除这个投资者？")) return;
   db.clients = db.clients.filter(c => c.id !== id);
+  db.accounts = db.accounts.filter(a => a.clientId !== id); // 他的股票户口一起收掉，不然会留下没有主人的孤儿列
   save();
 }
 function saveSettings() {
