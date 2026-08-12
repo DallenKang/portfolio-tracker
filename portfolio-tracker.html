@@ -2322,13 +2322,15 @@ function renderTAccount(pos) {
       else { sQty += t.qty; sNet += netAmount(t); sRows += row; }
     }
     const open = p.qty > 0;
+    // 百分比 = 已实现盈亏 ÷ 卖掉那批股的成本（白拿的免费凭单成本 0，除不了，就不显示）
+    const pct = p.soldCost > 0 ? ` (${(p.realized / p.soldCost * 100).toFixed(2)}%)` : "";
     const badge = open
       ? `<span class="tacct-badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">持仓中 · ${p.qty.toLocaleString()} 股</span>`
       : (p.realized >= 0
-        ? `<span class="tacct-badge" style="background:rgba(46,204,113,0.15);color:var(--green)">已平仓 · P/L +${fmtN(p.realized)}</span>`
-        : `<span class="tacct-badge" style="background:rgba(231,76,60,0.15);color:var(--red)">已平仓 · P/L (${fmtN(-p.realized)})</span>`);
+        ? `<span class="tacct-badge" style="background:rgba(46,204,113,0.15);color:var(--green)">已平仓 · P/L +${fmtN(p.realized)}${pct}</span>`
+        : `<span class="tacct-badge" style="background:rgba(231,76,60,0.15);color:var(--red)">已平仓 · P/L (${fmtN(-p.realized)})${pct}</span>`);
     const foot = open
-      ? `结余 ${p.qty.toLocaleString()} 股 · 平均成本 ${(p.cost / p.qty).toFixed(4)}${p.realized ? ` · 已实现 ${pnlFmt(p.realized)}` : ""}`
+      ? `结余 ${p.qty.toLocaleString()} 股 · 平均成本 ${(p.cost / p.qty).toFixed(4)}${p.realized ? ` · 已实现 ${pnlFmt(p.realized)}${pct}` : ""}`
       : `结余 0 股 ✓ 平仓`;
     html += `<div class="tacct-card">
       <div class="tacct-head"><span style="font-weight:600;font-size:15px"><b>${ticker}</b> <span class="acct-tag">${acctLabel(acct)}</span>${showClient ? ` <span class="hint">${clientLabel(c)}</span>` : ""}</span>${badge}</div>
