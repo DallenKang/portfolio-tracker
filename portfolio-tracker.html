@@ -105,6 +105,11 @@
   /* 未登入：只显示登入/注册页 */
   body.signed-out > *:not(#auth-screen) { display: none !important; }
 
+  /* 登入快过期的横幅：显示/隐藏由 JS 设 style.display（元素上有 inline display:none） */
+  #relogin-banner { align-items: center; gap: 12px; flex-wrap: wrap; background: rgba(241, 196, 15, 0.12);
+    border: 1px solid var(--gold); color: var(--text); padding: 10px 14px;
+    border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+
   /* 同步中横幅：登入时先开画面，这条告诉人「还在拿最新的」，同步完自动收起 */
   /* 显示/隐藏是用 JS 直接设 style.display（元素上有 inline display:none，class 盖不过它） */
   #sync-banner { align-items: center; gap: 9px; background: rgba(52, 152, 219, 0.12);
@@ -204,6 +209,12 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+
+<!-- 登入快过期又续不了 -> 提前讲。以前是让他做完一小时的工才说存不上，顺序是反的。 -->
+<div id="relogin-banner" style="display:none">
+  <span>⚠️ <b>登入快过期了</b> —— 请重新登入，否则接下来记的东西<b>存不上云端</b>。</span>
+  <button class="action small" style="background:var(--gold);color:#1a1a1a" onclick="goRelogin()">去重新登入</button>
+</div>
 
 <!-- 登入时先显示上次的资料，这条说明云端还在同步（同步完自己会消失） -->
 <div id="sync-banner" style="display:none">
@@ -784,16 +795,69 @@ function tokenExpiresInMs() {
   const p = parseJwt(googleIdToken);
   return p.exp ? (p.exp * 1000 - Date.now()) : Infinity;
 }
-async function ensureFreshToken() {
-  if (!googleIdToken) return;                    // 用後备密钥的不受影响
-  if (tokenExpiresInMs() > 5 * 60 * 1000) return; // 还有 5 分钟以上，不用换
+// 换一张没过期的凭证。minMs = 剩多少时间就该换（不传 = 5 分钟）。
+// 回传 true = 现在手上的凭证够新；false = 换不到（多半是 One Tap 被 Google 冷却挡住）。
+async function ensureFreshToken(minMs) {
+  if (!googleIdToken) return true;               // 用後备密钥的不受影响
+  const need = (minMs === undefined) ? 5 * 60 * 1000 : minMs;
+  if (tokenExpiresInMs() > need) return true;    // 还够新，不用换
+  const before = googleIdToken;
   await new Promise(resolve => {
     tokenRefreshResolve = resolve;
-    try { google.accounts.id.prompt(); } catch (e) { resolve(); }
-    setTimeout(() => { if (tokenRefreshResolve) { tokenRefreshResolve = null; resolve(); } }, 4000);
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; tokenRefreshResolve = null; resolve(); } };
+    try {
+      // ⚠️ 一定要问 One Tap「你到底弹出来没有」。使用者关过一次，Google 就进冷却期不再弹，
+      //    以前程式不检查，等 4 秒放弃後【照样拿过期凭证去存】，然後才说存不了。
+      google.accounts.id.prompt(n => {
+        if (n && ((n.isNotDisplayed && n.isNotDisplayed()) || (n.isSkippedMoment && n.isSkippedMoment()))) {
+          oneTapBlocked = true;
+          done();
+        }
+      });
+    } catch (e) { done(); }
+    setTimeout(done, 4000);
   });
+  const ok = !!googleIdToken && googleIdToken !== before && tokenExpiresInMs() > need;
+  if (!ok) showReloginNeeded();                  // 换不到就【提前】讲，不要等他做完工才说
+  return ok;
 }
 let tokenRefreshResolve = null;
+let oneTapBlocked = false;
+
+// 【定时续期】以前完全没有计时器在保住登入 —— ensureFreshToken 只在「要存档那一刻」
+// 且「剩不到 5 分钟」才跑，所以页面开着一小时後第一笔存档必定撞上过期。
+const TOKEN_KEEPALIVE_MS = 40 * 60 * 1000;
+let tokenTimer = null;
+function startTokenKeepAlive() {
+  clearInterval(tokenTimer);
+  if (!googleIdToken) return;
+  tokenTimer = setInterval(() => {
+    if (!googleIdToken || document.hidden) return;  // 分页在背景时弹不出来，白白烧掉冷却次数
+    ensureFreshToken(20 * 60 * 1000);               // 剩不到 20 分钟就换新的
+  }, TOKEN_KEEPALIVE_MS);
+}
+// One Tap 弹不出来时，画面上的 Google【按钮】不受冷却影响，一定能用 -> 把人导过去。
+function showReloginNeeded() {
+  const b = document.getElementById("relogin-banner");
+  if (b) b.style.display = "flex";
+  const hint = document.getElementById("cloud-signin-hint");
+  if (hint) hint.innerHTML = `<b class="pnl-neg">⚠️ 登入快过期了，请按左边的 Google 按钮重新登入</b>`;
+}
+function hideReloginNeeded() {
+  const b = document.getElementById("relogin-banner");
+  if (b) b.style.display = "none";
+}
+function goRelogin() {
+  const tab = document.querySelector('.tab-btn[data-tab="database"]');
+  if (tab) tab.click();
+  const btn = document.getElementById("gsi-button");
+  if (btn) {
+    btn.scrollIntoView({ behavior: "smooth", block: "center" });
+    btn.style.outline = "3px solid var(--gold)";
+    setTimeout(() => { btn.style.outline = ""; }, 4000);
+  }
+}
 let pendingRetry = false; // 有资料因为登入过期没存上去 -> 重新登入後要自动补存
 
 // --- 角色：owner（你，全功能）/ client（投资者，只读看自己）---
@@ -991,6 +1055,42 @@ function toggleCloudAuto() {
   localStorage.setItem(CLOUD_KEY, JSON.stringify(cloud));
   setCloudStatus(cloud.auto ? "✓ 自动同步已开：每次改动会自动存到云端。" : "自动同步已关。");
 }
+// ===== 打後台：先重试，重试用尽才报错 =====
+// 後台（Apps Script 免费版）本来就会偶尔抽风：跑太久时 Google 会回一张 HTML 错误页
+// 而不是资料（就是「Unexpected token '<', "<!DOCTYPE"」那个），偶尔也会无故回 unauthorized
+// ——用永不过期的主密钥测也拿过。以前一收到就直接投降，使用者以为记录没存上。
+//
+// 重送 save 是安全的：送的是整包【全量覆盖】，不是累加，重送不会变两笔。
+const CLOUD_RETRY_WAITS = [2000, 4000, 8000];
+const sleepMs = ms => new Promise(r => setTimeout(r, ms));
+async function cloudCall(body, label) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= CLOUD_RETRY_WAITS.length; attempt++) {
+    if (attempt > 0) {
+      setCloudStatus(`${label}：没回应，${CLOUD_RETRY_WAITS[attempt - 1] / 1000} 秒後自动重试…（第 ${attempt} 次）`);
+      await sleepMs(CLOUD_RETRY_WAITS[attempt - 1]);
+    }
+    let j = null;
+    try {
+      // authPostFields() 每次重算 —— 中途换过凭证的话要用新的那张
+      const r = await fetch(cloudUrl(), { method: "POST",
+        body: JSON.stringify({ ...body, ...authPostFields() }) });
+      const text = await r.text();
+      try { j = JSON.parse(text); }
+      catch (e) { lastErr = new Error("後台回的不是资料（多半是跑太久，Google 回了错误页）"); continue; }
+    } catch (e) { lastErr = e; continue; }        // 网路断线之类，也值得重试
+    // unauthorized 不一定是真的过期（後台会冤枉人）。先换一张凭证再试，
+    // 还是 unauthorized 才交给上层当成「真的要重新登入」。
+    if (j.error === "unauthorized" && attempt < CLOUD_RETRY_WAITS.length) {
+      lastErr = new Error("unauthorized");
+      if (googleIdToken) await ensureFreshToken(Infinity);   // 强制换一张
+      continue;
+    }
+    return j;
+  }
+  throw lastErr || new Error("云端没有回应");
+}
+
 function cloudPayload() {
   const p = { clients: db.clients, accounts: db.accounts, settings: db.settings, transactions: db.transactions,
               dividends: db.dividends, cashflows: db.cashflows, prices: db.prices, symbols: db.symbols };
@@ -1007,9 +1107,7 @@ async function pushCloud(silent) {
     const payload = viewerRole === "client"
       ? { action: "saveMine", data: { accounts: db.accounts, transactions: db.transactions, dividends: db.dividends, cashflows: db.cashflows, symbols: db.symbols } }
       : { action: "save", data: cloudPayload() };
-    const r = await fetch(cloudUrl(), { method: "POST",
-      body: JSON.stringify({ ...payload, ...authPostFields() }) });
-    const j = await r.json();
+    const j = await cloudCall(payload, "⬆️ 存云端");
     // 後台一次只让一个人写（不排队会静静盖掉别人刚存的）。撞到就等一下再试，
     // 资料还在本机所以不会掉；pendingPush 保持着，自动同步也不会趁这时覆盖。
     if (j.error === "busy") {
@@ -1064,7 +1162,10 @@ function startAutoPull() {
 }
 // 切回这个分页时立刻拉一次（背景那段时间是跳过的，回来要马上补上最新的）
 document.addEventListener("visibilitychange", async () => {
-  if (document.hidden || viewerRole === "client") return;
+  if (document.hidden) return;
+  // 分页在背景时不换凭证（弹不出来）-> 回来先看一下还活着没有
+  if (googleIdToken) await ensureFreshToken(20 * 60 * 1000);
+  if (viewerRole === "client") return;
   if (!cloudReady() || pendingPush) return;
   const before = db.transactions.length;
   await pullCloud(true, true);
@@ -1094,10 +1195,8 @@ async function pullCloud(silent, quiet) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
   if (!quiet) setCloudStatus("⬇️ 从云端载入中…");
   try {
-    // 用 POST 传认证（idToken 很长，放网址会被 Google 跳转丢掉）
-    const r = await fetch(cloudUrl(), { method: "POST",
-      body: JSON.stringify({ action: "load", ...authPostFields() }) });
-    const j = await r.json();
+    // 用 POST 传认证（idToken 很长，放网址会被 Google 跳转丢掉）；失败会自动重试
+    const j = await cloudCall({ action: "load" }, "⬇️ 载入");
     if (j.error) {
       if (j.reason === "not_registered") { // 这个 Gmail 还没注册 -> 引导去注册
         showAuthScreen(); showAuth("register");
@@ -1134,6 +1233,7 @@ async function pullCloud(silent, quiet) {
     syncBanner(false);          // 最新资料到了，收起「同步中」
     fastShown = false;
     markCacheOwner(googleEmail); // 记住这份本机资料是谁的 -> 下次他登入可以秒开
+    hideReloginNeeded(); oneTapBlocked = false; // 拿到新资料了 = 登入是好的
     renderAll();
     if (quiet) return; // 背景自动拉：资料已更新，画面已重画，其余的开页时做过了
     // 後台版本号：改了 apps-script 之後靠这个确认「新版本」真的部署上去了（储存 ≠ 上线）
@@ -1145,6 +1245,7 @@ async function pullCloud(silent, quiet) {
     if (autoDiv > 0) save();
     startAutoPrices(); // 数据到齐后自动抓最新价
     startAutoPull();   // 之後每 3 分钟自动拉一次，投资者更新了这边看得到
+    startTokenKeepAlive(); // 定时把登入凭证换新，不要等到要存档那一刻才发现过期了
     // 先补红股/拆股（股数会变），再补股息（按调整后的股数算），跑完把结果讲出来
     backfillSplits(true).then(async (nSplit) => {
       const nDiv = await backfillDividends(true);
