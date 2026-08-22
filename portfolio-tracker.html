@@ -262,7 +262,7 @@
 
     <div id="auth-register" style="display:none; text-align:left">
       <p class="hint" style="margin:0 0 12px">填好资料，然后用 Gmail 完成注册</p>
-      <div class="field" style="margin-bottom:10px"><label>你的名字 Name</label><input type="text" id="reg-name" placeholder="如 Tan Ah Kow" style="width:100%"></div>
+      <div class="field" style="margin-bottom:10px"><label>姓名 Name</label><input type="text" id="reg-name" placeholder="如 Tan Ah Kow" style="width:100%"></div>
       <div class="field" style="margin-bottom:14px"><label>手机号码 Phone</label><input type="tel" id="reg-phone" placeholder="如 012-345 6789" style="width:100%"></div>
       <label style="display:flex; align-items:flex-start; gap:8px; margin-bottom:14px; font-size:13px; color:var(--text); cursor:pointer; line-height:1.55">
         <input type="checkbox" id="reg-agree" style="min-width:0; width:15px; height:15px; margin-top:2px; flex:none; accent-color:var(--blue)">
@@ -284,16 +284,16 @@
 </div>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="dashboard">📊 总览</button>
+  <button class="tab-btn active" data-tab="dashboard">📊 总览 Overview</button>
   <button class="tab-btn" data-tab="clients">👥 投资者 Investors</button>
-  <button class="tab-btn" data-tab="transactions">📝 交易 P&L</button>
-  <button class="tab-btn" data-tab="holdings">💼 持仓</button>
-  <button class="tab-btn" data-tab="dividends">💰 股息</button>
-  <button class="tab-btn" data-tab="cashflow">💵 Cashflow</button>
-  <button class="tab-btn" data-tab="exdiv">📅 Ex-Dividend</button>
+  <button class="tab-btn" data-tab="transactions">📝 交易 Transactions</button>
+  <button class="tab-btn" data-tab="holdings">💼 持仓 Holdings</button>
+  <button class="tab-btn" data-tab="dividends">💰 股息 Dividends</button>
+  <button class="tab-btn" data-tab="cashflow">💵 出入金 Cash In/Out</button>
+  <button class="tab-btn" data-tab="exdiv">📅 除息 Ex-Dividend</button>
   <button class="tab-btn" data-tab="ipo">🆕 IPO</button>
-  <button class="tab-btn" data-tab="staff">🔑 员工权限</button>
-  <button class="tab-btn" data-tab="database">🗄️ 数据库</button>
+  <button class="tab-btn" data-tab="staff">🔑 员工权限 Staff Access</button>
+  <button class="tab-btn" data-tab="database">🗄️ 备份与同步 Backup &amp; Sync</button>
 </div>
 
 <div class="filter-bar">
@@ -308,15 +308,18 @@
 <!-- ============ DASHBOARD ============ -->
 <div class="tab active" id="tab-dashboard">
   <div class="cards">
-    <div class="card"><div class="label">持仓成本 Open Cost (Net)</div><div class="value" id="d-cost">-</div></div>
+    <div class="card"><div class="label">持仓成本 Cost (Net)</div><div class="value" id="d-cost">-</div></div>
     <div class="card"><div class="label">市值 Market Value</div><div class="value" id="d-value">-</div></div>
-    <div class="card"><div class="label">未实现盈亏 Unrealized P&L</div><div class="value" id="d-unrealized">-</div></div>
+    <div class="card"><div class="label">未实现盈亏 Unrealized P/(L)</div><div class="value" id="d-unrealized">-</div></div>
     <div class="card"><div class="label">已实现盈亏 Realized P/(L)</div><div class="value" id="d-realized">-</div></div>
     <div class="card"><div class="label">累计股息 Dividends</div><div class="value gold" id="d-div-total">-</div></div>
     <div class="card"><div class="label">今天股息 Today</div><div class="value gold" id="d-div-today">-</div></div>
-    <div class="card"><div class="label">累计 Brokerage（佣金）</div><div class="value" id="d-brokerage">-</div></div>
+    <div class="card"><div class="label">累计佣金 Brokerage</div><div class="value" id="d-brokerage">-</div></div>
     <div class="card"><div class="label">总回报 Total Return</div><div class="value" id="d-total-return">-</div></div>
   </div>
+
+  <!-- 有股票抓不到现价时，市值/未实现/总回报都会少算 —— 卡片看不出来，所以在这里明讲 -->
+  <div id="d-missing-price" class="form-card" style="display:none; border-color:var(--gold); background:rgba(241,196,15,0.06); font-size:14px"></div>
 
   <h2 class="section">股票户口 Stock Accounts</h2>
   <div class="form-card">
@@ -334,7 +337,7 @@
       <div class="field" id="f-a-rate-above"><label>≥ RM100K (%)</label><input type="number" step="any" id="a-rate-above" placeholder="如 0.21"></div>
       <div class="field" id="f-a-rate-flat" style="display:none"><label>Flat Rate (%)</label><input type="number" step="any" id="a-rate-flat" placeholder="如 0.18"></div>
       <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="a-min" placeholder="如 8" value="8"></div>
-      <div class="field"><label>成本算法 Cost Method</label>
+      <div class="field"><label>成本法 Cost Method</label>
         <select id="a-costmethod">
           <option value="average">Average（平均成本）</option>
           <option value="fifo">FIFO（先进先出）</option>
@@ -347,7 +350,7 @@
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>投资者</th><th>户口</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <thead><tr><th>投资者</th><th>户口</th><th>Brokerage</th><th class="num">最低 Brokerage</th><th>成本法 Cost Method</th><th class="num">交易笔数</th><th></th></tr></thead>
       <tbody id="a-body"></tbody>
     </table>
   </div>
@@ -389,7 +392,7 @@
       <div class="field" id="f-rate-above"><label>≥ RM100K (%)</label><input type="number" step="any" id="c-rate-above" placeholder="如 0.21"></div>
       <div class="field" id="f-rate-flat" style="display:none"><label>Flat Rate (%)</label><input type="number" step="any" id="c-rate-flat" placeholder="如 0.18"></div>
       <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="c-min" placeholder="如 8" value="8"></div>
-      <div class="field"><label>成本算法 Cost Method</label>
+      <div class="field"><label>成本法 Cost Method</label>
         <select id="c-costmethod">
           <option value="average">Average（平均成本）</option>
           <option value="fifo">FIFO（先进先出）</option>
@@ -512,7 +515,7 @@
         <th class="num sortable" data-key="clearing" data-label="Clearing" onclick="setTxSort('clearing')">Clearing</th>
         <th class="num sortable" data-key="net" data-label="Net Amount" onclick="setTxSort('net')">Net Amount</th>
         <th class="num sortable" data-key="pl" data-label="P/(L)" onclick="setTxSort('pl')">P/(L)</th>
-        <th class="num sortable" data-key="plpct" data-label="P/L (%)" onclick="setTxSort('plpct')">P/L (%)</th>
+        <th class="num sortable" data-key="plpct" data-label="P/(L) %" onclick="setTxSort('plpct')">P/(L) %</th>
         <th></th>
       </tr></thead>
       <tbody id="t-body"></tbody>
@@ -630,7 +633,7 @@
     <h3 id="s-form-title">加员工 Add Staff</h3>
     <div class="form-row">
       <div class="field"><label>Gmail（他登入用的）</label><input type="email" id="s-email" placeholder="someone@gmail.com"></div>
-      <div class="field"><label>名字 Name</label><input type="text" id="s-name" placeholder="如 Admin / Remisier A"></div>
+      <div class="field"><label>姓名 Name</label><input type="text" id="s-name" placeholder="如 Admin / Remisier A"></div>
       <div class="field"><label>权限 Role</label>
         <select id="s-role" onchange="toggleStaffScope()">
           <option value="staff">员工 Staff — 只看指定投资者</option>
@@ -693,10 +696,10 @@
     </div>
     <p class="net-preview" id="cloud-status">请先用 Gmail 登入。</p>
     <details style="margin-top:8px">
-      <summary class="hint" style="cursor:pointer">进阶：手动填链接 + 密码（一般不用）</summary>
+      <summary class="hint" style="cursor:pointer">进阶：手动填链接 + 后备密钥（一般不用）</summary>
       <div class="form-row" style="margin-top:10px">
         <div class="field" style="flex:1;min-width:280px"><label>Web App 链接 URL</label><input type="text" id="cloud-url" placeholder="留空 = 用内建的"></div>
-        <div class="field"><label>密码 Token</label><input type="text" id="cloud-token" placeholder="留空 = 用 Gmail 登入"></div>
+        <div class="field"><label>后备密钥 Backup Key</label><input type="text" id="cloud-token" placeholder="留空 = 用 Gmail 登入"></div>
         <button class="action" onclick="saveCloudConfig()">保存设置</button>
       </div>
     </details>
@@ -875,7 +878,7 @@ function applyClientModeUI() {
   document.getElementById("banner-text").textContent = c ? `👋 你好，${c.name} — 你的投资组合` : "投资者只读模式";
   document.getElementById("signin-banner").style.display = "";
   document.getElementById("banner-signout").style.display = "";
-  document.getElementById("app-subtitle").textContent = "你的持仓 · 盈亏 · 股息 · Cashflow — 可自己记录，自动同步到你的 Drive";
+  document.getElementById("app-subtitle").textContent = "你的持仓 · 盈亏 · 股息 · 出入金 — 可自己记录，自动同步到你的 Drive";
 }
 function enterClientMode() {
   viewerRole = "client";
@@ -1582,7 +1585,12 @@ function renderAll() {
 
   // 持仓：按投资者分组（投资者标题行 -> 仓位 -> 小计）
   const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId, p.accountId) && matchStock(p.ticker));
-  let totalCost = 0, totalValue = 0, totalUnrealized = 0, hasPrice = false;
+  // 抓不到现价的股票，成本照算、市值不算 -> 分子分母不同基础，百分比会失真。
+  // 以前只有一个「有没有任何一支有价」的布林旗标：7 支里 6 支有价就照常显示，
+  // 完全看不出少算了一支。改成计数 + 名单，让画面能明讲少了哪几支。
+  let totalCost = 0, totalValue = 0, totalUnrealized = 0;
+  let pricedCost = 0;                 // 有现价那部分的成本 -> 当百分比分母，跟市值同基础
+  const missingTickers = [];          // 抓不到现价的（会让市值与未实现少算）
   const hBody = document.getElementById("h-body");
   hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="11">没有持仓</td></tr>`;
   const byClient = {};
@@ -1592,7 +1600,8 @@ function renderAll() {
   for (const cid of clientIds) {
     const c = clientById(cid);
     hBody.innerHTML += `<tr class="client-header"><td colspan="11">👤 ${clientLabel(c)}${c && c.account ? ` · ${c.account}` : ""}</td></tr>`;
-    let subCost = 0, subValue = 0, subU = 0, subHasPrice = false;
+    let subCost = 0, subValue = 0, subU = 0, subPricedCost = 0;
+    const subMissing = [];
     // 先按户口再按股票排，同一个户口的货排在一起才好看
     for (const p of byClient[cid].sort((a, b) =>
         acctLabel(accountById(a.accountId)).localeCompare(acctLabel(accountById(b.accountId))) ||
@@ -1602,24 +1611,36 @@ function renderAll() {
       totalCost += p.cost; subCost += p.cost;
       let valCell = "-", pnlCell = "-", pctCell = "-";
       if (pr) {
-        hasPrice = true; subHasPrice = true;
         const mv = pr.price * p.qty, u = mv - p.cost;
         totalValue += mv; totalUnrealized += u;
         subValue += mv; subU += u;
+        pricedCost += p.cost; subPricedCost += p.cost;   // 百分比的分母只算有现价的
         valCell = fmtN(mv);
         pnlCell = `<span class="${pnlClass(u)}">${pnlFmt(u)}</span>`;
         // 成本 0（免费凭单白拿的）没有百分比可算，除下去会变 Infinity%
         pctCell = p.cost > 0 ? `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>` : `<span class="hint">白拿</span>`;
+      } else {
+        if (!missingTickers.includes(p.ticker)) missingTickers.push(p.ticker);
+        if (!subMissing.includes(p.ticker)) subMissing.push(p.ticker);
       }
       const code = (db.symbols[p.ticker] || "").replace(/\.KL$/i, ""); // 交易时存的 Bursa 代码，这里一并显示
       hBody.innerHTML += `<tr><td></td><td><span class="acct-tag">${acctLabel(accountById(p.accountId))}</span></td><td><b>${p.ticker}</b></td><td class="hint">${code || "-"}</td><td class="num">${p.qty.toLocaleString()}</td>
         <td class="num">${avg.toFixed(4)}</td><td class="num">${fmtN(p.cost)}</td>
         <td class="num">${pr ? pr.price.toFixed(4) : "-"}</td><td class="num">${valCell}</td><td class="num">${pnlCell}</td><td class="num">${pctCell}</td></tr>`;
     }
-    hBody.innerHTML += `<tr class="subtotal"><td></td><td></td><td>小计</td><td></td><td></td><td></td><td class="num">${fmtN(subCost)}</td><td></td>
-      <td class="num">${subHasPrice ? fmtN(subValue) : "-"}</td>
-      <td class="num">${subHasPrice ? `<span class="${pnlClass(subU)}">${pnlFmt(subU)}</span>` : "-"}</td>
-      <td class="num">${subHasPrice && subCost > 0 ? `<span class="${pnlClass(subU)}">${(subU / subCost * 100).toFixed(2)}%</span>` : "-"}</td></tr>`;
+    // 「小计」改成「合计 Total · 谁的」：这行是按投资者分组的合计，
+    // 筛一个人时叫「小计」会让人以为上面还有更大的总数；显示全部时又分不清是谁的。
+    const subPriced = subPricedCost > 0 || subValue > 0;
+    hBody.innerHTML += `<tr class="subtotal"><td></td><td></td><td colspan="4">合计 Total · ${clientLabel(c)}</td><td class="num">${fmtN(subCost)}</td><td></td>
+      <td class="num">${subPriced ? fmtN(subValue) : "-"}</td>
+      <td class="num">${subPriced ? `<span class="${pnlClass(subU)}">${pnlFmt(subU)}</span>` : "-"}</td>
+      <td class="num">${subPriced && subPricedCost > 0 ? `<span class="${pnlClass(subU)}">${(subU / subPricedCost * 100).toFixed(2)}%</span>` : "-"}</td></tr>`;
+    // 少算了哪几支，要明讲 —— 成本是完整的，少的是市值那一边
+    if (subMissing.length) {
+      hBody.innerHTML += `<tr class="subtotal"><td colspan="11" style="color:var(--gold);font-weight:400;font-size:12.5px">
+        ⚠️ ${subMissing.length} 支无现价（${subMissing.join("、")}）未计入市值与未实现盈亏；
+        上面的 % 只算有现价的部分（不含无现价股票），总成本仍是完整的</td></tr>`;
+    }
   }
 
   // 股票下拉（全局）
@@ -1749,14 +1770,28 @@ function renderAll() {
   // Dashboard cards
   let totalRealized = 0;
   for (const p of Object.values(pos)) if (matchFilter(p.clientId, p.accountId) && matchStock(p.ticker)) totalRealized += p.realized;
+  const anyPriced = pricedCost > 0 || totalValue > 0;
   setCard("d-cost", fmt(totalCost));
-  document.getElementById("d-value").textContent = hasPrice ? fmt(totalValue) : (held.length ? "请先更新现价" : fmt(0));
-  setPnlCard("d-unrealized", hasPrice ? totalUnrealized : null);
+  document.getElementById("d-value").textContent = anyPriced ? fmt(totalValue) : (held.length ? "请先更新现价" : fmt(0));
+  setPnlCard("d-unrealized", anyPriced ? totalUnrealized : null);
   setPnlCard("d-realized", totalRealized);
   setCard("d-div-total", fmt(divTotal));
   setCard("d-div-today", fmt(divToday));
   setCard("d-brokerage", fmt(totalBrokerage));
-  setPnlCard("d-total-return", (hasPrice ? totalUnrealized : 0) + totalRealized + divTotal);
+  setPnlCard("d-total-return", (anyPriced ? totalUnrealized : 0) + totalRealized + divTotal);
+  // 总览页比持仓表更危险：7 支里 6 支有价时，卡片照常显示，一点都看不出少算了一支。
+  // 所以缺价一定要在这里明讲，连总回报也少算。
+  const missBox = document.getElementById("d-missing-price");
+  if (missBox) {
+    if (missingTickers.length) {
+      missBox.style.display = "";
+      missBox.innerHTML = `⚠️ <b>${missingTickers.length} 支无现价</b>（${missingTickers.join("、")}）—— `
+        + `市值、未实现盈亏、总回报<b>都没算这几支</b>。持仓成本仍是完整的。<br>`
+        + `<span class="hint">多半是 Bursa 代码填错或没填。去「持仓 Holdings」页填对代码就会自动抓价。</span>`;
+    } else {
+      missBox.style.display = "none";
+    }
+  }
 
   // 各投资者摘要
   const dcBody = document.getElementById("d-client-body");
@@ -2702,7 +2737,7 @@ async function backfillDividends(silent) {
       }
     }
     if (created) save();
-    if (!silent) status.textContent = created ? `✓ 补记了 ${created} 笔历史股息（已进 Cashflow）` : "✓ 没有需要补记的股息（都记齐了）";
+    if (!silent) status.textContent = created ? `✓ 补记了 ${created} 笔历史股息（已记进出入金）` : "✓ 没有需要补记的股息（都记齐了）";
     return created;
   } catch (e) {
     if (!silent) status.textContent = "补记失败：" + e.message + API_HINT;
