@@ -105,6 +105,10 @@
   /* 未登入：只显示登入/注册页 */
   body.signed-out > *:not(#auth-screen) { display: none !important; }
 
+  /* 投资者表单里填的费率跟他实际户口不一样时的提示（真正算钱看户口） */
+  #c-rate-mismatch { background: rgba(241, 196, 15, 0.10); border: 1px solid var(--gold);
+    border-radius: 8px; padding: 10px 14px; margin-top: 10px; font-size: 13.5px; line-height: 1.7; }
+
   /* 登入快过期的横幅：显示/隐藏由 JS 设 style.display（元素上有 inline display:none） */
   #relogin-banner { align-items: center; gap: 12px; flex-wrap: wrap; background: rgba(241, 196, 15, 0.12);
     border: 1px solid var(--gold); color: var(--text); padding: 10px 14px;
@@ -237,7 +241,7 @@
 
 <div id="sync-warn" style="display:none">
   ⚠️ <b>刚才的改动还没存到云端。</b>你的记录还在这台电脑上，没有掉。
-  下面「数据库」页有详细讯息 —— 多数情况是登入过期，重新登入後会自动补存。
+  下面「备份与同步」页有详细讯息 —— 多数情况是登入过期，重新登入後会自动补存。
   <button class="action small" style="margin-left:8px" onclick="pushCloud(false)">立即重试</button>
 </div>
 
@@ -346,7 +350,7 @@
       <button class="action" id="a-save-btn" onclick="saveAccount()">添加户口</button>
       <button class="action ghost" id="a-cancel-btn" onclick="cancelEditAccount()" style="display:none">取消</button>
     </div>
-    <p class="hint">一个投资者可以有多个股票户口（不同股票行/投行）。<b>每个户口的收费和成本算法分开设定</b> —— 不同股票行收费不一样，同一支股票在两个户口也会分开算成本。<br>记交易、股息、出入金的时候，选是哪个户口就好。</p>
+    <p class="hint">一个投资者可以有多个股票户口（不同股票行/投行）。<b>每个户口的收费和成本法分开设定</b> —— 不同股票行收费不一样，同一支股票在两个户口也会分开算成本。<br>记交易、股息、出入金的时候，选是哪个户口就好。</p>
   </div>
   <div class="table-wrap">
     <table>
@@ -383,17 +387,17 @@
       <div class="field"><label>投资者 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="investor@gmail.com" style="min-width:200px"></div>
       <div class="field"><label>手机号码 Phone</label><input type="tel" id="c-phone" placeholder="012-345 6789" style="min-width:140px"></div>
       <div class="field"><label>Brokerage 模式</label>
-        <select id="c-mode" onchange="toggleRateFields()">
+        <select id="c-mode" onchange="toggleRateFields(); renderRateMismatch()">
           <option value="tiered">分层 Tiered（按 RM100K）</option>
           <option value="flat">Flat Rate（统一）</option>
         </select>
       </div>
-      <div class="field" id="f-rate-below"><label>&lt; RM100K (%)</label><input type="number" step="any" id="c-rate-below" placeholder="如 0.42"></div>
-      <div class="field" id="f-rate-above"><label>≥ RM100K (%)</label><input type="number" step="any" id="c-rate-above" placeholder="如 0.21"></div>
-      <div class="field" id="f-rate-flat" style="display:none"><label>Flat Rate (%)</label><input type="number" step="any" id="c-rate-flat" placeholder="如 0.18"></div>
-      <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="c-min" placeholder="如 8" value="8"></div>
-      <div class="field"><label>成本法 Cost Method</label>
-        <select id="c-costmethod">
+      <div class="field" id="f-rate-below"><label>&lt; RM100K (%)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-rate-below" placeholder="如 0.42" oninput="renderRateMismatch()"></div>
+      <div class="field" id="f-rate-above"><label>≥ RM100K (%)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-rate-above" placeholder="如 0.21" oninput="renderRateMismatch()"></div>
+      <div class="field" id="f-rate-flat" style="display:none"><label>Flat Rate (%)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-rate-flat" placeholder="如 0.18" oninput="renderRateMismatch()"></div>
+      <div class="field"><label>最低 Brokerage (RM)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-min" placeholder="如 8" value="8" oninput="renderRateMismatch()"></div>
+      <div class="field"><label>成本法 Cost Method　<span class="hint">新户口预设</span></label>
+        <select id="c-costmethod" onchange="renderRateMismatch()">
           <option value="average">Average（平均成本）</option>
           <option value="fifo">FIFO（先进先出）</option>
         </select>
@@ -401,9 +405,12 @@
       <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
+    <!-- 这里填的费率只是「开新户口时的预设值」。真正算钱看的是户口。
+         两边不一样时一定要讲出来 —— 不然改了这里、看到「已保存 ✓」，会以为费率改好了。 -->
+    <div id="c-rate-mismatch" style="display:none"></div>
     <p class="net-preview" id="c-result" style="display:none"></p>
     <p class="hint"><b>这里填的费率与成本法，是用来开他第一个股票户口（APEX）的。</b>真正算钱是看「总览」页那张股票户口表 —— 他有几个户口就有几组收费，要改去那边改。<br>
-    分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本算法：Average（平均成本）或 FIFO（先进先出）。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
+    分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本法：Average（平均成本）或 FIFO（先进先出）。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
   </div>
 
   <!-- 自助注册但一笔记录都没有 = 很可能是既有客户重复注册（他原本那份在另一行） -->
@@ -569,10 +576,10 @@
   <div class="cards">
     <div class="card"><div class="label">总入金 Deposits</div><div class="value" id="cf-dep">-</div></div>
     <div class="card"><div class="label">总出金 Withdrawals</div><div class="value" id="cf-wd">-</div></div>
-    <div class="card"><div class="label">已实现盈亏 Realised P/L</div><div class="value" id="cf-realised">-</div></div>
+    <div class="card"><div class="label">已实现盈亏 Realized P/(L)</div><div class="value" id="cf-realised">-</div></div>
     <div class="card"><div class="label">股息 Dividends</div><div class="value gold" id="cf-div">-</div></div>
     <div class="card"><div class="label">现金余额 Cash Balance</div><div class="value" id="cf-cash">-</div></div>
-    <div class="card"><div class="label">持仓市值 Holdings Value</div><div class="value" id="cf-mv">-</div></div>
+    <div class="card"><div class="label">市值 Market Value</div><div class="value" id="cf-mv">-</div></div>
     <div class="card"><div class="label">户口总值 Account Equity</div><div class="value" id="cf-equity">-</div></div>
     <div class="card"><div class="label">真正赚亏 True P/L（总值−净入金）</div><div class="value" id="cf-true">-</div></div>
   </div>
@@ -2053,6 +2060,48 @@ function setClientResult(msg, ok) {
 }
 function failClient(msg) { alert(msg); setClientResult(msg, false); }
 
+// ---------- 投资者表单填的费率 vs 他户口实际用的费率 ----------
+// 算钱是看【户口】的设定（acctCfg 以 accountById 为准），投资者那组只在开第一个户口时用一次。
+// 所以改了投资者的费率、看到「已保存 ✓」，实际收费可能一点都没变 —— 2026 年 NG MIN LIN
+// 就是这样：改成 0.15% 之後，费用预览还是照 0.18% 算。
+// 不自动覆盖户口（他可能故意让 APEX 收 0.15%、CGS 收 0.20%），但差异一定要看得见。
+const n0 = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
+function rateFingerprint(cfg) {
+  const mode = cfg.brokerageMode === "tiered" ? "tiered" : "flat";
+  const rate = mode === "tiered" ? `${n0(cfg.rateBelow)}|${n0(cfg.rateAbove)}` : `${n0(cfg.rateFlat)}`;
+  return `${mode}|${rate}|${n0(cfg.minBrokerage)}|${cfg.costMethod === "fifo" ? "fifo" : "average"}`;
+}
+const cfgText = cfg => `${rateLabel(cfg)}，最低 ${fmt(n0(cfg.minBrokerage))}，${cfg.costMethod === "fifo" ? "FIFO" : "Average"}`;
+function formRateCfg() {
+  const mode = document.getElementById("c-mode").value;
+  return {
+    brokerageMode: mode,
+    rateFlat:  mode === "flat"   ? n0(document.getElementById("c-rate-flat").value)  : undefined,
+    rateBelow: mode === "tiered" ? n0(document.getElementById("c-rate-below").value) : undefined,
+    rateAbove: mode === "tiered" ? n0(document.getElementById("c-rate-above").value) : undefined,
+    minBrokerage: n0(document.getElementById("c-min").value),
+    costMethod: document.getElementById("c-costmethod").value,
+  };
+}
+// 回传「跟表单填的不一样」的户口清单（顺便更新画面上的提示）
+function renderRateMismatch() {
+  const box = document.getElementById("c-rate-mismatch");
+  if (!box) return [];
+  if (!editingClientId) { box.style.display = "none"; return []; }   // 新增模式没有可比的户口
+  const wantFp = rateFingerprint(formRateCfg());
+  const diff = accountsForClient(editingClientId).filter(a => rateFingerprint(a) !== wantFp);
+  if (!diff.length) { box.style.display = "none"; return []; }
+  box.style.display = "";
+  box.innerHTML = `⚠️ <b>真正算钱是看股票户口，跟这里填的不一样：</b><br>`
+    + diff.map(a => `　<span class="acct-tag">${a.name}</span> 目前用 <b>${cfgText(a)}</b>`).join("<br>")
+    + `<br><span class="hint">这里填的只是「开新户口时的预设值」。要改真正算钱的，按「保存」时会问你要不要一起套用。</span>`;
+  return diff;
+}
+function hideRateMismatch() {
+  const box = document.getElementById("c-rate-mismatch");
+  if (box) box.style.display = "none";
+}
+
 // ---------- 合并重复注册的投资者 ----------
 // 情境：旧客户的 email/电话没填 -> 他自己去注册 -> 系统认不出他 -> 开了一个全新的空白户口，
 // 他登入看到一片空白，以为交易记录不见了。这里把新的那个并回他原本那一位。
@@ -2158,8 +2207,32 @@ function saveClient() {
     rateFlat: mode === "flat" ? rateFlat : undefined,
     rateBelow: mode === "tiered" ? rateBelow : undefined,
     rateAbove: mode === "tiered" ? rateAbove : undefined };
+  let applied = 0;
   if (editingClientId) {
+    const diffs = renderRateMismatch();          // 要在 cancelEditClient 清掉 editingClientId 之前拿
     Object.assign(clientById(editingClientId), data);
+    if (diffs.length) {
+      const names = diffs.map(a => `「${a.name}」`).join("、");
+      if (confirm(`要不要把这组设定一起套用到 ${names} 户口？
+
+`
+        + `${cfgText(data)}
+
+`
+        + `确定 = 一起改（以后这些户口按新费率算）
+`
+        + `取消 = 只改投资者资料，户口维持原样
+
+`
+        + `（已经记好的交易不会变，它们的费用当初就算好存起来了）`)) {
+        for (const a of diffs) {
+          a.brokerageMode = data.brokerageMode;
+          a.rateFlat = data.rateFlat; a.rateBelow = data.rateBelow; a.rateAbove = data.rateAbove;
+          a.minBrokerage = data.minBrokerage; a.costMethod = data.costMethod;
+        }
+        applied = diffs.length;
+      }
+    }
     cancelEditClient();
   } else {
     const nc = { id: uid(), ...data };
@@ -2170,7 +2243,8 @@ function saveClient() {
       rateFlat: data.rateFlat, rateBelow: data.rateBelow, rateAbove: data.rateAbove });
     ["c-code", "c-name", "c-account", "c-email", "c-phone", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
   }
-  setClientResult(`已保存：${name}` + (email ? `（Gmail ${email}）` : "") + (phone ? `（电话 ${phone}）` : ""), true);
+  setClientResult(`已保存：${name}` + (email ? `（Gmail ${email}）` : "") + (phone ? `（电话 ${phone}）` : "")
+    + (applied ? ` · 已套用到 ${applied} 个户口` : ""), true);
   save();
 }
 function editClient(id) {
@@ -2188,12 +2262,14 @@ function editClient(id) {
   document.getElementById("c-min").value = c.minBrokerage || 0;
   document.getElementById("c-costmethod").value = c.costMethod === "fifo" ? "fifo" : "average";
   toggleRateFields();
+  renderRateMismatch();   // 一打开就要看得到户口跟这里不一样
   document.getElementById("c-form-title").textContent = "编辑投资者：" + c.name;
   document.getElementById("c-save-btn").textContent = "保存";
   document.getElementById("c-cancel-btn").style.display = "";
 }
 function cancelEditClient() {
   editingClientId = null;
+  hideRateMismatch();
   ["c-code", "c-name", "c-account", "c-email", "c-phone", "c-rate-flat", "c-rate-below", "c-rate-above"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("c-min").value = 8;
   document.getElementById("c-mode").value = "tiered";
