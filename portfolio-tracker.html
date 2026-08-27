@@ -330,7 +330,20 @@
     <h3 id="a-form-title">添加股票户口 Add Account</h3>
     <div class="form-row">
       <div class="field" id="f-acct-client"><label>投资者 Investor</label><select id="a-client"></select></div>
-      <div class="field"><label>户口名 Account Name</label><input type="text" id="a-name" placeholder="如 APEX / CGS / Maybank"></div>
+      <div class="field"><label>券商 Broker <span style="color:var(--gold)">*</span></label>
+        <select id="a-broker" onchange="toggleBrokerOther()"></select>
+        <span class="hint">找不到才选「其他」</span>
+      </div>
+      <div class="field" id="f-broker-other" style="display:none"><label>券商名称（自己填）</label>
+        <input type="text" id="a-broker-other" placeholder="如 Phillip Capital">
+        <span class="hint">只会出现在你自己的清单里</span>
+      </div>
+      <div class="field"><label>账户号码 Account No. <span style="color:var(--gold)">*</span></label>
+        <input type="text" id="a-accountno" placeholder="如 3NG20945"></div>
+      <div class="field"><label>户口种类 Account Type</label>
+        <input type="text" id="a-accttype" placeholder="如 CTA 3 / Cash / Margin">
+        <span class="hint">种类不同，收费通常不同</span>
+      </div>
       <div class="field"><label>Brokerage 模式</label>
         <select id="a-mode" onchange="toggleAcctRateFields()">
           <option value="tiered">分层 Tiered（按 RM100K）</option>
@@ -1291,6 +1304,15 @@ const plPct = (realized, cost) => {
 const today = () => new Date().toISOString().slice(0, 10);
 const clientById = id => db.clients.find(c => c.id === id);
 const clientLabel = c => c ? (c.code ? `[${c.code}] ${c.name}` : c.name) : "?";
+// 下拉选单用：账号搬到户口之後，两位同名的投资者在下拉里会长得一模一样。
+// 不自动合并同名的人 —— 同名不一定同人，只有使用者能判断。
+function clientPickLabel(c) {
+  if (!c) return "?";
+  const tail = accountsForClient(c.id)
+    .map(a => `${(a.broker || a.name || "").replace(/ (Securities|Investment Bank|Trade|MY)$/i, "")} ${a.accountNo || ""}`.trim())
+    .filter(Boolean).join(" / ");
+  return tail ? `${c.name} · ${tail}` : (c.name || "?");
+}
 const r2 = x => Math.round(x * 100) / 100;
 const ceil2 = x => Math.ceil(x * 100 - 1e-7) / 100;
 
@@ -1559,7 +1581,7 @@ function renderAll() {
   if (viewerRole === "client" && db.clients.length) filterSel.value = db.clients[0].id; // 投资者只能看自己
 
   // 投资者下拉
-  const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientLabel(c)}</option>`).join("");
+  const clientOpts = db.clients.map(c => `<option value="${c.id}">${clientPickLabel(c)}</option>`).join("");
   const tSel = document.getElementById("t-client"), vSel = document.getElementById("v-client"), cfSel = document.getElementById("cf-client");
   const tPrev = tSel.value, vPrev = vSel.value, cfPrev = cfSel.value;
   tSel.innerHTML = clientOpts || "<option value=''>请先添加投资者</option>";
@@ -1596,6 +1618,7 @@ function renderAll() {
   const stockF = stockSel.value;
   const matchStock = tk => stockF === "all" || tk === stockF;
 
+  fillBrokerSelect();
   fillAccountSelects();
   renderAccountsTable();
 
@@ -1996,9 +2019,32 @@ function toggleAcctRateFields() {
   document.getElementById("f-a-rate-above").style.display = tiered ? "" : "none";
   document.getElementById("f-a-rate-flat").style.display = tiered ? "none" : "";
 }
+// 券商下拉选「其他」才出现自由输入栏
+function toggleBrokerOther() {
+  const other = document.getElementById("a-broker").value === "__other";
+  document.getElementById("f-broker-other").style.display = other ? "" : "none";
+}
+function fillBrokerSelect() {
+  const sel = document.getElementById("a-broker");
+  if (!sel) return;
+  const prev = sel.value;
+  // 他自己填过的券商也要在清单里（只属于他自己，不回流给别人）
+  const mine = [...new Set(db.accounts.map(a => (a.broker || "").trim()).filter(Boolean))];
+  const list = [...new Set([...BROKERS, ...mine])];
+  sel.innerHTML = list.map(b => `<option value="${b}">${b}</option>`).join("")
+    + `<option value="__other">其他 Others…</option>`;
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  toggleBrokerOther();
+}
+
 function saveAccount() {
   const clientId = document.getElementById("a-client").value;
-  const name = document.getElementById("a-name").value.trim();
+  const brokerSel = document.getElementById("a-broker").value;
+  const broker = (brokerSel === "__other"
+    ? document.getElementById("a-broker-other").value : brokerSel).trim();
+  const accountNo = document.getElementById("a-accountno").value.trim();
+  const acctType = document.getElementById("a-accttype").value.trim();
+  const name = "";   // 退役：显示改用 broker + acctType + accountNo 组出来
   const mode = document.getElementById("a-mode").value;
   const rateFlat = parseFloat(document.getElementById("a-rate-flat").value);
   const rateBelow = parseFloat(document.getElementById("a-rate-below").value);
@@ -2006,14 +2052,15 @@ function saveAccount() {
   const min = parseFloat(document.getElementById("a-min").value) || 0;
   const costMethod = document.getElementById("a-costmethod").value;
   if (!clientId || !clientById(clientId)) { alert("请先选投资者"); return; }
-  if (!name) { alert("请填户口名，如 APEX / CGS"); return; }
+  if (!broker) { alert("请选券商（或选「其他」自己填）"); return; }
+  if (!accountNo) { alert("请填账户号码 —— 同一间券商底下靠它分辨不同户口"); return; }
   if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
   if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
-  // 同一位投资者底下户口名不能重复，否则交易选错户口自己都分不出
-  const dupe = db.accounts.some(a => a.clientId === clientId && a.id !== editingAccountId &&
-    a.name.toLowerCase() === name.toLowerCase());
-  if (dupe) { alert(`这位投资者已经有一个叫「${name}」的户口了`); return; }
-  const data = { clientId, name, brokerageMode: mode, minBrokerage: min, costMethod,
+  // 同一位投资者底下，「券商 + 账号」不能重复 —— 那是一个交易户口的唯一身份
+  const wantKey = `${broker.trim().toLowerCase()}|${accountNo.trim().toLowerCase()}`;
+  const dupe = db.accounts.some(a => a.clientId === clientId && a.id !== editingAccountId && acctKey(a) === wantKey);
+  if (dupe) { alert(`这位投资者在「${broker}」已经有账号 ${accountNo} 的户口了`); return; }
+  const data = { clientId, broker, accountNo, acctType, name, brokerageMode: mode, minBrokerage: min, costMethod,
     rateFlat: mode === "flat" ? rateFlat : undefined,
     rateBelow: mode === "tiered" ? rateBelow : undefined,
     rateAbove: mode === "tiered" ? rateAbove : undefined };
@@ -2025,7 +2072,7 @@ function saveAccount() {
     cancelEditAccount();
   } else {
     db.accounts.push({ id: uid(), ...data });
-    document.getElementById("a-name").value = "";
+    ["a-accountno", "a-accttype", "a-broker-other"].forEach(id => document.getElementById(id).value = "");
   }
   save();
 }
@@ -2034,7 +2081,16 @@ function editAccount(id) {
   if (!a) return;
   editingAccountId = id;
   document.getElementById("a-client").value = a.clientId;
-  document.getElementById("a-name").value = a.name || "";
+  fillBrokerSelect();
+  const b = a.broker || a.name || "";
+  const sel = document.getElementById("a-broker");
+  if (b && ![...sel.options].some(o => o.value === b)) {          // 自己填过的券商
+    sel.insertBefore(new Option(b, b), sel.lastChild);
+  }
+  sel.value = b || sel.value;
+  toggleBrokerOther();
+  document.getElementById("a-accountno").value = a.accountNo || "";
+  document.getElementById("a-accttype").value = a.acctType || "";
   document.getElementById("a-mode").value = a.brokerageMode || "flat";
   document.getElementById("a-rate-flat").value = a.rateFlat ?? "";
   document.getElementById("a-rate-below").value = a.rateBelow ?? "";
@@ -2049,7 +2105,9 @@ function editAccount(id) {
 }
 function cancelEditAccount() {
   editingAccountId = null;
-  ["a-name", "a-rate-flat", "a-rate-below", "a-rate-above"].forEach(id => document.getElementById(id).value = "");
+  ["a-accountno", "a-accttype", "a-broker-other", "a-rate-flat", "a-rate-below", "a-rate-above"]
+    .forEach(id => document.getElementById(id).value = "");
+  toggleBrokerOther();
   document.getElementById("a-min").value = 8;
   document.getElementById("a-mode").value = "tiered";
   toggleAcctRateFields();
@@ -2076,8 +2134,9 @@ function renderAccountsTable() {
   body.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="7">还没有股票户口。加一个（如 APEX / CGS）才能记交易。</td></tr>`;
   for (const a of rows) {
     const n = db.transactions.filter(t => t.accountId === a.id).length;
+    const incomplete = !String(a.broker || "").trim() || !String(a.accountNo || "").trim();
     body.innerHTML += `<tr><td>${clientLabel(clientById(a.clientId))}</td>
-      <td><span class="acct-tag">${a.name}</span></td>
+      <td><span class="acct-tag">${acctLabel(a)}</span>${incomplete ? ` <span class="hint" style="color:var(--gold)">← 资料不全</span>` : ""}</td>
       <td>${rateLabel(a)}</td><td class="num">${fmt(a.minBrokerage || 0)}</td>
       <td>${a.costMethod === "fifo" ? "FIFO" : "Average"}</td><td class="num">${n}</td>
       <td><button class="action small ghost" onclick="editAccount('${a.id}')">编辑</button>
@@ -2201,15 +2260,25 @@ function doMergeClient() {
   if (dup.email && target.email) { alert(`两边都有 Gmail（${dup.email} / ${target.email}），我不会替你决定留哪个。请先编辑其中一位把 Gmail 清空。`); return; }
   if (dup.phone && target.phone) { alert(`两边都有电话（${dup.phone} / ${target.phone}）。请先编辑其中一位把电话清空。`); return; }
   const moves = clientRecCount(dup.id);
+  // 两边有【同券商同账号】的户口 -> 合并後会变成同一个，先警告。
+  // 只警告不禁止 —— 同券商同账号本来就该是同一个户口，但只有他能确认。
+  const willCollide = accountsForClient(dup.id)
+    .filter(a => db.accounts.some(x => x.clientId === target.id && acctKey(x) === acctKey(a)));
+  if (willCollide.length && !confirm(
+      `⚠️ 两边有相同的户口（券商和账号一样）：\n\n`
+      + willCollide.map(a => `・${acctLabel(a)}`).join("\n")
+      + `\n\n合并後它们会变成同一个户口，里面的交易会放在一起算成本。\n`
+      + `确定它们真的是同一个交易户口吗？\n\n确定 = 继续　｜　取消 = 先去改掉其中一个的账号`)) return;
   if (!confirm(`确定要合并吗？\n\n把「${dup.name}」并进「${target.name}」：\n` +
       (dup.email ? `· Gmail ${dup.email} 交给 ${target.name}\n` : "") +
       (dup.phone ? `· 电话 ${dup.phone} 交给 ${target.name}\n` : "") +
       (moves ? `· 搬 ${moves} 笔记录过去\n` : "") +
       `· 删掉「${dup.name}」这一行\n\n这个动作不能复原。`)) return;
   // 1) 记录搬家：户口按【名字】对应过去（APEX -> 对方的 APEX），对方没有就照抄一个
-  const map = {};
+  const map = {}, collided = [];
   for (const a of accountsForClient(dup.id)) {
-    let t = db.accounts.find(x => x.clientId === target.id && (x.name || "").toLowerCase() === (a.name || "").toLowerCase());
+    let t = db.accounts.find(x => x.clientId === target.id && acctKey(x) === acctKey(a));
+    if (t) collided.push(acctLabel(a));
     if (!t) { t = { ...a, id: uid(), clientId: target.id }; db.accounts.push(t); }
     map[a.id] = t.id;
   }
