@@ -122,6 +122,11 @@
   .sync-dot { width: 13px; height: 13px; flex: none; border: 2px solid rgba(52, 152, 219, 0.3);
     border-top-color: var(--blue); border-radius: 50%; animation: auth-spin 0.8s linear infinite; }
 
+  /* 持仓页三层折叠：券商行可点，户口行是标签列 */
+  tr.broker-header td { background: rgba(52,152,219,0.09); border-top: 1px solid var(--border); font-size: 13.5px; }
+  tr.broker-header:hover td { background: rgba(52,152,219,0.16); }
+  tr.acct-header td { background: rgba(255,255,255,0.02); padding-top: 7px; padding-bottom: 7px; }
+
   /* 股票户口标签（APEX / CGS…），让人一眼看出这笔货在哪个户口 */
   .acct-tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 9px;
     background: rgba(52, 152, 219, 0.16); color: var(--blue); border: 1px solid rgba(52, 152, 219, 0.3); vertical-align: middle; }
@@ -303,6 +308,8 @@
 <div class="filter-bar">
   <label>查看投资者 Filter:</label>
   <select id="clientFilter" onchange="filterChanged()"><option value="all">全部投资者 All Investors</option></select>
+  <label>券商 Broker:</label>
+  <select id="brokerFilter" onchange="renderAll()"><option value="all">全部券商 All Brokers</option></select>
   <label>股票户口 Account:</label>
   <select id="accountFilter" onchange="renderAll()"><option value="all">全部户口 All Accounts</option></select>
   <label>股票 Counter:</label>
@@ -394,27 +401,9 @@
   <div class="form-card">
     <h3 id="c-form-title">添加投资者 Add Investor</h3>
     <div class="form-row">
-      <div class="field"><label>Investor Code</label><input type="text" id="c-code" placeholder="如 A0123" style="text-transform:uppercase"></div>
       <div class="field"><label>姓名 Name</label><input type="text" id="c-name" placeholder="投资者姓名"></div>
-      <div class="field"><label>户口种类 Account Type</label><input type="text" id="c-account" placeholder="如 Retailer / Cash / Margin"></div>
       <div class="field"><label>投资者 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="investor@gmail.com" style="min-width:200px"></div>
       <div class="field"><label>手机号码 Phone</label><input type="tel" id="c-phone" placeholder="012-345 6789" style="min-width:140px"></div>
-      <div class="field"><label>Brokerage 模式</label>
-        <select id="c-mode" onchange="toggleRateFields(); renderRateMismatch()">
-          <option value="tiered">分层 Tiered（按 RM100K）</option>
-          <option value="flat">Flat Rate（统一）</option>
-        </select>
-      </div>
-      <div class="field" id="f-rate-below"><label>&lt; RM100K (%)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-rate-below" placeholder="如 0.42" oninput="renderRateMismatch()"></div>
-      <div class="field" id="f-rate-above"><label>≥ RM100K (%)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-rate-above" placeholder="如 0.21" oninput="renderRateMismatch()"></div>
-      <div class="field" id="f-rate-flat" style="display:none"><label>Flat Rate (%)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-rate-flat" placeholder="如 0.18" oninput="renderRateMismatch()"></div>
-      <div class="field"><label>最低 Brokerage (RM)　<span class="hint">新户口预设</span></label><input type="number" step="any" id="c-min" placeholder="如 8" value="8" oninput="renderRateMismatch()"></div>
-      <div class="field"><label>成本法 Cost Method　<span class="hint">新户口预设</span></label>
-        <select id="c-costmethod" onchange="renderRateMismatch()">
-          <option value="average">Average（平均成本）</option>
-          <option value="fifo">FIFO（先进先出）</option>
-        </select>
-      </div>
       <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
@@ -422,8 +411,8 @@
          两边不一样时一定要讲出来 —— 不然改了这里、看到「已保存 ✓」，会以为费率改好了。 -->
     <div id="c-rate-mismatch" style="display:none"></div>
     <p class="net-preview" id="c-result" style="display:none"></p>
-    <p class="hint"><b>这里填的费率与成本法，是用来开他第一个股票户口（APEX）的。</b>真正算钱是看「总览」页那张股票户口表 —— 他有几个户口就有几组收费，要改去那边改。<br>
-    分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本法：Average（平均成本）或 FIFO（先进先出）。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</p>
+    <p class="hint"><b>账户号码、券商、户口种类、费率都在【总览】页那张股票户口表 —— 一个人可以有好几个户口，每个收费不同。</b><span style="display:none">真正算钱是看「总览」页那张股票户口表 —— 他有几个户口就有几组收费，要改去那边改。<br>
+    分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本法：Average（平均成本）或 FIFO（先进先出）。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</span></p>
   </div>
 
   <!-- 自助注册但一笔记录都没有 = 很可能是既有客户重复注册（他原本那份在另一行） -->
@@ -478,10 +467,16 @@
     </div>
     <p class="hint">填了代码的 counter 会<b>自动更新价格</b>：打开网页抓一次，开着每 15 分钟再抓。盘中是 ~15分钟延迟价；12:30 午市收市后 = 午市闭市价；5pm 后 = 当天闭市价。没填代码的可以手动输入。</p>
   </div>
+  <div class="filter-bar">
+    <label>视图 View:</label>
+    <button class="action small" id="btn-hview-acct" onclick="setHoldView('account')">🏦 按户口 By Account</button>
+    <button class="action small ghost" id="btn-hview-stock" onclick="setHoldView('stock')">📈 按股票 By Stock</button>
+    <span class="hint" id="hview-hint" style="margin:0"></span>
+  </div>
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>投资者</th><th>户口</th><th>股票</th><th>代码 Code</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
+        <th>股票 / 户口</th><th>代码 Code</th><th class="num">股数</th><th class="num">平均成本 (Net)</th><th class="num">总成本 (Net)</th>
         <th class="num">现价</th><th class="num">市值</th><th class="num">未实现 P/(L)</th><th class="num">%</th>
       </tr></thead>
       <tbody id="h-body"></tbody>
@@ -1540,10 +1535,17 @@ function matchClientFilter(clientId) {
   const f = document.getElementById("clientFilter").value;
   return f === "all" || f === clientId;
 }
+function matchBrokerFilter(accountId) {
+  const el = document.getElementById("brokerFilter");
+  const f = el ? el.value : "all";
+  if (f === "all") return true;
+  const a = accountById(accountId);
+  return !!a && acctBroker(a) === f;
+}
 function matchAccountFilter(accountId) {
   const el = document.getElementById("accountFilter");
   const f = el ? el.value : "all";
-  return f === "all" || f === accountId;
+  return (f === "all" || f === accountId) && matchBrokerFilter(accountId);
 }
 // 不传 accountId（例如在跑投资者清单）就只看投资者筛选
 function matchFilter(clientId, accountId) {
@@ -1602,11 +1604,21 @@ function renderAll() {
   document.getElementById("f-acct-client").style.display = (viewerRole === "client") ? "none" : "";
 
   // 户口筛选下拉：只列出目前筛选到的投资者名下的户口
+  // 券商筛选：只列出目前筛选到的投资者名下有的券商
+  const brSel = document.getElementById("brokerFilter");
+  const brPrev = brSel.value;
+  const brokers = [...new Set(db.accounts.filter(a => matchClientFilter(a.clientId)).map(acctBroker))].sort();
+  brSel.innerHTML = `<option value="all">全部券商 All Brokers</option>`
+    + brokers.map(b => `<option value="${b}">${b}</option>`).join("");
+  brSel.value = [...brSel.options].some(o => o.value === brPrev) ? brPrev : "all";
+
+  // 户口筛选【跟着券商串联】：选了 CGS，这里就只出现 CGS 的户口
   const acctSel = document.getElementById("accountFilter");
   const acctPrev = acctSel.value;
-  const acctList = db.accounts.filter(a => matchClientFilter(a.clientId));
+  const acctList = db.accounts.filter(a => matchClientFilter(a.clientId)
+    && (brSel.value === "all" || acctBroker(a) === brSel.value));
   acctSel.innerHTML = `<option value="all">全部户口 All Accounts</option>` +
-    acctList.map(a => `<option value="${a.id}">${a.name}${filterSel.value === "all" ? " · " + clientLabel(clientById(a.clientId)) : ""}</option>`).join("");
+    acctList.map(a => `<option value="${a.id}">${acctLabel(a)}${filterSel.value === "all" ? " · " + clientLabel(clientById(a.clientId)) : ""}</option>`).join("");
   acctSel.value = [...acctSel.options].some(o => o.value === acctPrev) ? acctPrev : "all";
 
   // 股票筛选：跟着投资者+户口的范围走，放在持仓渲染之前才套得到
@@ -1618,6 +1630,15 @@ function renderAll() {
   const stockF = stockSel.value;
   const matchStock = tk => stockF === "all" || tk === stockF;
 
+  // 持仓页视图切换按钮的选中状态
+  const bva = document.getElementById("btn-hview-acct"), bvs = document.getElementById("btn-hview-stock");
+  if (bva && bvs) {
+    bva.className = "action small" + (holdView === "account" ? "" : " ghost");
+    bvs.className = "action small" + (holdView === "stock" ? "" : " ghost");
+    document.getElementById("hview-hint").textContent = holdView === "stock"
+      ? "同一支股票跨户口合并显示（加权平均成本）—— 成本还是按户口分开算的"
+      : "成本按户口分开算（点券商那一行可以折叠）";
+  }
   fillBrokerSelect();
   fillAccountSelects();
   renderAccountsTable();
@@ -1663,66 +1684,105 @@ function renderAll() {
   document.getElementById("s-stamp-rate").value = db.settings.stampPer1000;
   document.getElementById("s-stamp-cap").value = db.settings.stampCap;
 
-  // 持仓：按投资者分组（投资者标题行 -> 仓位 -> 小计）
+  // 持仓：三层折叠（人 → 券商 → 户口 → 股票），每一层都有自己的合计。
+  // 成本【永远】按户口分开算 —— By Stock 只是把画面上的行合起来看，不碰任何储存的数字。
   const held = Object.values(pos).filter(p => p.qty > 0 && matchFilter(p.clientId, p.accountId) && matchStock(p.ticker));
   // 抓不到现价的股票，成本照算、市值不算 -> 分子分母不同基础，百分比会失真。
-  // 以前只有一个「有没有任何一支有价」的布林旗标：7 支里 6 支有价就照常显示，
-  // 完全看不出少算了一支。改成计数 + 名单，让画面能明讲少了哪几支。
+  // 所以用「计数 + 名单」，画面要能明讲少了哪几支。
   let totalCost = 0, totalValue = 0, totalUnrealized = 0;
-  let pricedCost = 0;                 // 有现价那部分的成本 -> 当百分比分母，跟市值同基础
-  const missingTickers = [];          // 抓不到现价的（会让市值与未实现少算）
+  let pricedCost = 0;
+  const missingTickers = [];
   const hBody = document.getElementById("h-body");
-  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="11">没有持仓</td></tr>`;
+  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="9">没有持仓</td></tr>`;
+
+  // 一支持股算成一组数字（有没有现价、市值、未实现）
+  const measure = list => {
+    let cost = 0, value = 0, unreal = 0, priced = 0;
+    const missing = [];
+    for (const p of list) {
+      cost += p.cost;
+      const pr = db.prices[p.ticker];
+      if (pr) { const mv = pr.price * p.qty; value += mv; unreal += mv - p.cost; priced += p.cost; }
+      else if (!missing.includes(p.ticker)) missing.push(p.ticker);
+    }
+    return { cost, value, unreal, priced, missing, hasPrice: priced > 0 || value > 0 };
+  };
+  const numCell = m => `<td class="num">${fmtN(m.cost)}</td><td></td>`
+    + `<td class="num">${m.hasPrice ? fmtN(m.value) : "-"}</td>`
+    + `<td class="num">${m.hasPrice ? `<span class="${pnlClass(m.unreal)}">${pnlFmt(m.unreal)}</span>` : "-"}</td>`
+    + `<td class="num">${m.hasPrice && m.priced > 0 ? `<span class="${pnlClass(m.unreal)}">${(m.unreal / m.priced * 100).toFixed(2)}%</span>` : "-"}</td>`;
+  const missRow = (miss, indent) => miss.length
+    ? `<tr class="subtotal"><td colspan="9" style="padding-left:${indent}px;color:var(--gold);font-weight:400;font-size:12.5px">
+        ⚠️ ${miss.length} 支无现价（${miss.join("、")}）未计入市值与未实现盈亏；% 只算有现价的部分</td></tr>` : "";
+  const stockRow = (p, indent, extra) => {
+    const pr = db.prices[p.ticker];
+    const mv = pr ? pr.price * p.qty : 0, u = pr ? mv - p.cost : 0;
+    const code = (db.symbols[p.ticker] || "").replace(/\.KL$/i, "");
+    return `<tr><td style="padding-left:${indent}px"><b>${p.ticker}</b>${extra || ""}</td><td class="hint">${code || "-"}</td>
+      <td class="num">${p.qty.toLocaleString()}</td><td class="num">${(p.cost / p.qty).toFixed(4)}</td><td class="num">${fmtN(p.cost)}</td>
+      <td class="num">${pr ? pr.price.toFixed(4) : "-"}</td><td class="num">${pr ? fmtN(mv) : "-"}</td>
+      <td class="num">${pr ? `<span class="${pnlClass(u)}">${pnlFmt(u)}</span>` : "-"}</td>
+      <td class="num">${pr ? (p.cost > 0 ? `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>` : `<span class="hint">白拿</span>`) : "-"}</td></tr>`;
+  };
+
   const byClient = {};
   for (const p of held) (byClient[p.clientId] = byClient[p.clientId] || []).push(p);
   const clientIds = Object.keys(byClient)
-    .sort((a, b) => (clientById(a)?.code || clientById(a)?.name || "").localeCompare(clientById(b)?.code || clientById(b)?.name || ""));
+    .sort((a, b) => (clientById(a)?.name || "").localeCompare(clientById(b)?.name || ""));
   for (const cid of clientIds) {
-    const c = clientById(cid);
-    hBody.innerHTML += `<tr class="client-header"><td colspan="11">👤 ${clientLabel(c)}${c && c.account ? ` · ${c.account}` : ""}</td></tr>`;
-    let subCost = 0, subValue = 0, subU = 0, subPricedCost = 0;
-    const subMissing = [];
-    // 先按户口再按股票排，同一个户口的货排在一起才好看
-    for (const p of byClient[cid].sort((a, b) =>
-        acctLabel(accountById(a.accountId)).localeCompare(acctLabel(accountById(b.accountId))) ||
-        a.ticker.localeCompare(b.ticker))) {
-      const avg = p.cost / p.qty;
-      const pr = db.prices[p.ticker];
-      totalCost += p.cost; subCost += p.cost;
-      let valCell = "-", pnlCell = "-", pctCell = "-";
-      if (pr) {
-        const mv = pr.price * p.qty, u = mv - p.cost;
-        totalValue += mv; totalUnrealized += u;
-        subValue += mv; subU += u;
-        pricedCost += p.cost; subPricedCost += p.cost;   // 百分比的分母只算有现价的
-        valCell = fmtN(mv);
-        pnlCell = `<span class="${pnlClass(u)}">${pnlFmt(u)}</span>`;
-        // 成本 0（免费凭单白拿的）没有百分比可算，除下去会变 Infinity%
-        pctCell = p.cost > 0 ? `<span class="${pnlClass(u)}">${(u / p.cost * 100).toFixed(2)}%</span>` : `<span class="hint">白拿</span>`;
-      } else {
-        if (!missingTickers.includes(p.ticker)) missingTickers.push(p.ticker);
-        if (!subMissing.includes(p.ticker)) subMissing.push(p.ticker);
-      }
-      const code = (db.symbols[p.ticker] || "").replace(/\.KL$/i, ""); // 交易时存的 Bursa 代码，这里一并显示
-      hBody.innerHTML += `<tr><td></td><td><span class="acct-tag">${acctLabel(accountById(p.accountId))}</span></td><td><b>${p.ticker}</b></td><td class="hint">${code || "-"}</td><td class="num">${p.qty.toLocaleString()}</td>
-        <td class="num">${avg.toFixed(4)}</td><td class="num">${fmtN(p.cost)}</td>
-        <td class="num">${pr ? pr.price.toFixed(4) : "-"}</td><td class="num">${valCell}</td><td class="num">${pnlCell}</td><td class="num">${pctCell}</td></tr>`;
-    }
-    // 「小计」改成「合计 Total · 谁的」：这行是按投资者分组的合计，
-    // 筛一个人时叫「小计」会让人以为上面还有更大的总数；显示全部时又分不清是谁的。
-    const subPriced = subPricedCost > 0 || subValue > 0;
-    hBody.innerHTML += `<tr class="subtotal"><td></td><td></td><td colspan="4">合计 Total · ${clientLabel(c)}</td><td class="num">${fmtN(subCost)}</td><td></td>
-      <td class="num">${subPriced ? fmtN(subValue) : "-"}</td>
-      <td class="num">${subPriced ? `<span class="${pnlClass(subU)}">${pnlFmt(subU)}</span>` : "-"}</td>
-      <td class="num">${subPriced && subPricedCost > 0 ? `<span class="${pnlClass(subU)}">${(subU / subPricedCost * 100).toFixed(2)}%</span>` : "-"}</td></tr>`;
-    // 少算了哪几支，要明讲 —— 成本是完整的，少的是市值那一边
-    if (subMissing.length) {
-      hBody.innerHTML += `<tr class="subtotal"><td colspan="11" style="color:var(--gold);font-weight:400;font-size:12.5px">
-        ⚠️ ${subMissing.length} 支无现价（${subMissing.join("、")}）未计入市值与未实现盈亏；
-        上面的 % 只算有现价的部分（不含无现价股票），总成本仍是完整的</td></tr>`;
-    }
-  }
+    const c = clientById(cid), mine = byClient[cid];
+    const mAll = measure(mine);
+    totalCost += mAll.cost; totalValue += mAll.value; totalUnrealized += mAll.unreal; pricedCost += mAll.priced;
+    for (const t of mAll.missing) if (!missingTickers.includes(t)) missingTickers.push(t);
 
+    // 券商分组
+    const byBroker = {};
+    for (const p of mine) (byBroker[acctBroker(accountById(p.accountId))] ||= []).push(p);
+    const brokerNames = Object.keys(byBroker).sort();
+    const acctCount = new Set(mine.map(p => p.accountId)).size;
+    hBody.innerHTML += `<tr class="client-header"><td colspan="9">👤 ${clientLabel(c)}
+      <span class="hint">　${brokerNames.length} 间券商 · ${acctCount} 个交易户口</span></td></tr>`;
+
+    if (holdView === "stock") {
+      // By Stock：同一支股票跨户口合并显示（加权平均成本），只是显示层
+      const byTicker = {};
+      for (const p of mine) (byTicker[p.ticker] ||= []).push(p);
+      for (const tk of Object.keys(byTicker).sort()) {
+        const list = byTicker[tk];
+        const qty = list.reduce((s, x) => s + x.qty, 0), cost = list.reduce((s, x) => s + x.cost, 0);
+        const brokers = [...new Set(list.map(x => acctBroker(accountById(x.accountId))))];
+        const from = `<span class="hint" style="margin-left:8px">来自 ${list.length} 个户口（${brokers.join("、")}）</span>`;
+        hBody.innerHTML += stockRow({ ticker: tk, qty, cost, accountId: list[0].accountId }, 14, from);
+      }
+    } else {
+      for (const bn of brokerNames) {
+        const bList = byBroker[bn], mB = measure(bList);
+        const bId = `hb-${cid}-${bn.replace(/[^A-Za-z0-9]/g, "")}`;
+        const open = holdOpen[bId] !== undefined ? holdOpen[bId] : (bn === brokerNames[0]);
+        const nAcct = new Set(bList.map(p => p.accountId)).size;
+        hBody.innerHTML += `<tr class="broker-header" onclick="toggleBroker('${bId}', ${open})" style="cursor:pointer">
+          <td colspan="4"><span style="display:inline-block;width:14px">${open ? "▾" : "▸"}</span>🏦 <b>${bn}</b>
+            <span class="hint">　${nAcct} 个户口</span></td>${numCell(mB)}</tr>`;
+        if (!open) continue;
+        const byAcct = {};
+        for (const p of bList) (byAcct[p.accountId] ||= []).push(p);
+        for (const aid of Object.keys(byAcct)) {
+          const a = accountById(aid), aList = byAcct[aid], mA = measure(aList);
+          hBody.innerHTML += `<tr class="acct-header"><td colspan="9" style="padding-left:26px">
+            <span class="acct-tag">${a ? (a.accountNo || "（无账号）") : "?"}</span>
+            ${a && a.acctType ? `<span class="acct-tag">${a.acctType}</span>` : ""}
+            <span class="acct-tag" style="color:var(--gold);border-color:rgba(241,196,15,.4);background:rgba(241,196,15,.08)">${a ? rateLabel(a) : ""} · 最低 ${fmt(a ? (a.minBrokerage || 0) : 0)}</span>
+            <span class="acct-tag">${a && a.costMethod === "fifo" ? "FIFO" : "Average"}</span></td></tr>`;
+          for (const p of aList.sort((x, y) => x.ticker.localeCompare(y.ticker))) hBody.innerHTML += stockRow(p, 46);
+          hBody.innerHTML += `<tr class="subtotal"><td colspan="4" style="padding-left:46px">户口合计 · ${a ? (a.accountNo || acctLabel(a)) : "?"}</td>${numCell(mA)}</tr>`;
+          hBody.innerHTML += missRow(mA.missing, 46);
+        }
+        hBody.innerHTML += `<tr class="subtotal"><td colspan="4" style="padding-left:26px"><b>${bn} 合计</b></td>${numCell(mB)}</tr>`;
+      }
+    }
+    hBody.innerHTML += `<tr class="subtotal"><td colspan="4"><b>合计 Total · ${clientLabel(c)}</b></td>${numCell(mAll)}</tr>`;
+    hBody.innerHTML += missRow(mAll.missing, 14);
+  }
   // 股票下拉（全局）
   const allTickers = [...new Set(db.transactions.map(t => t.ticker))].sort();
   const heldTickers = [...new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker))].sort();
@@ -2155,6 +2215,22 @@ function fillAccountSelects() {
                                 : `<option value="">（请先在总览加户口）</option>`;
     if (list.some(a => a.id === prev)) sel.value = prev;
   }
+}
+
+// 持仓页：By Account（默认，成本按户口分开算）/ By Stock（同股跨户口合并显示）
+// ⚠️ By Stock 只是【显示层】把行合起来，不影响任何储存的成本或盈亏。
+let holdView = localStorage.getItem("hold-view") === "stock" ? "stock" : "account";
+const holdOpen = {};   // 哪几间券商是展开的（默认只展开第一间，5 间全摊开没人看得完）
+function setHoldView(v) {
+  holdView = v === "stock" ? "stock" : "account";
+  localStorage.setItem("hold-view", holdView);
+  renderAll();
+}
+// 要把【目前实际是开是合】传进来。只看 holdOpen 会错：
+// 第一间券商默认开、其余默认合，两者存的都是 undefined，分不出来。
+function toggleBroker(id, isOpen) {
+  holdOpen[id] = !isOpen;
+  renderAll();
 }
 
 // 投资者表单以前成功跟失败长得一模一样（都是什么都不显示）。
@@ -3316,19 +3392,23 @@ function exportJSON() {
 function exportCSV() {
   const { realizedByTx, costByTx } = computePortfolio();
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
-  let csv = "﻿record_type,investor_code,investor,account,stock_account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l,p_l_pct\n";
+  let csv = "﻿record_type,investor_code,investor,account,stock_account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l,p_l_pct,broker,acct_type\n";
   for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(t.clientId);
     const r = realizedByTx[t.id];
-    csv += ["transaction", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", acctLabel(accountById(t.accountId)), t.date, t.ticker, t.type, t.qty, t.price,
+    const ta = accountById(t.accountId) || {};
+    csv += ["transaction", ta.accountNo || "", c ? c.name : "?", ta.acctType || "", acctLabel(ta), t.date, t.ticker, t.type, t.qty, t.price,
       (t.qty * t.price).toFixed(2), (t.brokerage || 0).toFixed(2), (t.stamp || 0).toFixed(2), (t.clearing || 0).toFixed(2),
       netAmount(t).toFixed(2), r !== undefined ? r.toFixed(2) : "",
-      (r !== undefined && costByTx[t.id] > 0) ? (r / costByTx[t.id] * 100).toFixed(2) : ""].map(esc).join(",") + "\n";
+      (r !== undefined && costByTx[t.id] > 0) ? (r / costByTx[t.id] * 100).toFixed(2) : "",
+      ta.broker || "", ta.acctType || ""].map(esc).join(",") + "\n";
   }
   for (const d of [...db.dividends].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(d.clientId);
-    csv += ["dividend", c ? c.code || "" : "", c ? c.name : "?", c ? c.account || "" : "", acctLabel(accountById(d.accountId)), d.date, d.ticker, "dividend", d.qty, d.perShare,
-      "", "", "", "", d.total.toFixed(2), d.total.toFixed(2), ""].map(esc).join(",") + "\n";
+    const da = accountById(d.accountId) || {};
+    csv += ["dividend", da.accountNo || "", c ? c.name : "?", da.acctType || "", acctLabel(da), d.date, d.ticker, "dividend", d.qty, d.perShare,
+      "", "", "", "", d.total.toFixed(2), d.total.toFixed(2), "",
+      da.broker || "", da.acctType || ""].map(esc).join(",") + "\n";
   }
   download(`portfolio-export-${today()}.csv`, csv, "text/csv");
 }
