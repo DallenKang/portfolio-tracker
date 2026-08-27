@@ -1297,9 +1297,26 @@ const ceil2 = x => Math.ceil(x * 100 - 1e-7) / 100;
 // ---------- 股票户口 Accounts（一位投资者可以有多个：APEX / CGS / Maybank…）----------
 // 每个户口自己的 brokerage 收法与成本法 —— 不同股票行收费不同，成本也必须分开算。
 const DEFAULT_ACCT_NAME = "APEX";
+// 券商清单放【程式里】不进资料库 —— 券商会改名、会新增（CIMB → CGS 就是活例），
+// 改一行程式就好，不用迁移任何资料。存进去的一律是这里的【标准名】，
+// 不然「CGS」「CGS-CIMB」「CGS Securities」会被当成三家，分组就废了。
+const BROKERS = [
+  "APEX Securities", "CGS Securities", "Public Investment Bank", "Maybank Investment Bank",
+  "Hong Leong Investment Bank", "RHB Investment Bank", "Kenanga Investment Bank",
+  "Affin Hwang", "TA Securities", "Rakuten Trade", "Moomoo MY",
+  "M+ Online (Malacca)", "UOB Kay Hian",
+];
 const accountById = id => db.accounts.find(a => a.id === id);
 const accountsForClient = cid => db.accounts.filter(a => a.clientId === cid);
-const acctLabel = a => a ? a.name : "?";
+// 户口的显示名：券商 · 种类 · 账号。缺哪一段就跳过那一段，绝不显示 undefined。
+function acctLabel(a) {
+  if (!a) return "?";
+  const bits = [a.broker || a.name || "", a.acctType || "", a.accountNo || ""].filter(x => String(x).trim());
+  return bits.length ? bits.join(" · ") : "（未命名户口）";
+}
+const acctBroker = a => (a && (a.broker || a.name)) || "（未指定券商）";
+// 券商 + 账号 = 一个交易户口的唯一身份（合并功能靠它对应，不能再用自由文字的名字）
+const acctKey = a => `${(a.broker || a.name || "").trim().toLowerCase()}|${(a.accountNo || "").trim().toLowerCase()}`;
 // 算费用/成本法要用的设定：以户口为准；万一户口不见了就退回投资者层级的旧设定（不会算错，只是回到旧行为）
 function acctCfg(accountId, clientId) {
   return accountById(accountId) || clientById(clientId) ||
@@ -1317,7 +1334,7 @@ function ensureAccounts() {
   for (const c of db.clients) {
     let list = accountsForClient(c.id);
     if (!list.length) {
-      const a = { id: uid(), clientId: c.id, name: DEFAULT_ACCT_NAME,
+      const a = { id: uid(), clientId: c.id, broker: "", accountNo: "", acctType: "", name: DEFAULT_ACCT_NAME,
                   brokerageMode: c.brokerageMode || "flat",
                   rateFlat: c.rateFlat, rateBelow: c.rateBelow, rateAbove: c.rateAbove,
                   minBrokerage: c.minBrokerage || 0,
@@ -1335,7 +1352,40 @@ function ensureAccounts() {
       if (fid) { r.accountId = fid; changed = true; }
     }
   }
+  if (migrateBrokerFields()) changed = true;
   return changed;
+}
+
+// 把「券商 / 账户号码 / 种类」从投资者搬到户口。
+// ⚠️ 只搬栏位，【绝对不合并任何 accountId】—— 成本基础是 clientId|accountId|ticker，
+//    合并户口等於把两批不同成本的货混在一起，算出来的盈亏就废了。
+// 每位投资者目前刚好一个户口（迁移当下实测 14 对 14），所以是 1 对 1 搬过去，没有歧义。
+const BROKER_ALIAS = { "APEX": "APEX Securities" };   // 旧的自由文字名字 -> 标准名
+function migrateBrokerFields() {
+  let changed = false;
+  for (const c of db.clients) {
+    const list = accountsForClient(c.id);
+    for (const a of list) {
+      // 券商：旧资料把它塞在自由文字的 name 栏
+      if (!a.broker) {
+        const old = String(a.name || "").trim();
+        a.broker = BROKER_ALIAS[old] || old || "";
+        changed = true;
+      }
+      // 账号与种类：一对一才搬得明确。多户口的情况不猜，留空让他自己补。
+      if (a.accountNo === undefined) { a.accountNo = ""; changed = true; }
+      if (a.acctType === undefined) { a.acctType = ""; changed = true; }
+      if (list.length === 1) {
+        if (!a.accountNo && c.code) { a.accountNo = c.code; changed = true; }
+        if (!a.acctType && c.account) { a.acctType = c.account; changed = true; }
+      }
+    }
+  }
+  return changed;
+}
+// 迁移後哪些户口还缺资料 —— 给使用者一份清单，让他一次补齐
+function accountsMissingInfo() {
+  return db.accounts.filter(a => !String(a.broker || "").trim() || !String(a.accountNo || "").trim());
 }
 
 // ---------- Fee engine（马来西亚 Bursa 规则）----------
