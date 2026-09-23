@@ -146,6 +146,8 @@
   body.client-mode #tab-holdings .form-card { display: none; } /* 价格自动抓，不用手动 */
   body.client-mode #tab-exdiv .form-card button { display: none; } /* 补记按钮是 owner 的 */
   body.client-mode #clientFilter { pointer-events: none; opacity: 0.75; }
+  /* 输入时间是给後台看的，顾客那边整栏藏起来 */
+  body.client-mode .col-entry { display: none; }
   /* 员工权限页只有 super 看得到（後端也会挡，这里只是不显示） */
   body.not-super .tab-btn[data-tab="staff"], body.client-mode .tab-btn[data-tab="staff"] { display: none; }
   /* 存云端失败 = 会掉资料，要看得见 */
@@ -531,6 +533,7 @@
         <th class="num sortable" data-key="net" data-label="Net Amount" onclick="setTxSort('net')">Net Amount</th>
         <th class="num sortable" data-key="pl" data-label="P/(L)" onclick="setTxSort('pl')">P/(L)</th>
         <th class="num sortable" data-key="plpct" data-label="P/(L) %" onclick="setTxSort('plpct')">P/(L) %</th>
+        <th class="col-entry">输入时间</th>
         <th></th>
       </tr></thead>
       <tbody id="t-body"></tbody>
@@ -1286,6 +1289,15 @@ function initCloudUI() {
 // ---------- Helpers ----------
 const fmt = n => CCY + " " + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtN = n => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// 资料输入时间：存 ISO（跨时区不会错），显示成本地时间。旧资料没有这栏，显示 "-"。
+const nowStamp = () => new Date().toISOString();
+function fmtStamp(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "-";
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 const pnlClass = n => n > 0 ? "pos" : n < 0 ? "neg" : "";
 const pnlFmt = n => n < 0 ? "(" + fmtN(-n) + ")" : fmtN(n);
 // 已实现盈亏的百分比 = 赚了多少 ÷ 卖掉那批股的成本。
@@ -1843,7 +1855,7 @@ function renderAll() {
     for (const t of txs) { if (t.type === "sell") sq += t.qty; else if (t.type === "bonus") bonus += t.qty; else bq += t.qty; }
     sumEl.textContent = `${stockF}: 总买 ${bq.toLocaleString()}${bonus ? ` · 🎁 红股 ${bonus.toLocaleString()}` : ""} · 总卖 ${sq.toLocaleString()} · 净持仓 ${(bq + bonus - sq).toLocaleString()}`;
   }
-  tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="14">没有交易记录</td></tr>`;
+  tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="16">没有交易记录</td></tr>`;
   let totalBrokerage = 0;
   for (const t of db.transactions) if (matchFilter(t.clientId, t.accountId) && matchStock(t.ticker)) totalBrokerage += t.brokerage || 0;
   for (const t of txs) {
@@ -1864,6 +1876,7 @@ function renderAll() {
       <td class="num"><b>${fmtN(netAmount(t))}</b></td>
       <td class="num">${r !== undefined ? `<span class="${pnlClass(r)}">${pnlFmt(r)}</span>` : "-"}</td>
       <td class="num">${plPct(r, costByTx[t.id])}</td>
+      <td class="col-entry" style="white-space:nowrap;color:var(--muted);font-size:12px" title="这笔资料是什么时候输入系统的">${fmtStamp(t.createdAt)}</td>
       <td style="white-space:nowrap"><button class="action small ghost" onclick="editTx('${t.id}')">✏️ 编辑</button> <button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
   }
 
@@ -2567,7 +2580,7 @@ function addTransaction() {
     cancelEditTx();
     document.getElementById("t-preview").textContent = "已保存修改 ✓";
   } else {
-    db.transactions.push({ id: uid(), clientId, accountId, date, ticker, type, qty, price, brokerage, stamp, clearing });
+    db.transactions.push({ id: uid(), clientId, accountId, date, ticker, type, qty, price, brokerage, stamp, clearing, createdAt: nowStamp() });
     ["t-ticker", "t-code", "t-qty", "t-price", "t-brokerage", "t-stamp", "t-clearing"].forEach(id => document.getElementById(id).value = "");
     document.getElementById("t-code").dataset.forTicker = "";
     document.getElementById("t-preview").textContent = "已添加 ✓";
@@ -3089,7 +3102,7 @@ async function backfillSplits(silent) {
             if (qty <= 0) continue;
             db.settings[key] = 1;
             db.transactions.push({ id: "wrt" + uid(), clientId: cid, accountId: acctId, date: s.exDate, ticker: s.warrantSymbol,
-              type: "bonus", qty, price: 0, brokerage: 0, stamp: 0, clearing: 0,
+              type: "bonus", qty, price: 0, brokerage: 0, stamp: 0, clearing: 0, createdAt: nowStamp(),
               note: `免费凭单 ${s.ratio}（持 ${held[hk].toLocaleString()} ${tk}）` });
             wCreated++;
           }
@@ -3118,7 +3131,7 @@ async function backfillSplits(silent) {
           if (extra === 0 || held[hk2] + extra <= 0) continue;
           db.settings[key] = 1;
           db.transactions.push({ id: "spl" + uid(), clientId: cid, accountId: acctId, date: s.exDate, ticker: tk,
-            type: "bonus", qty: extra, price: 0, brokerage: 0, stamp: 0, clearing: 0, note: `${s.type} ${s.ratio}` });
+            type: "bonus", qty: extra, price: 0, brokerage: 0, stamp: 0, clearing: 0, createdAt: nowStamp(), note: `${s.type} ${s.ratio}` });
           created++;
         }
       }
@@ -3392,7 +3405,7 @@ function exportJSON() {
 function exportCSV() {
   const { realizedByTx, costByTx } = computePortfolio();
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
-  let csv = "﻿record_type,investor_code,investor,account,stock_account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l,p_l_pct,broker,acct_type\n";
+  let csv = "﻿record_type,investor_code,investor,account,stock_account,date,counter,type,qty,price,gross,brokerage,stamp_duty,clearing,net_amount,p_l,p_l_pct,broker,acct_type,entry_time,note\n";
   for (const t of [...db.transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(t.clientId);
     const r = realizedByTx[t.id];
@@ -3401,14 +3414,14 @@ function exportCSV() {
       (t.qty * t.price).toFixed(2), (t.brokerage || 0).toFixed(2), (t.stamp || 0).toFixed(2), (t.clearing || 0).toFixed(2),
       netAmount(t).toFixed(2), r !== undefined ? r.toFixed(2) : "",
       (r !== undefined && costByTx[t.id] > 0) ? (r / costByTx[t.id] * 100).toFixed(2) : "",
-      ta.broker || "", ta.acctType || ""].map(esc).join(",") + "\n";
+      ta.broker || "", ta.acctType || "", t.createdAt ? fmtStamp(t.createdAt) : "", t.note || ""].map(esc).join(",") + "\n";
   }
   for (const d of [...db.dividends].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = clientById(d.clientId);
     const da = accountById(d.accountId) || {};
     csv += ["dividend", da.accountNo || "", c ? c.name : "?", da.acctType || "", acctLabel(da), d.date, d.ticker, "dividend", d.qty, d.perShare,
       "", "", "", "", d.total.toFixed(2), d.total.toFixed(2), "",
-      da.broker || "", da.acctType || ""].map(esc).join(",") + "\n";
+      da.broker || "", da.acctType || "", "", ""].map(esc).join(",") + "\n";
   }
   download(`portfolio-export-${today()}.csv`, csv, "text/csv");
 }
