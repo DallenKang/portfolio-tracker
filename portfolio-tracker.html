@@ -767,6 +767,7 @@ function load() {
   if (!d.staff) d.staff = [];       // 员工名单 [{id,email,name,role,clients}]，只有 super 拿得到
   if (!d.symbols) d.symbols = {};   // counter -> Yahoo 代码 (如 MAYBANK -> 1155.KL)
   if (!d.cashflows) d.cashflows = []; // 出入金 [{id,clientId,date,type,amount,note}]
+  if (!d.snapshots) d.snapshots = []; // 每日净值快照（按户口）[{id,clientId,accountId,date,cost,pricedCost,value,missing,at}]
   if (!d.exdiv) d.exdiv = null;     // {fetchedAt, rows} ex-dividend 缓存
   if (!d.ipo) d.ipo = null;         // {fetchedAt, rows} IPO 上市提醒缓存
   if (!d.ent) d.ent = null;         // {fetchedAt, rows} 红股/拆股/送股 缓存
@@ -1114,7 +1115,7 @@ async function cloudCall(body, label) {
 
 function cloudPayload() {
   const p = { clients: db.clients, accounts: db.accounts, settings: db.settings, transactions: db.transactions,
-              dividends: db.dividends, cashflows: db.cashflows, prices: db.prices, symbols: db.symbols };
+              dividends: db.dividends, cashflows: db.cashflows, snapshots: db.snapshots || [], prices: db.prices, symbols: db.symbols };
   // 员工名单只有 super 能送。非 super 送空的 -> 後台会沿用服务器版，不会被洗掉。
   if (isSuper) p.staff = db.staff;
   return p;
@@ -1242,6 +1243,8 @@ async function pullCloud(silent, quiet) {
     db.transactions = d.transactions || [];
     db.dividends = d.dividends || [];
     db.cashflows = d.cashflows || [];
+    db.snapshots = d.snapshots || [];   // ⚠️ 少这行，拉回来本机是空的，下次一存就把云端快照洗光
+    cloudLoadedOnce = true;             // 资料到齐了，从现在开始记快照才准
     db.prices = d.prices || {};
     db.symbols = d.symbols || {};
     db.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
@@ -1309,6 +1312,61 @@ const plPct = (realized, cost) => {
   return `<span class="${pnlClass(realized)}">${pct.toFixed(2)}%</span>`;
 };
 const today = () => new Date().toISOString().slice(0, 10);
+// ⚠️ 上面那个 today() 是 UTC 日期。大马是 UTC+8，早上 8 点前开网页会被算成「昨天」。
+//    快照一定要用【本地日期】，所以另外写一个，不共用 today()。
+const localToday = () => {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+// ---------- 每日净值快照（按户口记，一天一笔）----------
+// 为什么按户口不按投资者：户口可以往上加总成投资者或券商，反过来拆不回来。
+// 为什么 pricedCost 要另外存：报酬率必须是 (value − pricedCost) ÷ pricedCost，
+//   分子分母同一个基础，否则抓不到价的那几支会把报酬率压低（跟「缺价少算」同一个坑）。
+const SNAPSHOT_START = "2026-10-01";   // 这天之前一律不记
+let cloudLoadedOnce = false;           // 云端资料还没拉回来之前，不拿本机旧资料记快照（会记到错的数字）
+function recordSnapshots() {
+  if (viewerRole === "client") return false;   // 投资者本人不写，避开 saveMine 的权限守卫
+  if (cloudReady() && !cloudLoadedOnce) return false; // 有云端但还没载入 -> 等载入完那次再记
+  const date = localToday();
+  if (date < SNAPSHOT_START) return false;
+  if (!Array.isArray(db.snapshots)) db.snapshots = [];
+  const { pos } = computePortfolio();
+  const byAcct = {};
+  for (const k in pos) {
+    const p = pos[k];
+    if (!(p.qty > 1e-9)) continue;             // 空仓不记
+    const key = p.clientId + "|" + p.accountId;
+    let a = byAcct[key];
+    if (!a) a = byAcct[key] = { clientId: p.clientId, accountId: p.accountId,
+                                cost: 0, pricedCost: 0, value: 0, priced: 0, missing: 0 };
+    a.cost += p.cost;
+    const px = (db.prices[p.ticker] || {}).price;
+    if (px > 0) { a.priced++; a.pricedCost += p.cost; a.value += p.qty * px; }
+    else a.missing++;
+  }
+  const at = new Date().toISOString();
+  const r2 = n => Math.round(n * 100) / 100;
+  let changed = false;
+  for (const key in byAcct) {
+    const a = byAcct[key];
+    if (!a.priced) continue;                   // 整个户口都抓不到价 -> 不记一个假的 0 市值
+    const row = { clientId: a.clientId, accountId: a.accountId, date,
+                  cost: r2(a.cost), pricedCost: r2(a.pricedCost), value: r2(a.value), missing: a.missing };
+    const ex = db.snapshots.find(x => x.accountId === a.accountId && x.date === date);
+    if (ex) {
+      // 同一天再开就覆盖成最新（越晚越接近收盘价）；数字没变就不动，免得白推一次云端
+      if (ex.cost === row.cost && ex.pricedCost === row.pricedCost
+          && ex.value === row.value && ex.missing === row.missing) continue;
+      Object.assign(ex, row, { at });
+      changed = true;
+    } else {
+      db.snapshots.push(Object.assign({ id: uid() }, row, { at }));
+      changed = true;
+    }
+  }
+  return changed;
+}
 const clientById = id => db.clients.find(c => c.id === id);
 const clientLabel = c => c ? (c.code ? `[${c.code}] ${c.name}` : c.name) : "?";
 // 下拉选单用：账号搬到户口之後，两位同名的投资者在下拉里会长得一模一样。
@@ -2488,14 +2546,24 @@ function cancelEditClient() {
   document.getElementById("c-cancel-btn").style.display = "none";
 }
 function delClient(id) {
-  // 出入金以前没算进来 —— 只有出入金没有交易的投资者会被静静删掉，那笔钱就没了
-  const n = db.transactions.filter(t => t.clientId === id).length
-          + db.dividends.filter(d => d.clientId === id).length
-          + db.cashflows.filter(c => c.clientId === id).length;
-  if (n > 0) { alert(`这个投资者还有 ${n} 条记录（交易/股息/出入金），不能删除。请先处理那些记录。`); return; }
-  if (!confirm("确定删除这个投资者？")) return;
-  db.clients = db.clients.filter(c => c.id !== id);
-  db.accounts = db.accounts.filter(a => a.clientId !== id); // 他的股票户口一起收掉，不然会留下没有主人的孤儿列
+  // 不挡：删不删是 Dallen 的决定（他有 Excel 另存）。但要讲清楚会删掉什么，然後连带删干净。
+  // ⚠️ 要嘛全删、要嘛不删 —— 只删人、留下记录，会变成挂在不存在的投资者底下的幽灵持仓，盈亏就乱了。
+  const c = clientById(id);
+  const mine = r => r.clientId === id;
+  const n = db.transactions.filter(mine).length;
+  const m = db.dividends.filter(mine).length;
+  const k = db.cashflows.filter(mine).length;
+  const msg = (n + m + k)
+    ? `确定删除【${c ? c.name : "?"}】？\n\n这位投资者有 ${n} 笔交易、${m} 笔股息、${k} 笔出入金，\n会全部一起删除，不能复原。`
+    : "确定删除这个投资者？";
+  if (!confirm(msg)) return;
+  const keep = r => r.clientId !== id;
+  db.clients = db.clients.filter(x => x.id !== id);
+  db.accounts = db.accounts.filter(keep);
+  db.transactions = db.transactions.filter(keep);
+  db.dividends = db.dividends.filter(keep);
+  db.cashflows = db.cashflows.filter(keep);
+  if (Array.isArray(db.snapshots)) db.snapshots = db.snapshots.filter(keep);
   save();
 }
 function saveSettings() {
@@ -2818,7 +2886,7 @@ async function fetchAllPrices(auto) {
       } else failed.push(tk + (q && q.error ? "（代码错误?）" : ""));
     }
     if (viewerRole === "client") { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); } // 投资者：价格只存本地显示
-    else save();
+    else { recordSnapshots(); save(); }   // 快照一定要在抓完价之後；跟着这次 save 一起推，不额外打云端
     let msg = `✓ ${auto ? "自动" : ""}更新了 ${ok} 个 counter 的最新价（${new Date().toLocaleTimeString()}）`;
     if (failed.length) msg += ` · 失败: ${failed.join(", ")}`;
     if (missing.length) msg += ` · 没设代码: ${missing.join(", ")}`;
