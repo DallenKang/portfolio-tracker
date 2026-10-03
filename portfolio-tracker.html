@@ -110,7 +110,7 @@
     border-radius: 8px; padding: 10px 14px; margin-top: 10px; font-size: 13.5px; line-height: 1.7; }
 
   /* 登入快过期的横幅：显示/隐藏由 JS 设 style.display（元素上有 inline display:none） */
-  #relogin-banner { align-items: center; gap: 12px; flex-wrap: wrap; background: rgba(241, 196, 15, 0.12);
+  #relogin-banner, #breaker-banner { align-items: center; gap: 12px; flex-wrap: wrap; background: rgba(241, 196, 15, 0.12);
     border: 1px solid var(--gold); color: var(--text); padding: 10px 14px;
     border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
 
@@ -146,8 +146,6 @@
   body.client-mode #tab-holdings .form-card { display: none; } /* 价格自动抓，不用手动 */
   body.client-mode #tab-exdiv .form-card button { display: none; } /* 补记按钮是 owner 的 */
   body.client-mode #clientFilter { pointer-events: none; opacity: 0.75; }
-  /* 输入时间是给後台看的，顾客那边整栏藏起来 */
-  body.client-mode .col-entry { display: none; }
   /* 员工权限页只有 super 看得到（後端也会挡，这里只是不显示） */
   body.not-super .tab-btn[data-tab="staff"], body.client-mode .tab-btn[data-tab="staff"] { display: none; }
   /* 存云端失败 = 会掉资料，要看得见 */
@@ -225,6 +223,10 @@
 <div id="relogin-banner" style="display:none">
   <span>⚠️ <b>登入快过期了</b> —— 请重新登入，否则接下来记的东西<b>存不上云端</b>。</span>
   <button class="action small" style="background:var(--gold);color:#1a1a1a" onclick="goRelogin()">去重新登入</button>
+</div>
+<div id="breaker-banner" style="display:none">
+  <span>☁️ <b>云端忙，5 分钟後自动再试。</b>你的资料安全在这台电脑上。</span>
+  <button class="action small" style="background:var(--gold);color:#1a1a1a" onclick="retryCloudNow()">立即重试</button>
 </div>
 
 <!-- 登入时先显示上次的资料，这条说明云端还在同步（同步完自己会消失） -->
@@ -533,7 +535,6 @@
         <th class="num sortable" data-key="net" data-label="Net Amount" onclick="setTxSort('net')">Net Amount</th>
         <th class="num sortable" data-key="pl" data-label="P/(L)" onclick="setTxSort('pl')">P/(L)</th>
         <th class="num sortable" data-key="plpct" data-label="P/(L) %" onclick="setTxSort('plpct')">P/(L) %</th>
-        <th class="col-entry">输入时间</th>
         <th></th>
       </tr></thead>
       <tbody id="t-body"></tbody>
@@ -724,7 +725,9 @@
   </div>
 
   <h2 class="section">原始数据 Raw Database</h2>
-  <pre id="jsonView"></pre>
+  <p class="hint" style="margin:0 0 8px"><button class="action small ghost" id="raw-btn" onclick="toggleRaw()">显示</button>
+    　整份资料很长，按了才生成（以前每次画面更新都生成一次，拖慢速度）</p>
+  <pre id="jsonView" style="display:none"></pre>
 </div>
 
 <script>
@@ -819,11 +822,13 @@ function tokenExpiresInMs() {
 }
 // 换一张没过期的凭证。minMs = 剩多少时间就该换（不传 = 5 分钟）。
 // 回传 true = 现在手上的凭证够新；false = 换不到（多半是 One Tap 被 Google 冷却挡住）。
-async function ensureFreshToken(minMs) {
+async function ensureFreshToken(minMs, quiet) {
   if (!googleIdToken) return true;               // 用後备密钥的不受影响
   const need = (minMs === undefined) ? 5 * 60 * 1000 : minMs;
-  if (tokenExpiresInMs() > need) return true;    // 还够新，不用换
+  if (need !== Infinity && tokenExpiresInMs() > need) return true;    // 还够新，不用换（Infinity = 强制换）
   const before = googleIdToken;
+  // 浏览器登着两个 Google 帐号时，没指定的话 Google 可能给另一个帐号的凭证 -> 指名要现在这个
+  if (googleEmail && gsiHint !== googleEmail) gsiInit(googleEmail);
   await new Promise(resolve => {
     tokenRefreshResolve = resolve;
     let settled = false;
@@ -840,8 +845,10 @@ async function ensureFreshToken(minMs) {
     } catch (e) { done(); }
     setTimeout(done, 4000);
   });
-  const ok = !!googleIdToken && googleIdToken !== before && tokenExpiresInMs() > need;
-  if (!ok) showReloginNeeded();                  // 换不到就【提前】讲，不要等他做完工才说
+  // ⚠️ 以前这里写「剩余时间 > need」。强制换的时候 need = Infinity，这个条件永远不成立，
+  //    所以换成功也当失败 -> 一收到 unauthorized 就叫人重新登入。现在只要真的换到一张新的、还能用的就算成功。
+  const ok = !!googleIdToken && googleIdToken !== before && tokenExpiresInMs() > 60 * 1000;
+  if (!ok && !quiet) showReloginNeeded();        // 换不到就【提前】讲，不要等他做完工才说
   return ok;
 }
 let tokenRefreshResolve = null;
@@ -856,6 +863,7 @@ function startTokenKeepAlive() {
   if (!googleIdToken) return;
   tokenTimer = setInterval(() => {
     if (!googleIdToken || document.hidden) return;  // 分页在背景时弹不出来，白白烧掉冷却次数
+    if (!isSyncLeader()) return;                    // 只让主分页续期：好几个分页各自弹 One Tap，Google 会进冷却，反而换不到
     ensureFreshToken(20 * 60 * 1000);               // 剩不到 20 分钟就换新的
   }, TOKEN_KEEPALIVE_MS);
 }
@@ -935,7 +943,7 @@ async function registerClient() {
     st.textContent = "";
     authMode = "signin";
     authBusy("户口建好了 ✓ 正在载入你的投资组合…", "快好了，请稍等。");
-    await pullCloud(true); // 注册成功，载入他的组合并进入投资者模式
+    await pullCloud(true, false, true); // 注册成功，载入他的组合并进入投资者模式
     if (j.linked) setCloudStatus("✓ 已接上你原有的投资组合（由你的 remisier 记录）");
   } catch (e) {
     authIdle();
@@ -997,18 +1005,29 @@ function showAuth(which) {
 
 // --- Google Sign-In ---
 async function onGoogleCredential(resp) {
+  const newEmail = parseJwt(resp.credential).email || "";
+  // 这次登入是为了换一张没过期的凭证（ensureFreshToken 在等）-> 拿到就好，不要重载资料
+  if (tokenRefreshResolve) {
+    const r = tokenRefreshResolve; tokenRefreshResolve = null;
+    if (googleEmail && newEmail.toLowerCase() !== googleEmail.toLowerCase()) {
+      // 换回来的是【另一个】Google 帐号 -> 不收。收了就会用别人的身分存档、看到别人的资料。
+      setCloudStatus(`⚠️ 续期时 Google 给的是另一个帐号（${newEmail}），没有采用。请用 ${googleEmail} 重新登入。`);
+      showReloginNeeded();
+      r(); return;
+    }
+    googleIdToken = resp.credential;
+    r(); return;
+  }
   googleIdToken = resp.credential;
-  googleEmail = parseJwt(googleIdToken).email || "";
+  googleEmail = newEmail;
   document.getElementById("cloud-signin-hint").textContent = "已登入：" + googleEmail;
   document.getElementById("gsi-signout").style.display = "";
-  // 这次登入是为了换一张没过期的凭证（ensureFreshToken 在等）-> 拿到就好，不要重载资料
-  if (tokenRefreshResolve) { const r = tokenRefreshResolve; tokenRefreshResolve = null; r(); return; }
   if (authMode === "register") { await registerClient(); return; } // 走注册流程
   // 之前有资料因为凭证过期没存上去 -> 现在凭证是新的，立刻补存，别让它掉了
   if (pendingRetry) {
     pendingRetry = false;
     setCloudStatus("✓ 已重新登入，正在补存刚才没存上去的记录…");
-    await pushCloud(true);
+    await pushCloud(true, true);   // 他自己按登入的 -> 不受断路器限制
     return;
   }
   setCloudStatus("✓ 已用 Gmail 登入，正在从云端载入…");
@@ -1023,11 +1042,20 @@ async function onGoogleCredential(resp) {
     // 第一次登入 / 换装置 / 换人 -> 没有可信的本机资料，照旧等
     authBusy("登入中，正在载入你的投资组合…", "第一次登入或换装置时会慢一点，请稍等。");
   }
-  await pullCloud(true);
+  await pullCloud(true, false, true);   // 登入是他自己按的 -> 不受断路器限制
+}
+// login_hint：续期时指名要「现在登入的这个」帐号（浏览器登着两个 Google 帐号也不会搞混）
+let gsiHint = null;
+function gsiInit(hint) {
+  if (typeof google === "undefined" || !google.accounts || !google.accounts.id) return false;
+  const cfg = { client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential, auto_select: true };
+  if (hint) cfg.login_hint = hint;
+  google.accounts.id.initialize(cfg);
+  gsiHint = hint || null;
+  return true;
 }
 function initGoogleSignIn() {
-  if (typeof google === "undefined" || !google.accounts || !google.accounts.id) return false;
-  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential, auto_select: true });
+  if (!gsiInit(null)) return false;
   for (const [id, txt] of [["gsi-button", "signin_with"], ["gsi-button-top", "signin_with"], ["gsi-button-reg", "signup_with"]]) {
     const el = document.getElementById(id);
     if (el) google.accounts.id.renderButton(el, { theme: "filled_blue", size: "large", text: txt });
@@ -1061,6 +1089,8 @@ function handleCloudErr(e, prefix, wasPush) {
     return;
   }
   if (wasPush) pendingRetry = true; // 网路等其他原因失败，也记住要补
+  // 断路器开着 = 後台忙，不是资料有问题 -> 讲清楚资料还在，不要一片红吓人（横幅已经显示了）
+  if (breakerOpen()) { setCloudStatus("☁️ 云端忙，5 分钟後自动再试。你的资料安全在这台电脑上。"); return; }
   setCloudStatus(prefix + "：" + msg);
 }
 
@@ -1083,33 +1113,61 @@ function toggleCloudAuto() {
 // ——用永不过期的主密钥测也拿过。以前一收到就直接投降，使用者以为记录没存上。
 //
 // 重送 save 是安全的：送的是整包【全量覆盖】，不是累加，重送不会变两笔。
-const CLOUD_RETRY_WAITS = [2000, 4000, 8000];
+//
+// ⚠️ 10/1 凌晨的教训：以前 2 → 4 → 8 秒猛重试，後台越慢打越凶，最後整个塞死。
+//    现在拉长成 5 → 15 → 45 秒；三次重试都失败 -> 断路器打开，5 分钟内【不自动】打後台
+//    （不自动存、不自动拉、不重试），资料照旧留在本机。使用者自己按的动作不受限。
+const CLOUD_RETRY_WAITS = [5000, 15000, 45000];
+const BREAKER_MS = 5 * 60 * 1000;
 const sleepMs = ms => new Promise(r => setTimeout(r, ms));
-async function cloudCall(body, label) {
+let breakerUntil = 0, breakerTimer = null;
+const breakerOpen = () => Date.now() < breakerUntil;
+function breakerErr() { const e = new Error("云端忙，5 分钟後自动再试"); e.breaker = true; return e; }
+function tripBreaker() {
+  breakerUntil = Date.now() + BREAKER_MS;
+  const b = document.getElementById("breaker-banner"); if (b) b.style.display = "flex";
+  const w = document.getElementById("sync-warn"); if (w) w.style.display = "none";   // 同一件事不要两条横幅
+  setCloudStatus("☁️ 云端忙，5 分钟後自动再试。你的资料安全在这台电脑上。");
+  clearTimeout(breakerTimer);
+  breakerTimer = setTimeout(() => closeBreaker(false), BREAKER_MS + 1000);
+}
+function closeBreaker(skipAuto) {
+  breakerUntil = 0; clearTimeout(breakerTimer);
+  const b = document.getElementById("breaker-banner"); if (b) b.style.display = "none";
+  if (!skipAuto && owesPush()) schedulePush();   // 5 分钟到了：欠着没存的先补存
+}
+// 横幅上的「立即重试」：他自己按的，不受断路器限制
+function retryCloudNow() {
+  closeBreaker(true);
+  if (owesPush()) pushCloud(false, true); else pullCloud(false, false, true);
+}
+async function cloudFetch(body) {
+  // authPostFields() 每次重算 —— 中途换过凭证的话要用新的那张
+  const r = await fetch(cloudUrl(), { method: "POST", body: JSON.stringify({ ...body, ...authPostFields() }) });
+  const text = await r.text();
+  try { return JSON.parse(text); }
+  catch (e) { throw new Error("後台回的不是资料（多半是跑太久，Google 回了错误页）"); }
+}
+async function cloudCall(body, label, manual) {
+  if (breakerOpen() && !manual) throw breakerErr();
   let lastErr = null;
   for (let attempt = 0; attempt <= CLOUD_RETRY_WAITS.length; attempt++) {
     if (attempt > 0) {
       setCloudStatus(`${label}：没回应，${CLOUD_RETRY_WAITS[attempt - 1] / 1000} 秒後自动重试…（第 ${attempt} 次）`);
       await sleepMs(CLOUD_RETRY_WAITS[attempt - 1]);
+      if (breakerOpen() && !manual) throw breakerErr();   // 等的途中别的请求已经确认後台忙
     }
-    let j = null;
     try {
-      // authPostFields() 每次重算 —— 中途换过凭证的话要用新的那张
-      const r = await fetch(cloudUrl(), { method: "POST",
-        body: JSON.stringify({ ...body, ...authPostFields() }) });
-      const text = await r.text();
-      try { j = JSON.parse(text); }
-      catch (e) { lastErr = new Error("後台回的不是资料（多半是跑太久，Google 回了错误页）"); continue; }
-    } catch (e) { lastErr = e; continue; }        // 网路断线之类，也值得重试
-    // unauthorized 不一定是真的过期（後台会冤枉人）。先换一张凭证再试，
-    // 还是 unauthorized 才交给上层当成「真的要重新登入」。
-    if (j.error === "unauthorized" && attempt < CLOUD_RETRY_WAITS.length) {
-      lastErr = new Error("unauthorized");
-      if (googleIdToken) await ensureFreshToken(Infinity);   // 强制换一张
-      continue;
-    }
-    return j;
+      let j = await cloudFetch(body);
+      // unauthorized 不一定是真的过期（後台忙的时候会冤枉人）。先换一张凭证再试【一次】，
+      // 还是 unauthorized 才交给上层当成「真的要重新登入」—— 不要动不动叫人重新登入。
+      if (j.error === "unauthorized" && googleIdToken) {
+        if (await ensureFreshToken(Infinity, true)) j = await cloudFetch(body);
+      }
+      return j;
+    } catch (e) { lastErr = e; }                  // 网路断线 / 错误页，值得重试
   }
+  tripBreaker();
   throw lastErr || new Error("云端没有回应");
 }
 
@@ -1120,7 +1178,7 @@ function cloudPayload() {
   if (isSuper) p.staff = db.staff;
   return p;
 }
-async function pushCloud(silent) {
+async function pushCloud(silent, manual) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
   await ensureFreshToken(); // 凭证快过期就先换一张，免得存到一半失败
   setCloudStatus("⬆️ 存到云端中…");
@@ -1129,21 +1187,23 @@ async function pushCloud(silent) {
     const payload = viewerRole === "client"
       ? { action: "saveMine", data: { accounts: db.accounts, transactions: db.transactions, dividends: db.dividends, cashflows: db.cashflows, symbols: db.symbols } }
       : { action: "save", data: cloudPayload() };
-    const j = await cloudCall(payload, "⬆️ 存云端");
+    const j = await cloudCall(payload, "⬆️ 存云端", manual || !silent);
     // 後台一次只让一个人写（不排队会静静盖掉别人刚存的）。撞到就等一下再试，
     // 资料还在本机所以不会掉；pendingPush 保持着，自动同步也不会趁这时覆盖。
     if (j.error === "busy") {
-      if (busyRetries < 4) {
+      // 忙 = 後台被塞住了。跟网路失败同一套节奏（5/15/45 秒），用完就断路 5 分钟，不要越塞越凶。
+      if (busyRetries < CLOUD_RETRY_WAITS.length) {
+        const wait = CLOUD_RETRY_WAITS[busyRetries];
         busyRetries++;
         busyRetryPending = true;
-        const wait = busyRetries * 3;
-        setCloudStatus(`⏳ 云端正忙（有人同时在存），${wait} 秒後自动重试…（第 ${busyRetries} 次）`);
-        setTimeout(() => pushCloud(true), wait * 1000);
+        setCloudStatus(`⏳ 云端正忙（有人同时在存），${wait / 1000} 秒後自动重试…（第 ${busyRetries} 次）`);
+        setTimeout(() => pushCloud(true, manual), wait);
         return;
       }
-      busyRetryPending = false;
-      pendingRetry = true; // 交给「重新登入後自动补存」那条後路，不会丢
-      setCloudStatus("⚠️ 云端一直很忙，这笔还没存上去。已记住，下次同步会自动补存。");
+      busyRetries = 0; busyRetryPending = false;
+      pendingRetry = true; // 欠着：断路器 5 分钟後会自动补存，不会丢
+      tripBreaker();
+      setCloudStatus("☁️ 云端忙，5 分钟後自动再试。你的资料安全在这台电脑上。");
       return;
     }
     if (j.error) throw new Error(j.error);
@@ -1156,11 +1216,17 @@ async function pushCloud(silent) {
 }
 function schedulePush() {
   if (!cloudReady()) return;
+  if (!isSyncLeader()) { requestLeaderPush(); return; }   // 同一台装置只让主分页存，这里只交代它
   clearTimeout(pushTimer);
   pendingPush = true;
+  if (breakerOpen()) return;   // 断路中：资料留在本机，5 分钟到了 closeBreaker 会补存
   setCloudStatus("⏳ 即将自动存到云端…");
   // 还在等重试的话，pendingPush 要留着 —— 不然自动同步会把本机这笔覆盖掉
-  pushTimer = setTimeout(async () => { await pushCloud(true); if (!busyRetryPending) pendingPush = false; }, 1500);
+  pushTimer = setTimeout(async () => {
+    await pushCloud(true);
+    if (!busyRetryPending && !breakerOpen()) pendingPush = false;
+    afterPushSettled();
+  }, 1500);
 }
 
 // ---- 定期从云端拉：投资者自己更新了记录，owner 这边要看得到 ----
@@ -1169,13 +1235,18 @@ function schedulePush() {
 const AUTO_PULL_MS = 3 * 60 * 1000;
 let pullTimer = null, pendingPush = false;
 let busyRetries = 0, busyRetryPending = false; // 云端同一时间只让一个人存 -> 撞到就排队重试
+// 「这台电脑还欠云端一笔」：排着要存、存失败待补、忙线重试中 —— 任何一种都不可以拿云端的旧资料来盖。
+// ⚠️ 以前只看 pendingPush。存档失败後它会被清掉，3 分钟後自动拉取就把本机没存上去的改动盖掉了。
+const owesPush = () => pendingPush || pendingRetry || busyRetryPending;
 function startAutoPull() {
   clearInterval(pullTimer);
   if (viewerRole === "client") return;      // 投资者不需要
   pullTimer = setInterval(async () => {
     if (!cloudReady()) return;
-    if (pendingPush) return;                // 本机还有没推上去的改动 -> 这轮跳过，绝不能覆盖
+    if (owesPush()) return;                 // 本机还有没推上去的改动 -> 这轮跳过，绝不能覆盖
     if (document.hidden) return;            // 分页在背景 -> 省配额
+    if (!isSyncLeader()) return;            // 同一台装置只让主分页拉，其他分页从本机资料跟着更新
+    if (breakerOpen()) return;              // 断路中：5 分钟内不自动打後台
     const before = db.transactions.length;
     await pullCloud(true, true);            // silent + 只在真的有变化时才讲
     const diff = db.transactions.length - before;
@@ -1184,16 +1255,84 @@ function startAutoPull() {
 }
 // 切回这个分页时立刻拉一次（背景那段时间是跳过的，回来要马上补上最新的）
 document.addEventListener("visibilitychange", async () => {
+  leaderBeat();                             // 切到背景就让出主分页；切回来没人当就接手
   if (document.hidden) return;
+  if (!isSyncLeader()) return;              // 不是主分页：不续期、不拉
   // 分页在背景时不换凭证（弹不出来）-> 回来先看一下还活着没有
   if (googleIdToken) await ensureFreshToken(20 * 60 * 1000);
   if (viewerRole === "client") return;
-  if (!cloudReady() || pendingPush) return;
+  if (!cloudReady() || owesPush() || breakerOpen()) return;
   const before = db.transactions.length;
   await pullCloud(true, true);
   const diff = db.transactions.length - before;
   if (diff !== 0) setCloudStatus(`🔄 云端有新记录，已自动更新（${diff > 0 ? "+" : ""}${diff} 笔）· ${new Date().toLocaleTimeString()}`);
 });
+// ---------- 同一台装置只让一个分页同步 ----------
+// 开了好几个分页（或忘了关）时，每个分页都各自存、各自拉、各自抓价 —— 10/1 凌晨就是这样把後台塞爆的。
+// 现在选一个「主分页」：只有它自动存、自动拉、定时记快照。其他分页只显示；
+// 在其他分页改的资料照样写进本机，再交代主分页去存。主分页关掉 / 切到背景，别的分页几秒内接手。
+const TAB_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+const LEADER_KEY = "sync-leader", PUSH_REQ_KEY = "sync-push-req";
+const LEADER_LEASE_MS = 12000;               // 主分页每 4 秒报到一次；12 秒没报到就换人
+let amLeader = false, lsChangedWhileOwing = false;
+let pushReqDone = Number(localStorage.getItem(PUSH_REQ_KEY) || 0);  // 开网页之前的旧交代不算（会被云端载入覆盖）
+const isSyncLeader = () => amLeader;
+function readLeader() { try { return JSON.parse(localStorage.getItem(LEADER_KEY) || "null"); } catch (e) { return null; } }
+function leaderBeat() {
+  const cur = readLeader(), now = Date.now();
+  const mine = !!cur && cur.id === TAB_ID;
+  if (document.hidden) {                     // 背景分页不当主分页（它本来就不该自动抓 / 拉 / 存）
+    if (mine) localStorage.removeItem(LEADER_KEY);
+    amLeader = false; return;
+  }
+  if (mine || !cur || now - cur.ts > LEADER_LEASE_MS) {
+    try { localStorage.setItem(LEADER_KEY, JSON.stringify({ id: TAB_ID, ts: now })); } catch (e) {}
+  }
+  const was = amLeader;
+  amLeader = (readLeader() || {}).id === TAB_ID;
+  if (amLeader && !was) { handlePushReq(); runScheduledSnapshot(); }   // 接手：前一个主分页没存完的交代、该补的快照
+}
+function reloadFromStorage() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE_KEY));
+    if (d && Array.isArray(d.transactions)) { db = d; if (!Array.isArray(db.snapshots)) db.snapshots = []; renderAll(); }
+  } catch (e) {}
+}
+function requestLeaderPush() {
+  try { localStorage.setItem(PUSH_REQ_KEY, String(Date.now())); } catch (e) {}
+  setCloudStatus("⏳ 已交给另一个开着的分页存到云端");
+  leaderBeat();                              // 没有主分页（例如刚关掉）-> 这个分页马上接手来存
+}
+function handlePushReq() {
+  if (!amLeader) return;
+  const req = Number(localStorage.getItem(PUSH_REQ_KEY) || 0);
+  if (req <= pushReqDone) return;
+  if (owesPush()) { lsChangedWhileOwing = true; return; }   // 先把自己的存完再说，免得互相盖
+  pushReqDone = req;
+  reloadFromStorage();                       // 别的分页的改动已经写在本机了 -> 拿进来，整包存上去
+  schedulePush();
+}
+// 自己那笔存完了：途中别的分页有改过本机资料 / 有交代要存 -> 现在补上
+function afterPushSettled() {
+  if (owesPush() || !lsChangedWhileOwing) return;
+  lsChangedWhileOwing = false;
+  reloadFromStorage();
+  handlePushReq();
+}
+window.addEventListener("storage", e => {
+  if (e.key === STORE_KEY) {
+    // 别的分页改了本机资料（或拉了云端、抓了价）-> 这边跟着换，免得之後拿旧的去盖
+    if (owesPush()) { lsChangedWhileOwing = true; return; }   // 自己有还没存上去的 -> 存完再换
+    reloadFromStorage();
+  } else if (e.key === PUSH_REQ_KEY) {
+    handlePushReq();
+  } else if (e.key === LEADER_KEY && !e.newValue) {
+    leaderBeat();                            // 主分页关掉了 -> 马上接手，不用等 12 秒
+  }
+});
+setInterval(leaderBeat, 4000);
+window.addEventListener("pagehide", () => { if (amLeader) localStorage.removeItem(LEADER_KEY); });
+
 // 自动补记的结果一定要讲出来。
 // 股息/红股只在「你（owner/员工）登入」时才补 —— 投资者那边是只读的，不产生记录。
 // 以前这段静静跑完，你不知道它有没有做事、也不知道该不该等它存完才关网页。
@@ -1213,12 +1352,12 @@ function reportAutoBackfill(divCount, splitCount) {
     : `${msg} · ⚠️「自动同步」没勾，这些还没上云端！请按下面的「⬆️ 把本机存到云端」，否则会丢掉`);
 }
 // quiet = 背景自动拉，不要一直闪「载入中」，也不要重跑补记（那些开页时跑过了）
-async function pullCloud(silent, quiet) {
+async function pullCloud(silent, quiet, manual) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
   if (!quiet) setCloudStatus("⬇️ 从云端载入中…");
   try {
     // 用 POST 传认证（idToken 很长，放网址会被 Google 跳转丢掉）；失败会自动重试
-    const j = await cloudCall({ action: "load" }, "⬇️ 载入");
+    const j = await cloudCall({ action: "load" }, "⬇️ 载入", manual || !silent);
     if (j.error) {
       if (j.reason === "not_registered") { // 这个 Gmail 还没注册 -> 引导去注册
         showAuthScreen(); showAuth("register");
@@ -1245,7 +1384,9 @@ async function pullCloud(silent, quiet) {
     db.cashflows = d.cashflows || [];
     db.snapshots = d.snapshots || [];   // ⚠️ 少这行，拉回来本机是空的，下次一存就把云端快照洗光
     cloudLoadedOnce = true;             // 资料到齐了，从现在开始记快照才准
+    lastPullAt = Date.now();
     db.prices = d.prices || {};
+    Object.assign(db.prices, livePrices);   // 抓价不再存档 -> 云端的价可能比较旧；这次开网页抓到的比较新，盖回去
     db.symbols = d.symbols || {};
     db.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
     for (const c of db.clients) { if (!c.brokerageMode) { c.brokerageMode = "flat"; c.rateFlat = c.rateFlat || 0; } if (!c.costMethod) c.costMethod = "average"; }
@@ -1313,11 +1454,14 @@ const plPct = (realized, cost) => {
 };
 const today = () => new Date().toISOString().slice(0, 10);
 // ⚠️ 上面那个 today() 是 UTC 日期。大马是 UTC+8，早上 8 点前开网页会被算成「昨天」。
-//    快照一定要用【本地日期】，所以另外写一个，不共用 today()。
-const localToday = () => {
-  const d = new Date(), p = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
+//    快照一定要用【马来西亚日期】，所以另外写，不共用 today()。
+// 马来西亚时间（UTC+8）。【不看浏览器时区】—— Dallen 出国时，快照日期和 12:45 / 17:15 不会跑掉。
+function mytNow() {
+  const d = new Date(Date.now() + 8 * 3600 * 1000), p = n => String(n).padStart(2, "0");
+  return { date: `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`,
+           dow: d.getUTCDay(), mins: d.getUTCHours() * 60 + d.getUTCMinutes() };
+}
+const localToday = () => mytNow().date;
 
 // ---------- 每日净值快照（按户口记，一天一笔）----------
 // 为什么按户口不按投资者：户口可以往上加总成投资者或券商，反过来拆不回来。
@@ -1721,15 +1865,16 @@ function renderAll() {
   const txCount = {};
   db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
   const cBody = document.getElementById("c-body");
-  cBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="8">还没有投资者，先在上面添加</td></tr>`;
+  let cBodyHtml = db.clients.length ? "" : `<tr><td class="empty" colspan="8">还没有投资者，先在上面添加</td></tr>`;
   for (const c of db.clients) {
-    cBody.innerHTML += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td><td>${c.email || "-"}</td><td>${c.phone || "-"}</td>
+    cBodyHtml += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.account || "-"}</td><td>${c.email || "-"}</td><td>${c.phone || "-"}</td>
       <td>${accountsForClient(c.id).map(a => `<span class="acct-tag">${a.name}</span>`).join(" ") || `<span class="hint">未设定</span>`}</td>
       <td class="num">${txCount[c.id] || 0}</td>
       <td><button class="action small ghost" onclick="editClient('${c.id}')">编辑</button>
           ${looksDuplicate(c) ? `<button class="action small" style="background:var(--gold);color:#1a1a1a" onclick="startMerge('${c.id}')" title="他可能是既有客户重复注册 —— 并回他原本那一位">🔗 合并</button>` : ""}
           <button class="action danger small" onclick="delClient('${c.id}')">删除</button></td></tr>`;
   }
+  cBody.innerHTML = cBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
   // 顶上提醒：有人自助注册了却一笔记录都没有，很可能是旧客户认不出自己
   const dupWarn = document.getElementById("dup-warn");
   const suspects = db.clients.filter(looksDuplicate);
@@ -1763,7 +1908,7 @@ function renderAll() {
   let pricedCost = 0;
   const missingTickers = [];
   const hBody = document.getElementById("h-body");
-  hBody.innerHTML = held.length ? "" : `<tr><td class="empty" colspan="9">没有持仓</td></tr>`;
+  let hBodyHtml = held.length ? "" : `<tr><td class="empty" colspan="9">没有持仓</td></tr>`;
 
   // 一支持股算成一组数字（有没有现价、市值、未实现）
   const measure = list => {
@@ -1810,7 +1955,7 @@ function renderAll() {
     for (const p of mine) (byBroker[acctBroker(accountById(p.accountId))] ||= []).push(p);
     const brokerNames = Object.keys(byBroker).sort();
     const acctCount = new Set(mine.map(p => p.accountId)).size;
-    hBody.innerHTML += `<tr class="client-header"><td colspan="9">👤 ${clientLabel(c)}
+    hBodyHtml += `<tr class="client-header"><td colspan="9">👤 ${clientLabel(c)}
       <span class="hint">　${brokerNames.length} 间券商 · ${acctCount} 个交易户口</span></td></tr>`;
 
     if (holdView === "stock") {
@@ -1822,7 +1967,7 @@ function renderAll() {
         const qty = list.reduce((s, x) => s + x.qty, 0), cost = list.reduce((s, x) => s + x.cost, 0);
         const brokers = [...new Set(list.map(x => acctBroker(accountById(x.accountId))))];
         const from = `<span class="hint" style="margin-left:8px">来自 ${list.length} 个户口（${brokers.join("、")}）</span>`;
-        hBody.innerHTML += stockRow({ ticker: tk, qty, cost, accountId: list[0].accountId }, 14, from);
+        hBodyHtml += stockRow({ ticker: tk, qty, cost, accountId: list[0].accountId }, 14, from);
       }
     } else {
       for (const bn of brokerNames) {
@@ -1830,7 +1975,7 @@ function renderAll() {
         const bId = `hb-${cid}-${bn.replace(/[^A-Za-z0-9]/g, "")}`;
         const open = holdOpen[bId] !== undefined ? holdOpen[bId] : (bn === brokerNames[0]);
         const nAcct = new Set(bList.map(p => p.accountId)).size;
-        hBody.innerHTML += `<tr class="broker-header" onclick="toggleBroker('${bId}', ${open})" style="cursor:pointer">
+        hBodyHtml += `<tr class="broker-header" onclick="toggleBroker('${bId}', ${open})" style="cursor:pointer">
           <td colspan="4"><span style="display:inline-block;width:14px">${open ? "▾" : "▸"}</span>🏦 <b>${bn}</b>
             <span class="hint">　${nAcct} 个户口</span></td>${numCell(mB)}</tr>`;
         if (!open) continue;
@@ -1838,21 +1983,22 @@ function renderAll() {
         for (const p of bList) (byAcct[p.accountId] ||= []).push(p);
         for (const aid of Object.keys(byAcct)) {
           const a = accountById(aid), aList = byAcct[aid], mA = measure(aList);
-          hBody.innerHTML += `<tr class="acct-header"><td colspan="9" style="padding-left:26px">
+          hBodyHtml += `<tr class="acct-header"><td colspan="9" style="padding-left:26px">
             <span class="acct-tag">${a ? (a.accountNo || "（无账号）") : "?"}</span>
             ${a && a.acctType ? `<span class="acct-tag">${a.acctType}</span>` : ""}
             <span class="acct-tag" style="color:var(--gold);border-color:rgba(241,196,15,.4);background:rgba(241,196,15,.08)">${a ? rateLabel(a) : ""} · 最低 ${fmt(a ? (a.minBrokerage || 0) : 0)}</span>
             <span class="acct-tag">${a && a.costMethod === "fifo" ? "FIFO" : "Average"}</span></td></tr>`;
-          for (const p of aList.sort((x, y) => x.ticker.localeCompare(y.ticker))) hBody.innerHTML += stockRow(p, 46);
-          hBody.innerHTML += `<tr class="subtotal"><td colspan="4" style="padding-left:46px">户口合计 · ${a ? (a.accountNo || acctLabel(a)) : "?"}</td>${numCell(mA)}</tr>`;
-          hBody.innerHTML += missRow(mA.missing, 46);
+          for (const p of aList.sort((x, y) => x.ticker.localeCompare(y.ticker))) hBodyHtml += stockRow(p, 46);
+          hBodyHtml += `<tr class="subtotal"><td colspan="4" style="padding-left:46px">户口合计 · ${a ? (a.accountNo || acctLabel(a)) : "?"}</td>${numCell(mA)}</tr>`;
+          hBodyHtml += missRow(mA.missing, 46);
         }
-        hBody.innerHTML += `<tr class="subtotal"><td colspan="4" style="padding-left:26px"><b>${bn} 合计</b></td>${numCell(mB)}</tr>`;
+        hBodyHtml += `<tr class="subtotal"><td colspan="4" style="padding-left:26px"><b>${bn} 合计</b></td>${numCell(mB)}</tr>`;
       }
     }
-    hBody.innerHTML += `<tr class="subtotal"><td colspan="4"><b>合计 Total · ${clientLabel(c)}</b></td>${numCell(mAll)}</tr>`;
-    hBody.innerHTML += missRow(mAll.missing, 14);
+    hBodyHtml += `<tr class="subtotal"><td colspan="4"><b>合计 Total · ${clientLabel(c)}</b></td>${numCell(mAll)}</tr>`;
+    hBodyHtml += missRow(mAll.missing, 14);
   }
+  hBody.innerHTML = hBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
   // 股票下拉（全局）
   const allTickers = [...new Set(db.transactions.map(t => t.ticker))].sort();
   const heldTickers = [...new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker))].sort();
@@ -1913,7 +2059,7 @@ function renderAll() {
     for (const t of txs) { if (t.type === "sell") sq += t.qty; else if (t.type === "bonus") bonus += t.qty; else bq += t.qty; }
     sumEl.textContent = `${stockF}: 总买 ${bq.toLocaleString()}${bonus ? ` · 🎁 红股 ${bonus.toLocaleString()}` : ""} · 总卖 ${sq.toLocaleString()} · 净持仓 ${(bq + bonus - sq).toLocaleString()}`;
   }
-  tBody.innerHTML = txs.length ? "" : `<tr><td class="empty" colspan="16">没有交易记录</td></tr>`;
+  let tBodyHtml = txs.length ? "" : `<tr><td class="empty" colspan="15">没有交易记录</td></tr>`;
   let totalBrokerage = 0;
   for (const t of db.transactions) if (matchFilter(t.clientId, t.accountId) && matchStock(t.ticker)) totalBrokerage += t.brokerage || 0;
   for (const t of txs) {
@@ -1921,8 +2067,8 @@ function renderAll() {
     const gross = t.qty * t.price;
     const r = realizedByTx[t.id];
     const runQ = runAfter[t.id];
-    tBody.innerHTML += `<tr>
-      <td>${t.date}</td><td>${clientLabel(c)}</td><td><b>${t.ticker}</b></td>
+    tBodyHtml += `<tr>
+      <td${viewerRole !== "client" && t.createdAt ? ` title="输入时间 ${fmtStamp(t.createdAt)}" style="cursor:help;text-decoration:underline dotted"` : ""}>${t.date}</td><td>${clientLabel(c)}</td><td><b>${t.ticker}</b></td>
       <td>${t.type === "bonus"
         ? `<span class="badge" style="background:rgba(241,196,15,0.18);color:var(--gold)" title="${t.note || "红股/拆股"}">🎁 红股</span>`
         : `<span class="badge ${t.type}">${t.type === "buy" ? "买入" : "卖出"}</span>${intradayTx[t.id] ? ` <span class="badge" style="background:rgba(155,89,182,0.18);color:#bb8fce">即日</span>` : ""}`}</td>
@@ -1934,9 +2080,9 @@ function renderAll() {
       <td class="num"><b>${fmtN(netAmount(t))}</b></td>
       <td class="num">${r !== undefined ? `<span class="${pnlClass(r)}">${pnlFmt(r)}</span>` : "-"}</td>
       <td class="num">${plPct(r, costByTx[t.id])}</td>
-      <td class="col-entry" style="white-space:nowrap;color:var(--muted);font-size:12px" title="这笔资料是什么时候输入系统的">${fmtStamp(t.createdAt)}</td>
       <td style="white-space:nowrap"><button class="action small ghost" onclick="editTx('${t.id}')">✏️ 编辑</button> <button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
   }
+  tBody.innerHTML = tBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 
   // 视图切换：流水 / T-Account
   document.getElementById("journal-wrap").style.display = txView === "journal" ? "" : "none";
@@ -1948,17 +2094,18 @@ function renderAll() {
   // 股息表
   const vBody = document.getElementById("v-body");
   const dvs = [...db.dividends].filter(d => matchFilter(d.clientId, d.accountId) && matchStock(d.ticker)).sort((a, b) => b.date.localeCompare(a.date));
-  vBody.innerHTML = dvs.length ? "" : `<tr><td class="empty" colspan="8">没有股息记录</td></tr>`;
+  let vBodyHtml = dvs.length ? "" : `<tr><td class="empty" colspan="8">没有股息记录</td></tr>`;
   let divTotal = 0, divToday = 0;
   const todayRows = [];
   for (const d of dvs) {
     const c = clientById(d.clientId);
     divTotal += d.total;
     if (d.date === today()) { divToday += d.total; todayRows.push(d); }
-    vBody.innerHTML += `<tr><td>${d.date}</td><td>${clientLabel(c)}</td><td><span class="acct-tag">${acctLabel(accountById(d.accountId))}</span></td><td><b>${d.ticker}</b>${String(d.id).startsWith("adv") ? ` <span class="badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">自动</span>` : ""}</td>
+    vBodyHtml += `<tr><td>${d.date}</td><td>${clientLabel(c)}</td><td><span class="acct-tag">${acctLabel(accountById(d.accountId))}</span></td><td><b>${d.ticker}</b>${String(d.id).startsWith("adv") ? ` <span class="badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">自动</span>` : ""}</td>
       <td class="num">${fmtN(d.perShare)}</td><td class="num">${d.qty.toLocaleString()}</td><td class="num gold">${fmtN(d.total)}</td>
       <td><button class="action danger small" onclick="delDiv('${d.id}')">删除</button></td></tr>`;
   }
+  vBody.innerHTML = vBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 
   // 股息小结：这支股票总共拿了多少，以及【各个户口分别】拿了多少
   const divSum = document.getElementById("div-summary");
@@ -2006,17 +2153,18 @@ function renderAll() {
 
   // 各投资者摘要
   const dcBody = document.getElementById("d-client-body");
-  dcBody.innerHTML = db.clients.length ? "" : `<tr><td class="empty" colspan="6">还没有投资者</td></tr>`;
+  let dcBodyHtml = db.clients.length ? "" : `<tr><td class="empty" colspan="6">还没有投资者</td></tr>`;
   for (const c of db.clients) {
     if (!matchFilter(c.id)) continue;
     let cost = 0, realized = 0, divs = 0, brk = 0;
     for (const p of Object.values(pos)) if (p.clientId === c.id) { cost += p.cost; realized += p.realized; }
     for (const d of db.dividends) if (d.clientId === c.id) divs += d.total;
     for (const t of db.transactions) if (t.clientId === c.id) brk += t.brokerage || 0;
-    dcBody.innerHTML += `<tr><td><b>${clientLabel(c)}</b></td><td>${c.account || "-"}</td>
+    dcBodyHtml += `<tr><td><b>${clientLabel(c)}</b></td><td>${c.account || "-"}</td>
       <td class="num">${fmtN(cost)}</td><td class="num"><span class="${pnlClass(realized)}">${pnlFmt(realized)}</span></td>
       <td class="num gold">${fmtN(divs)}</td><td class="num">${fmtN(brk)}</td></tr>`;
   }
+  dcBody.innerHTML = dcBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 
   // 今天股息
   const dtBody = document.getElementById("d-today-body");
@@ -2025,7 +2173,19 @@ function renderAll() {
         return `<tr><td>${clientLabel(c)}</td><td><b>${d.ticker}</b></td><td class="num">${fmtN(d.perShare)}</td><td class="num">${d.qty.toLocaleString()}</td><td class="num gold">${fmtN(d.total)}</td></tr>`; }).join("")
     : `<tr><td class="empty" colspan="5">今天没有股息记录</td></tr>`;
 
-  document.getElementById("jsonView").textContent = JSON.stringify(db, null, 2);
+  // 原始数据不在这里生成 —— 见 toggleRaw()。每次重画都把整份资料转文字塞进画面，是输入後要等的原因之一。
+  if (rawShown) document.getElementById("raw-btn").textContent = "更新";   // 画面资料变了，提示可以再按一次拿最新的
+}
+let rawShown = false;
+function toggleRaw() {
+  const pre = document.getElementById("jsonView"), btn = document.getElementById("raw-btn");
+  if (rawShown && btn.textContent !== "更新") {           // 已经在显示、而且是最新的 -> 收起来
+    rawShown = false; pre.style.display = "none"; pre.textContent = ""; btn.textContent = "显示"; return;
+  }
+  rawShown = true;
+  pre.textContent = JSON.stringify(db, null, 2);
+  pre.style.display = "";
+  btn.textContent = "隐藏";
 }
 function setCard(id, text) { document.getElementById(id).textContent = text; }
 function setPnlCard(id, n) {
@@ -2125,7 +2285,7 @@ function delStaff(id) {
 function renderStaffTable() {
   const body = document.getElementById("s-body");
   if (!body) return;
-  body.innerHTML = db.staff.length ? "" : `<tr><td class="empty" colspan="5">还没有员工。加进来的人就能用自己的 Gmail 登入。</td></tr>`;
+  let bodyHtml = db.staff.length ? "" : `<tr><td class="empty" colspan="5">还没有员工。加进来的人就能用自己的 Gmail 登入。</td></tr>`;
   for (const s of db.staff) {
     let scope;
     if (s.role === "super" || !String(s.clients || "").trim() || s.clients === "*") scope = "<b>全部投资者</b>";
@@ -2134,12 +2294,13 @@ function renderStaffTable() {
       const names = ids.map(id => { const c = clientById(id); return c ? (c.code || c.name) : `<span class="pnl-neg">${id}(已删)</span>`; });
       scope = `${names.length} 个：${names.join("、")}`;
     }
-    body.innerHTML += `<tr><td>${s.email}</td><td><b>${s.name}</b></td>
+    bodyHtml += `<tr><td>${s.email}</td><td><b>${s.name}</b></td>
       <td><span class="role-badge ${s.role === "super" ? "role-super" : "role-staff"}">${s.role === "super" ? "SUPER" : "STAFF"}</span></td>
       <td>${scope}</td>
       <td><button class="action small ghost" onclick="editStaff('${s.id}')">编辑</button>
           <button class="action danger small" onclick="delStaff('${s.id}')">移除</button></td></tr>`;
   }
+  body.innerHTML = bodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 }
 
 // ---------- 股票户口 CRUD（投资者自己也能开，费率他自己填）----------
@@ -2262,17 +2423,18 @@ function renderAccountsTable() {
   const body = document.getElementById("a-body");
   if (!body) return;
   const rows = db.accounts.filter(a => matchClientFilter(a.clientId));
-  body.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="7">还没有股票户口。加一个（如 APEX / CGS）才能记交易。</td></tr>`;
+  let bodyHtml = rows.length ? "" : `<tr><td class="empty" colspan="7">还没有股票户口。加一个（如 APEX / CGS）才能记交易。</td></tr>`;
   for (const a of rows) {
     const n = db.transactions.filter(t => t.accountId === a.id).length;
     const incomplete = !String(a.broker || "").trim() || !String(a.accountNo || "").trim();
-    body.innerHTML += `<tr><td>${clientLabel(clientById(a.clientId))}</td>
+    bodyHtml += `<tr><td>${clientLabel(clientById(a.clientId))}</td>
       <td><span class="acct-tag">${acctLabel(a)}</span>${incomplete ? ` <span class="hint" style="color:var(--gold)">← 资料不全</span>` : ""}</td>
       <td>${rateLabel(a)}</td><td class="num">${fmt(a.minBrokerage || 0)}</td>
       <td>${a.costMethod === "fifo" ? "FIFO" : "Average"}</td><td class="num">${n}</td>
       <td><button class="action small ghost" onclick="editAccount('${a.id}')">编辑</button>
           <button class="action danger small" onclick="delAccount('${a.id}')">删除</button></td></tr>`;
   }
+  body.innerHTML = bodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 }
 // 把「某投资者的户口」填进各个下拉选单（尽量保住原本选的那个）
 function fillAccountSelects() {
@@ -2864,13 +3026,14 @@ function saveSymbol() {
   save();
   document.getElementById("p-status").textContent = sym ? `已保存：${tk} = ${sym}` : `已清除 ${tk} 的代码`;
 }
+// 回传 true = 至少抓到一支的价（定时快照要靠这个判断「价格真的回来了」才记）
 async function fetchAllPrices(auto) {
   const status = document.getElementById("p-status");
   const { pos } = computePortfolio();
   const heldTickers = [...new Set(Object.values(pos).filter(p => p.qty > 0).map(p => p.ticker))];
   const mapped = heldTickers.filter(tk => db.symbols[tk]);
   const missing = heldTickers.filter(tk => !db.symbols[tk]);
-  if (!mapped.length) { if (!auto) status.textContent = "没有 counter 设了 Bursa 代码，先在下面逐个保存代码。"; return; }
+  if (!mapped.length) { if (!auto) status.textContent = "没有 counter 设了 Bursa 代码，先在下面逐个保存代码。"; return false; }
   if (!auto) status.textContent = "抓取中…";
   try {
     const symbols = mapped.map(tk => db.symbols[tk]).join(",");
@@ -2881,27 +3044,91 @@ async function fetchAllPrices(auto) {
     for (const tk of mapped) {
       const q = data[db.symbols[tk]];
       if (q && q.price > 0) {
-        db.prices[tk] = { price: q.price, updatedAt: today(), source: "bursa" };
+        db.prices[tk] = livePrices[tk] = { price: q.price, updatedAt: today(), source: "bursa" };
         ok++;
       } else failed.push(tk + (q && q.error ? "（代码错误?）" : ""));
     }
-    if (viewerRole === "client") { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); } // 投资者：价格只存本地显示
-    else { recordSnapshots(); save(); }   // 快照一定要在抓完价之後；跟着这次 save 一起推，不额外打云端
+    // ⚠️ 抓价【永远不存档】。以前抓完一定 save()，每 15 分钟整份重写一次後台 —— 10/1 凌晨的风暴就是这个。
+    //    价只存在这台电脑（别的分页也会跟着看到）；快照和存档只在 12:45 / 17:15 做，见 runScheduledSnapshot。
+    localStorage.setItem(STORE_KEY, JSON.stringify(db));
+    renderAll();
     let msg = `✓ ${auto ? "自动" : ""}更新了 ${ok} 个 counter 的最新价（${new Date().toLocaleTimeString()}）`;
     if (failed.length) msg += ` · 失败: ${failed.join(", ")}`;
     if (missing.length) msg += ` · 没设代码: ${missing.join(", ")}`;
     document.getElementById("p-status").textContent = msg;
+    return ok > 0;
   } catch (e) {
     if (!auto) status.textContent = "抓取失败：" + e.message + API_HINT;
+    return false;
   }
 }
 // 自动抓价：打开网页抓一次，开着的话每15分钟再抓
 // （盘中=~15分钟延迟价；12:30 午市收市后=午市闭市价；5pm 后=当天闭市价）
+// 抓价走 Cloudflare Worker，很便宜；贵的是存档。所以抓价照抓，只是不存。
 let priceTimer = null;
+const livePrices = {};   // 这次开网页抓到的现价（云端拉回来的可能比较旧，拉完要盖回去）
 function startAutoPrices() {
-  fetchAllPrices(true);
+  if (!document.hidden) fetchAllPrices(true);   // 开网页抓一次：只更新画面
   clearInterval(priceTimer);
-  priceTimer = setInterval(() => fetchAllPrices(true), 15 * 60 * 1000);
+  priceTimer = setInterval(() => {
+    if (document.hidden || !isSyncLeader()) return;   // 背景分页不抓；其他分页从本机资料看到主分页抓的新价
+    fetchAllPrices(true);
+  }, 15 * 60 * 1000);
+  startSnapScheduler();
+}
+
+// ---------- 定时快照：一天只在 12:45（午市）和 17:15（收盘）各存一次 ----------
+// 午市 12:30 收、全日 17:00 收，报价延迟约 15 分钟。17:15 那次会覆盖 12:45 那笔（同一天一行，最後 = 收盘价）。
+// 网页比较晚才开（Dallen 多半晚上才开）-> 一打开就补做当天该做的那一次；没有补做等於永远记不到。
+// 做过没有记在 db.settings["snap:日期"]（1 = 午市做过、2 = 收盘做过），跟着云端同步 ->
+// 别的装置 / 员工同时开着，只有第一个会存。
+const SNAP_SLOTS = [[12 * 60 + 45, 1, "午市"], [17 * 60 + 15, 2, "收盘"]];   // [马来西亚时间(分钟), 等级, 名字]
+function dueSnapSlot() {
+  const t = mytNow();
+  if (t.dow === 0 || t.dow === 6) return null;          // 週六、週日休市，价格不会变
+  if (t.date < SNAPSHOT_START) return null;
+  let slot = null;
+  for (const [at, level, name] of SNAP_SLOTS) if (t.mins >= at) slot = { date: t.date, level, name };
+  return slot;                                          // 12:45 之前 = null：价格还是昨天的，什么都不记
+}
+const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+let snapTimer = null, snapBusy = false, snapLastTry = 0, lastPullAt = 0;
+// 这个网页自己做过哪一次。员工（非 super）存档时，後台会丢掉不属于他投资者的设定键，
+// 「做过了」的标记存不上云端 —— 只看云端的话，他的网页会每 5 分钟重做、重存一次（又一个小风暴）。
+const snapDoneHere = {};
+const snapDoneLevel = key => Math.max(Number(db.settings[key]) || 0, snapDoneHere[key] || 0);
+function startSnapScheduler() {
+  clearInterval(snapTimer);
+  snapTimer = setInterval(runScheduledSnapshot, 60 * 1000);   // 每分钟看一下有没有到点（只看，不打後台）
+  runScheduledSnapshot();
+}
+async function runScheduledSnapshot() {
+  if (snapBusy || viewerRole === "client") return;              // 投资者本人不记
+  if (!cloudLoadedOnce || !isSyncLeader() || document.hidden || breakerOpen()) return;
+  const due = dueSnapSlot();
+  if (!due) return;
+  const key = "snap:" + due.date;
+  if (snapDoneLevel(key) >= due.level) return;                  // 这一次已经做过（可能是别的装置 / 员工做的）
+  if (owesPush()) return;                                        // 本机还有没存上去的，等它存完再说
+  if (Date.now() - snapLastTry < 5 * 60 * 1000) return;          // 失败了不要每分钟猛试
+  snapLastTry = Date.now();
+  snapBusy = true;
+  try {
+    if (Date.now() - lastPullAt > 60 * 1000) {                   // 先看云端：别人可能刚做过
+      await pullCloud(true, true);
+      if (Date.now() - lastPullAt > 60 * 1000) return;           // 拉不到 -> 不做，5 分钟後再试
+      if (snapDoneLevel(key) >= due.level || owesPush()) return;
+    }
+    if (!(await fetchAllPrices(true))) return;                   // 价格没回来就不记，5 分钟後再试
+    recordSnapshots();
+    db.settings[key] = due.level;
+    snapDoneHere[key] = due.level;
+    const keepFrom = addDays(due.date, -10);                     // 只留最近 10 天的标记，settings 不要越堆越多
+    for (const k of Object.keys(db.settings)) if (k.startsWith("snap:") && k.slice(5) < keepFrom) delete db.settings[k];
+    save();                                                      // 一天最多两次：12:45、17:15
+    const st = document.getElementById("p-status");
+    if (st) st.textContent += ` · 已记${due.name}快照`;
+  } finally { snapBusy = false; }
 }
 
 // ---------- Ex-Dividend 日历 ----------
@@ -2940,7 +3167,7 @@ function renderExDiv(pos) {
     .map(r => ({ ann: r.annDate, stock: r.stock, price: r.price, div: r.dividend, exDate: r.exDate, code: r.code, iso: parseExDate(r.exDate) }))
     .filter(r => r.iso >= todayISO)
     .sort((a, b) => a.iso.localeCompare(b.iso));
-  xBody.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="6">未来没有已公布的 ex-dividend（试按刷新）</td></tr>`;
+  let xBodyHtml = rows.length ? "" : `<tr><td class="empty" colspan="6">未来没有已公布的 ex-dividend（试按刷新）</td></tr>`;
   for (const r of rows) {
     const holders = holdings.filter(p => p.ticker === r.stock || (r.code && codeOf(p.ticker) === r.code));
     // 每股股息（"RM 0.0175" 这种能算钱；"2.2315%" 这种算不了就只显示股数）
@@ -2954,11 +3181,12 @@ function renderExDiv(pos) {
         holderCell += `<div style="font-size:12px;margin-top:3px">${clientLabel(c)}: ${h.qty.toLocaleString()} 股${dps ? ` ≈ <b class="gold">RM ${fmtN(h.qty * dps)}</b>` : ""}</div>`;
       }
     }
-    xBody.innerHTML += `<tr class="${holders.length ? "held" : ""}">
+    xBodyHtml += `<tr class="${holders.length ? "held" : ""}">
       <td><b>${r.exDate}</b></td><td><b>${r.stock}</b></td><td class="num gold">${r.div}</td>
       <td class="num">${r.price}</td><td>${r.ann}</td>
       <td>${holderCell}</td></tr>`;
   }
+  xBody.innerHTML = xBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 }
 // 股息自动入账：ex-date 一到，按每个投资者 ex-date 前的持股自动记股息（自动进 Cashflow）
 // 记过的用 settings 里的 autodiv 键去重（跟着云端同步，删了也不会重生）
@@ -3023,7 +3251,7 @@ function renderEntitlements(pos) {
     .map(r => ({ ...r, iso: parseExDate(r.exDate) }))
     .sort((a, b) => (b.iso || "").localeCompare(a.iso || "")); // 最近/即将的排前面
   const todayISO = today();
-  body.innerHTML = rows.length ? "" : `<tr><td class="empty" colspan="8">近期没有红股/拆股</td></tr>`;
+  let bodyHtml = rows.length ? "" : `<tr><td class="empty" colspan="8">近期没有红股/拆股</td></tr>`;
   for (const r of rows) {
     const holders = holdings.filter(p => p.ticker === r.stock || (r.code && codeOf(p.ticker) === r.code));
     let who = "";
@@ -3038,7 +3266,7 @@ function renderEntitlements(pos) {
       }
     }
     const upcoming = r.iso && r.iso >= todayISO;
-    body.innerHTML += `<tr class="${holders.length ? "held" : ""}">
+    bodyHtml += `<tr class="${holders.length ? "held" : ""}">
       <td><b>${r.exDate || "-"}</b>${upcoming ? ` <span class="badge" style="background:rgba(52,152,219,0.15);color:var(--blue)">即将</span>` : ""}</td>
       <td><b>${r.stock}</b></td>
       <td>${r.type}</td>
@@ -3048,6 +3276,7 @@ function renderEntitlements(pos) {
       <td>${r.annDate || "-"}</td>
       <td>${who}</td></tr>`;
   }
+  body.innerHTML = bodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 }
 
 // 历史股息补记：抓每只股近5年的派息，按「每个投资者在 ex-date 当天的持股」自动记进股息+Cashflow
@@ -3446,17 +3675,18 @@ function renderCashflow(pos, realizedByTx) {
   for (const dv of db.dividends) if (dv.clientId === f && matchAccountFilter(dv.accountId))
     ev.push({ date: dv.date, k: 3, label: `股息 ${dv.ticker}`, in: dv.total, out: 0 });
   ev.sort((a, b) => a.date.localeCompare(b.date) || a.k - b.k);
-  body.innerHTML = ev.length ? "" : `<tr><td class="empty" colspan="6">这个投资者还没有任何记录</td></tr>`;
+  let bodyHtml = ev.length ? "" : `<tr><td class="empty" colspan="6">这个投资者还没有任何记录</td></tr>`;
   let bal = 0;
   for (const e of ev) {
     bal += (e.in || 0) - (e.out || 0);
-    body.innerHTML += `<tr>
+    bodyHtml += `<tr>
       <td>${e.date}</td><td>${e.label}</td>
       <td class="num pos">${e.in ? fmtN(e.in) : ""}</td>
       <td class="num neg">${e.out ? fmtN(e.out) : ""}</td>
       <td class="num"><b>${fmtN(bal)}</b></td>
       <td>${e.del ? `<button class="action danger small" onclick="delCashflow('${e.del}')">删除</button>` : ""}</td></tr>`;
   }
+  body.innerHTML = bodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 }
 
 // ---------- Export / Import ----------
@@ -3643,6 +3873,7 @@ if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注
 // 旧资料没有股票户口 -> 建预设户口并把旧记录归位。数字不会变，只是多了一层归属。
 // 一定要放在这里（helpers 定义之后），放在 db 那一行会碰到 const 的暂时死区。
 if (ensureAccounts()) localStorage.setItem(STORE_KEY, JSON.stringify(db));
+leaderBeat();   // 先决定这个分页是不是主分页（开机後面的自动存档要靠它决定谁来存）
 renderAll();
 autoRefreshExDiv();
 autoRefreshEntitlements();
