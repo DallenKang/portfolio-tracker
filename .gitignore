@@ -31,6 +31,9 @@ CLAUDE.md
 # 注意：AGENTS.md 和 codex/ 是【故意】要上传的 —— 已确认不含密钥与个资，
 #      这样换电脑 git clone 就能接手，不用靠 USB 或 OneDrive。
 
+# 个股研究报告（seeking-alpha skill 产出）—— 自己的研究，不公开
+research/
+
 # ---- 工具杂项 ----
 .claude/
 __pycache__/

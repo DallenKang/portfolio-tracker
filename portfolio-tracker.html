@@ -2318,8 +2318,8 @@ function failClient(msg) { alert(msg); setClientResult(msg, false); }
 
 // ---------- 投资者表单填的费率 vs 他户口实际用的费率 ----------
 // 算钱是看【户口】的设定（acctCfg 以 accountById 为准），投资者那组只在开第一个户口时用一次。
-// 所以改了投资者的费率、看到「已保存 ✓」，实际收费可能一点都没变 —— 2026 年 NG MIN LIN
-// 就是这样：改成 0.15% 之後，费用预览还是照 0.18% 算。
+// 所以改了投资者的费率、看到「已保存 ✓」，实际收费可能一点都没变 —— 真的发生过：
+// 一位投资者的费率改了，费用预览却还是照旧的算。
 // 不自动覆盖户口（他可能故意让 APEX 收 0.15%、CGS 收 0.20%），但差异一定要看得见。
 const n0 = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
 function rateFingerprint(cfg) {
