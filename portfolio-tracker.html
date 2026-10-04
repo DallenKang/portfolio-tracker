@@ -1055,7 +1055,9 @@ function gsiInit(hint) {
   return true;
 }
 function initGoogleSignIn() {
-  if (!gsiInit(null)) return false;
+  // 一打开就指名要「这台电脑上次登入的那个帐号」：浏览器登着好几个 Google 帐号时，
+  // 自动登入会优先选它，不用每次按 ▾ 去换。只是「优先」不是锁定 —— 别人照样可以按 ▾ 选自己的，後台照样验证是谁。
+  if (!gsiInit(localStorage.getItem(CACHE_OWNER_KEY) || null)) return false;
   for (const [id, txt] of [["gsi-button", "signin_with"], ["gsi-button-top", "signin_with"], ["gsi-button-reg", "signup_with"]]) {
     const el = document.getElementById(id);
     if (el) google.accounts.id.renderButton(el, { theme: "filled_blue", size: "large", text: txt });
