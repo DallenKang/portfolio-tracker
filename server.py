@@ -64,6 +64,39 @@ def div_history(symbol):
     return sorted(out, key=lambda d: d["exDate"])
 
 
+def daily_closes(symbol, frm):
+    # 每日收盘价（给投资者组合页回推历史市值用），逻辑跟 worker.js 的 dailyCloses 一样
+    # Yahoo 的 close 是拆股调整後的价 -> 除权前的日子要乘回去，变回当天真正的成交价
+    import time, datetime
+    p1 = int(datetime.datetime.strptime(frm, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()) - 7 * 86400
+    p2 = int(time.time()) + 86400
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(symbol)
+           + "?period1=%d&period2=%d&interval=1d&events=split" % (p1, p2))
+    res = json.loads(http_get(url, timeout=25))["chart"]["result"][0]
+    def myt(t):
+        return datetime.datetime.fromtimestamp(t + 8 * 3600, datetime.timezone.utc).strftime("%Y-%m-%d")
+    ts = res.get("timestamp") or []
+    close = (((res.get("indicators") or {}).get("quote") or [{}])[0] or {}).get("close") or []
+    splits = []
+    for e in ((res.get("events") or {}).get("splits") or {}).values():
+        f = e["numerator"] / e["denominator"] if e.get("denominator") else 0
+        if f > 0 and f != 1:
+            splits.append((myt(e["date"]), f))
+    d, c = [], []
+    for i, t in enumerate(ts):
+        px = close[i] if i < len(close) else None
+        if px is None or not px > 0:
+            continue
+        day = myt(t)
+        f = 1.0
+        for sday, sf in splits:
+            if sday > day:
+                f *= sf
+        d.append(day)
+        c.append(round(px * f, 4))
+    return {"d": d, "c": c}
+
+
 def split_history(symbol):
     # 红股/拆股（近5年）：给「持仓自动调整股数」用
     import time
@@ -542,6 +575,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.handle_quotes()
         elif self.path.startswith("/api/divhistory"):
             self.handle_divhistory()
+        elif self.path.startswith("/api/closes"):
+            self.handle_closes()
         elif self.path.startswith("/api/splits"):
             self.handle_splits()
         elif self.path.startswith("/api/corpactions"):
@@ -615,6 +650,23 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 out[c] = {"error": str(e)}
         self.send_json({"version": "local-v16-pickastock", "data": out})
+
+    def handle_closes(self):
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        frm = q.get("from", [""])[0]
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", frm):
+            self.send_json({"error": "from=YYYY-MM-DD"}, 400)
+            return
+        out = {}
+        for s in q.get("symbols", [""])[0].split(",")[:40]:
+            s = s.strip().upper()
+            if not s:
+                continue
+            try:
+                out[s] = daily_closes(s, frm)
+            except Exception as e:
+                out[s] = {"error": str(e)}
+        self.send_json({"version": "local-closes", "data": out})
 
     def handle_divhistory(self):
         qs = urllib.parse.urlparse(self.path).query

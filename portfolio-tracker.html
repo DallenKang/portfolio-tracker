@@ -148,6 +148,72 @@
   body.client-mode #clientFilter { pointer-events: none; opacity: 0.75; }
   /* 员工权限页只有 super 看得到（後端也会挡，这里只是不显示） */
   body.not-super .tab-btn[data-tab="staff"], body.client-mode .tab-btn[data-tab="staff"] { display: none; }
+  /* ===== 投资者组合页（V3-06）：配色已用 dataviz 验算器跑过（深色底 #1a2129） ===== */
+  body.client-mode.pf-hide-clients .tab-btn[data-tab="portfolio"] { display: none; }
+  .pf-preview { max-width: 460px; margin: 0 auto 12px; background: rgba(52,152,219,.10); border: 1px solid var(--blue); border-radius: 10px; padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
+  .pf-pick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  .pf-pick label { color: var(--muted); font-size: 12.5px; }
+  .pf-pick select { flex: 1; min-width: 0; }
+  .pf-status { max-width: 460px; margin: 0 auto 10px; font-size: 12.5px; color: var(--muted); }
+  .pf { --pf-gain: #29ad64; --pf-loss: #b03226; --pf-div: #b08c0b; --pf-cost: #c3ccd5; --pf-warn: #e67e22;
+        max-width: 460px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; font-size: 14px; }
+  .pf .num, .pf-num { font-variant-numeric: tabular-nums; }
+  .pf-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
+  .pf-head .who { font-weight: 600; font-size: 15px; }
+  .pf-head .asof { font-size: 12px; color: var(--muted); text-align: right; }
+  .pf-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .pf-panel h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0; letter-spacing: .04em; }
+  .pf-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .pf-label { font-size: 13px; color: var(--muted); }
+  .pf-big { font-size: 30px; font-weight: 700; line-height: 1.15; }
+  .pf-why { font-size: 12px; color: var(--muted); }
+  .pf-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; font-weight: 600; font-size: 13px; white-space: nowrap; }
+  .pf-pill.up { background: var(--pf-gain); color: #0b1a12; }
+  .pf-pill.down { background: var(--pf-loss); color: #fff; }
+  .pf-pill.flat { background: var(--card2); color: var(--text); }
+  .pf-split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .pf-split > div { background: var(--card2); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .pf-split .k { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .pf-split .v { font-weight: 600; font-size: 14px; }
+  .pf-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; background: var(--pf-div); }
+  .pf-warn { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--pf-warn); background: rgba(230,126,34,.10); }
+  .pf-warn .i { color: var(--pf-warn); font-weight: 700; flex: none; }
+  .pf-seg { display: inline-flex; background: var(--card2); border-radius: 999px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+  .pf-seg button { border: 0; background: transparent; padding: 4px 11px; border-radius: 999px; cursor: pointer; color: var(--muted); font-size: 12.5px; font-family: inherit; }
+  .pf-seg button.on { background: var(--blue); color: #fff; }
+  .pf-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .pf-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .pf-sw-line { width: 16px; border-top: 2px solid var(--blue); }
+  .pf-sw-dash { width: 16px; border-top: 2px dashed var(--pf-cost); }
+  .pf-sw-warn { width: 14px; height: 4px; border-radius: 2px; background: var(--pf-warn); }
+  .pf-chart { position: relative; width: 100%; }
+  .pf-chart svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  .pf-tip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.45; white-space: nowrap; transform: translate(-50%, -100%); z-index: 2; }
+  .pf-tip .t { color: var(--muted); }
+  .pf-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 12.5px; }
+  .pf-stats .k { color: var(--muted); }
+  .pf-cap { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  .pf-cap .w { color: var(--text); }
+  .pf-cal { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .pf-cell { border: 1px solid var(--border); border-radius: 8px; padding: 7px 8px; text-align: left; background: var(--card2); cursor: pointer; display: flex; flex-direction: column; gap: 1px; min-width: 0; color: var(--text); font-family: inherit; }
+  .pf-cell .m { font-size: 11.5px; color: var(--muted); }
+  .pf-cell .a { font-weight: 600; font-size: 13px; }
+  .pf-cell .p { font-size: 11.5px; opacity: .85; }
+  .pf-cell.empty { cursor: default; background: transparent; border-style: dashed; }
+  .pf-cell.empty .a { color: var(--muted); font-weight: 400; }
+  .pf-cell.sel { outline: 2px solid var(--blue); outline-offset: 1px; }
+  .pf-detail { font-size: 12.5px; background: var(--card2); border-radius: 8px; padding: 8px 10px; }
+  .pf-holds { display: flex; flex-direction: column; gap: 8px; }
+  .pf-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card2); display: flex; flex-direction: column; gap: 6px; }
+  .pf-card.nop { border-style: dashed; border-color: var(--pf-warn); }
+  .pf-card .tk { font-weight: 700; font-size: 15px; }
+  .pf-card .nm { font-size: 11.5px; color: var(--muted); }
+  .pf-card .g3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; font-size: 12px; }
+  .pf-card .g3 .k { color: var(--muted); font-size: 11px; }
+  .pf-weight { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .pf-weight i { display: block; height: 100%; background: var(--blue); border-radius: 2px; }
+  .pf-empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+  .pf-note { font-size: 12px; color: var(--muted); }
   /* 存云端失败 = 会掉资料，要看得见 */
   #sync-warn {
     background: #5c1f26; border: 1px solid #a83244; color: #ffd6db;
@@ -298,6 +364,7 @@
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="dashboard">📊 总览 Overview</button>
+  <button class="tab-btn" data-tab="portfolio">📈 组合 My Portfolio</button>
   <button class="tab-btn" data-tab="clients">👥 投资者 Investors</button>
   <button class="tab-btn" data-tab="transactions">📝 交易 Transactions</button>
   <button class="tab-btn" data-tab="holdings">💼 持仓 Holdings</button>
@@ -455,6 +522,16 @@
 </div>
 
 <!-- ============ HOLDINGS ============ -->
+<!-- ============ 投资者组合页（V3-06）============ -->
+<div class="tab" id="tab-portfolio">
+  <div class="pf-preview" id="pf-preview">
+    <div><b>预览：这是投资者登入後会看到的组合页。</b>投资者现在<b>还看不到</b>，等你跑一阵子确认数字没问题再打开。</div>
+    <div class="pf-pick"><label for="pf-client">用这位投资者的眼睛看</label><select id="pf-client" onchange="pfPick(this.value)"></select></div>
+  </div>
+  <div class="pf-status" id="pf-status" hidden></div>
+  <div class="pf" id="pf-root"></div>
+</div>
+
 <div class="tab" id="tab-holdings">
   <div class="form-card">
     <h3>现价 Prices</h3>
@@ -2177,6 +2254,7 @@ function renderAll() {
 
   // 原始数据不在这里生成 —— 见 toggleRaw()。每次重画都把整份资料转文字塞进画面，是输入後要等的原因之一。
   if (rawShown) document.getElementById("raw-btn").textContent = "更新";   // 画面资料变了，提示可以再按一次拿最新的
+  pfMaybeRefresh();                       // 组合页开着才重算，平常不算
 }
 let rawShown = false;
 function toggleRaw() {
@@ -3751,6 +3829,431 @@ function clearAll() {
   save();
 }
 
+// ================= 投资者组合页（V3-06 第二阶段）=================
+// 投资者登入後看到的：总览、走势线、盈亏日历、持仓卡片。
+// 走势线 / 日历用「方案 B」（Dallen 10/4 确认）：从交易记录回推每天的持股，配每天的收盘价。
+//   收盘价来自 /api/closes（Worker 已把 Yahoo 的拆股调整乘回去，变回当天真正的成交价）。
+// 盈亏一律沿用 computePortfolio（只是喂它「到某一天为止」的交易）—— 成本 / 已实现跟持仓页同一套算法，引擎一个字没动。
+// 回报率 % 用 B 时间加权（Dallen 10/4 决定）；佣金费用投资者看不到（10/4 决定），盈亏本身已扣费用。
+// 只在打开这个分页时计算，不进 renderAll 的平常路径。
+const PORTFOLIO_FOR_CLIENTS = false;   // ⚠️ 对账完、Dallen 点头之前，投资者看不到这一页
+const pf = { clientId: null, range: "ytd", year: null, mode: "trade", month: null, hist: null, busy: false, closes: {} };
+const pfNf = (n, d = 2) => Math.abs(n).toLocaleString("en-MY", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pfRm = (n, d = 2) => (n < 0 ? "−" : "") + "RM " + pfNf(n, d);
+const pfSrm = (n, d = 0) => (n > 0 ? "+" : n < 0 ? "−" : "") + "RM " + pfNf(n, d);
+const pfPc = x => (x > 0 ? "+" : x < 0 ? "−" : "") + pfNf(x * 100, 1) + "%";
+const pfK = n => (n < 0 ? "−" : n > 0 ? "+" : "") + (Math.abs(n) >= 1000 ? pfNf(n / 1000, 1) + "k" : pfNf(n, 0));
+const pfDow = d => "日一二三四五六"[new Date(d + "T00:00:00Z").getUTCDay()];
+const pfWeekday = d => { const w = new Date(d + "T00:00:00Z").getUTCDay(); return w !== 0 && w !== 6; };
+const pfPillCls = n => n > 0 ? "up" : n < 0 ? "down" : "flat";
+const pfArrow = n => n > 0 ? "▲ " : n < 0 ? "▼ " : "";
+function pfStatus(msg) { const el = document.getElementById("pf-status"); if (!el) return; el.hidden = !msg; el.textContent = msg || ""; }
+function pfPick(id) { pf.clientId = id; pf.month = null; pf.year = null; pfCompute(); }
+
+async function pfShow() {
+  const isClient = viewerRole === "client";
+  document.getElementById("pf-preview").hidden = isClient;
+  const withTx = db.clients.filter(c => db.transactions.some(t => t.clientId === c.id))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  if (isClient) pf.clientId = (db.clients[0] || {}).id || null;
+  else {
+    const f = document.getElementById("clientFilter").value;
+    if (!pf.clientId || !withTx.some(c => c.id === pf.clientId))
+      pf.clientId = (f && f !== "all" && withTx.some(c => c.id === f)) ? f : ((withTx[0] || {}).id || null);
+    document.getElementById("pf-client").innerHTML =
+      withTx.map(c => `<option value="${c.id}"${c.id === pf.clientId ? " selected" : ""}>${clientLabel(c)}</option>`).join("");
+  }
+  await pfCompute();
+}
+
+// 抓这位投资者所有股票的每日收盘价（已抓过的不重抓）
+async function pfLoadCloses(syms, from) {
+  const need = syms.filter(s => !pf.closes[s] || pf.closes[s].from > from);
+  if (!need.length) return "";
+  pfStatus(`正在抓 ${need.length} 支股票的历史收盘价…`);
+  let err = "";
+  for (let i = 0; i < need.length; i += 40) {          // Worker 一次最多 40 支
+    const chunk = need.slice(i, i + 40);
+    try {
+      const r = await fetch(apiUrl(`/api/closes?symbols=${encodeURIComponent(chunk.join(","))}&from=${from}`));
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      for (const s of chunk) {
+        const x = (j.data || {})[s];
+        if (x && Array.isArray(x.d)) { const m = {}; x.d.forEach((d, k) => m[d] = x.c[k]); pf.closes[s] = { from, d: x.d, map: m }; }
+      }
+    } catch (e) { err = e.message; }
+  }
+  pfStatus("");
+  return err;
+}
+
+async function pfCompute() {
+  const root = document.getElementById("pf-root");
+  if (!pf.clientId) { root.innerHTML = `<div class="pf-empty">还没有投资者有交易记录。</div>`; pfStatus(""); return; }
+  if (pf.busy) return;
+  pf.busy = true;
+  try {
+    const txs = db.transactions.filter(t => t.clientId === pf.clientId);
+    if (!txs.length) { root.innerHTML = `<div class="pf-empty">这位投资者还没有交易记录。</div>`; return; }
+    const from = txs.reduce((m, t) => t.date < m ? t.date : m, "9999-12-31");
+    const syms = [...new Set(txs.map(t => db.symbols[t.ticker]).filter(Boolean))];
+    const err = await pfLoadCloses(syms, from);
+    pf.hist = pfBuild(pf.clientId);
+    pfRender();
+    if (err) pfStatus(`有些历史收盘价抓不到（${err}），那几支在走势线上会标成缺价。稍後重新打开这一页会再抓。`);
+  } finally { pf.busy = false; }
+}
+
+// 某支股票某一天的价：最後一天用现价（跟持仓页一致）；其他天用收盘价，停牌 / 假期往前找最多 7 天
+function pfPrice(tk, day, isLast) {
+  if (isLast && db.prices[tk] && db.prices[tk].price > 0) return db.prices[tk].price;
+  const c = pf.closes[db.symbols[tk]];
+  if (!c) return null;
+  if (c.map[day] != null) return c.map[day];
+  let lo = 0, hi = c.d.length - 1, at = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (c.d[mid] <= day) { at = mid; lo = mid + 1; } else hi = mid - 1; }
+  if (at < 0) return null;
+  const gap = (new Date(day + "T00:00:00Z") - new Date(c.d[at] + "T00:00:00Z")) / 86400000;
+  return gap <= 7 ? c.map[c.d[at]] : null;
+}
+
+// 回推每一天：持股、市值、成本、已实现、累计股息、缺价的股票
+function pfBuild(cid) {
+  const txs = db.transactions.filter(t => t.clientId === cid)
+    .sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
+  if (!txs.length) return null;
+  const from = txs[0].date, today = mytNow().date;
+  const set = new Set(txs.map(t => t.date));
+  for (const tk of new Set(txs.map(t => t.ticker))) {
+    const c = pf.closes[db.symbols[tk]];
+    if (c) for (const d of c.d) if (d >= from && d <= today) set.add(d);
+  }
+  if (pfWeekday(today)) set.add(today);
+  const days = [...set].filter(d => d <= today && pfWeekday(d)).sort();
+  // 每个交易日期的持仓状态：用同一个 computePortfolio，只喂「到那天为止」的交易
+  const txDates = [...new Set(txs.map(t => t.date))].sort();
+  const states = {};
+  const allTx = db.transactions;
+  try {
+    for (const D of txDates) { db.transactions = txs.filter(t => t.date <= D); states[D] = computePortfolio().pos; }
+  } finally { db.transactions = allTx; }
+  const divs = db.dividends.filter(d => d.clientId === cid).sort((a, b) => a.date.localeCompare(b.date));
+  // 买进 / 卖出的钱记在「它开始影响持股的那一天」= 交易日期当天或之後第一个交易日。
+  // （有交易日期落在週末，例如 2026-09-05 星期六 —— 以前直接漏掉，期初 + 盈亏 + 买卖就对不上期末）
+  const firstDayOnOrAfter = d => { let lo = 0, hi = days.length - 1, at = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (days[m] >= d) { at = m; hi = m - 1; } else lo = m + 1; } return at; };
+  const BUY = days.map(() => 0), SELL = days.map(() => 0);
+  for (const t of txs) {
+    const k = firstDayOnOrAfter(t.date);
+    if (k < 0) continue;
+    if (t.type === "buy") BUY[k] += netAmount(t);
+    else if (t.type === "sell") SELL[k] += netAmount(t);
+  }
+  const h = { days, from, V: [], Cp: [], PL: [], D: [], MISS: [], BUY, SELL, pos: {} };
+  let si = -1, di = 0, divCum = 0;
+  for (let k = 0; k < days.length; k++) {
+    const day = days[k], last = k === days.length - 1;
+    while (si + 1 < txDates.length && txDates[si + 1] <= day) si++;
+    while (di < divs.length && divs[di].date <= day) divCum += divs[di++].total || 0;
+    const pos = si >= 0 ? states[txDates[si]] : {};
+    let v = 0, cp = 0, r = 0;
+    const miss = [];
+    for (const key in pos) {
+      const p = pos[key];
+      r += p.realized || 0;
+      if (!(p.qty > 1e-9)) continue;
+      const px = pfPrice(p.ticker, day, last);
+      if (px == null) { if (!miss.includes(p.ticker)) miss.push(p.ticker); continue; }
+      v += p.qty * px; cp += p.cost;
+    }
+    h.V.push(v); h.Cp.push(cp); h.PL.push(v - cp + r); h.D.push(divCum); h.MISS.push(miss);
+  }
+  h.pos = si >= 0 ? states[txDates[si]] : {};
+  return h;
+}
+
+// B：时间加权（扣掉中途买卖的影响）
+function pfTwr(h, a, b) {
+  let g = 1;
+  for (let d = a; d <= b; d++) {
+    const prev = d > 0 ? h.PL[d - 1] : 0, base = d > 0 && h.V[d - 1] > 0 ? h.V[d - 1] : h.Cp[d];
+    if (base > 0) g *= 1 + (h.PL[d] - prev) / base;
+  }
+  return g - 1;
+}
+
+function pfRender() {
+  const h = pf.hist, root = document.getElementById("pf-root");
+  if (!h || !h.days.length) { root.innerHTML = `<div class="pf-empty">这位投资者还没有交易记录。</div>`; return; }
+  const L = h.days.length - 1, c = clientById(pf.clientId);
+  if (!pf.year) pf.year = h.days[L].slice(0, 4);
+  const years = []; for (let y = +h.from.slice(0, 4); y <= +h.days[L].slice(0, 4); y++) years.push(String(y));
+  root.innerHTML = `
+    <div class="pf-head"><div><div class="who">${c ? clientLabel(c) : ""}</div><div class="pf-note">Inner Circle Ptracker</div></div>
+      <div class="asof num">价格日期 ${h.days[L]}（星期${pfDow(h.days[L])}）</div></div>
+    <div class="pf-panel" id="pf-ov"></div>
+    <div class="pf-panel">
+      <div class="pf-row"><h3>走势</h3><div class="pf-seg" id="pf-range">
+        ${[["1w", "1周"], ["1m", "1个月"], ["ytd", "今年"], ["all", "全部"]].map(([k, t]) => `<button data-v="${k}" class="${pf.range === k ? "on" : ""}">${t}</button>`).join("")}</div></div>
+      <div class="pf-legend"><span><i class="pf-sw-line"></i>市值</span><span><i class="pf-sw-dash"></i>成本</span><span><i class="pf-sw-warn"></i>有股票没抓到价的日子</span></div>
+      <div class="pf-chart" id="pf-trend-wrap"><svg id="pf-trend" viewBox="0 0 360 210" role="img" aria-label="股票组合价值走势"></svg><div class="pf-tip" id="pf-trend-tip" hidden></div></div>
+      <div class="pf-stats num" id="pf-tstats"></div>
+      <div class="pf-cap" id="pf-tcap"></div>
+    </div>
+    <div class="pf-panel">
+      <div class="pf-row"><h3>盈亏日历</h3><div class="pf-seg" id="pf-year">${years.map(y => `<button data-v="${y}" class="${pf.year === y ? "on" : ""}">${y}</button>`).join("")}</div></div>
+      <div class="pf-seg" id="pf-mode"><button data-v="trade" class="${pf.mode === "trade" ? "on" : ""}">买卖赚的</button><button data-v="div" class="${pf.mode === "div" ? "on" : ""}">收到的股息</button></div>
+      <div class="pf-cal" id="pf-cal"></div>
+      <div class="pf-detail num" id="pf-cdetail"></div>
+      <div class="pf-chart" id="pf-bar-wrap"><svg id="pf-bars" viewBox="0 0 360 160" role="img" aria-label="每月盈亏柱状图"></svg><div class="pf-tip" id="pf-bar-tip" hidden></div></div>
+      <div class="num" id="pf-ytotal"></div>
+    </div>
+    <div class="pf-panel"><div class="pf-row"><h3>持仓</h3><span class="pf-note" id="pf-hcount"></span></div><div class="pf-holds" id="pf-holds"></div></div>`;
+  const seg = (id, key, after) => document.getElementById(id).onclick = ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    pf[key] = b.dataset.v; if (key === "year") pf.month = null;
+    document.querySelectorAll(`#${id} button`).forEach(x => x.classList.toggle("on", x === b));
+    after();
+  };
+  seg("pf-range", "range", pfRenderTrend); seg("pf-year", "year", pfRenderCal); seg("pf-mode", "mode", pfRenderCal);
+  pfRenderOverview(); pfRenderTrend(); pfRenderCal(); pfRenderHolds();
+}
+
+function pfRenderOverview() {
+  const h = pf.hist, L = h.days.length - 1, el = document.getElementById("pf-ov");
+  const unreal = h.V[L] - h.Cp[L], pl = h.PL[L], real = pl - unreal, pct = pfTwr(h, 0, L);
+  const miss = h.MISS[L];
+  const missCost = miss.length ? Object.values(h.pos).filter(p => p.qty > 1e-9 && miss.includes(p.ticker)).reduce((s, p) => s + p.cost, 0) : 0;
+  el.innerHTML = `
+    <div class="pf-label">股票组合价值</div>
+    <div class="pf-big num">${pfRm(h.V[L])}</div>
+    <div class="pf-row"><span class="pf-label">总盈亏（已实现 + 未实现）</span><span class="pf-pill num ${pfPillCls(pl)}">${pfArrow(pl)}${pfSrm(pl)}（${pfPc(pct)}）</span></div>
+    <div class="pf-split">
+      <div><div class="k">已实现</div><div class="v num">${pfSrm(real)}</div></div>
+      <div><div class="k">未实现</div><div class="v num">${pfSrm(unreal)}</div></div>
+      <div><div class="k"><i class="pf-dot"></i>累计股息</div><div class="v num">${pfRm(h.D[L], 0)}</div></div>
+    </div>
+    ${miss.length ? `<div class="pf-warn"><span class="i" aria-hidden="true">⚠</span><span><b>${miss.length} 支抓不到现价：${miss.join("、")}</b>。成本 ${pfRm(missCost, 0)} 没算进市值，也没算进盈亏和 %，免得少算成亏钱。</span></div>` : ""}
+    <div class="pf-why">叫「股票组合价值」不叫「净资产」：这里只算股票，不含户口里的现金，所以会比券商 App 的净资产少。% 用时间加权算（跟券商 App 一样，扣掉中途买卖的影响）。</div>`;
+}
+
+function pfRangeStart(h, r) {
+  const L = h.days.length - 1;
+  if (r === "1w") return Math.max(0, L - 4);
+  if (r === "all") return 0;
+  if (r === "ytd") { const i = h.days.findIndex(d => d >= h.days[L].slice(0, 4) + "-01-01"); return i < 0 ? L : i; }
+  const end = new Date(h.days[L] + "T00:00:00Z"); end.setUTCMonth(end.getUTCMonth() - 1);
+  const i = h.days.findIndex(d => d > end.toISOString().slice(0, 10)); return i < 0 ? L : i;
+}
+function pfTicks(lo, hi, n) {
+  const span = hi - lo || 1, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const st = [1, 2, 2.5, 5, 10].map(x => x * mag).find(x => x >= raw);
+  const t = []; for (let v = Math.ceil(lo / st) * st; v <= hi + 1e-6; v += st) t.push(v); return t;
+}
+const pfSvg = (tag, attrs, parent) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const a in attrs) e.setAttribute(a, attrs[a]); if (parent) parent.appendChild(e); return e; };
+
+function pfRenderTrend() {
+  const h = pf.hist, svg = document.getElementById("pf-trend"); svg.textContent = "";
+  // 期间从「前一天收盘」算起（券商「今年以来」也是这样），期初市值 + 卖出 − 买进 + 盈亏 才能对得上期末
+  const L = h.days.length - 1, sR = pfRangeStart(h, pf.range), s = sR > 0 ? sR - 1 : 0, e = L;
+  const W = 360, Ht = 210, pl = 46, pr = 14, pt = 16, pb = 30;
+  const xs = i => pl + (e === s ? (W - pl - pr) / 2 : (i - s) / (e - s) * (W - pl - pr));
+  let lo = Infinity, hi = -Infinity;
+  for (let i = s; i <= e; i++) { lo = Math.min(lo, h.V[i], h.Cp[i]); hi = Math.max(hi, h.V[i], h.Cp[i]); }
+  const padv = (hi - lo) * 0.12 || Math.max(hi * 0.02, 1); lo = Math.max(0, lo - padv); hi += padv;
+  const ticks = pfTicks(lo, hi, 3); lo = Math.min(lo, ticks[0]); hi = Math.max(hi, ticks[ticks.length - 1]);
+  const ys = v => pt + (1 - (v - lo) / (hi - lo || 1)) * (Ht - pt - pb);
+  for (const t of ticks) {
+    pfSvg("line", { x1: pl, x2: W - pr, y1: ys(t), y2: ys(t), stroke: "var(--border)", "stroke-width": 1 }, svg);
+    pfSvg("text", { x: pl - 6, y: ys(t) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 10 }, svg).textContent = t >= 1000 ? Math.round(t / 1000) + "k" : Math.round(t);
+  }
+  let area = `M${xs(s)},${ys(lo)}`, lineV = "", lineC = "";
+  for (let i = s; i <= e; i++) {
+    const p = `${xs(i).toFixed(1)},${ys(h.V[i]).toFixed(1)}`;
+    area += "L" + p; lineV += (i === s ? "M" : "L") + p; lineC += (i === s ? "M" : "L") + `${xs(i).toFixed(1)},${ys(h.Cp[i]).toFixed(1)}`;
+  }
+  area += `L${xs(e)},${ys(lo)}Z`;
+  const gr = pfSvg("linearGradient", { id: "pfFill", x1: 0, y1: 0, x2: 0, y2: 1 }, pfSvg("defs", {}, svg));
+  pfSvg("stop", { offset: 0, "stop-color": "var(--blue)", "stop-opacity": .28 }, gr); pfSvg("stop", { offset: 1, "stop-color": "var(--blue)", "stop-opacity": 0 }, gr);
+  pfSvg("path", { d: area, fill: "url(#pfFill)" }, svg);
+  pfSvg("path", { d: lineC, fill: "none", stroke: "var(--pf-cost)", "stroke-width": 1.5, "stroke-dasharray": "4 3" }, svg);
+  pfSvg("path", { d: lineV, fill: "none", stroke: "var(--blue)", "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+  // 缺价的日子：底下一段一段的细带
+  let missDays = 0, maxMiss = 0; const missTk = new Set();
+  for (let i = s; i <= e; i++) {
+    if (!h.MISS[i].length) continue;
+    missDays++; maxMiss = Math.max(maxMiss, h.MISS[i].length); h.MISS[i].forEach(t => missTk.add(t));
+    let j = i; while (j + 1 <= e && h.MISS[j + 1].length) j++;
+    pfSvg("rect", { x: xs(i) - 1, y: Ht - pb + 4, width: Math.max(2, xs(j) - xs(i) + 2), height: 3, rx: 1.5, fill: "var(--pf-warn)" }, svg);
+    for (let q = i + 1; q <= j; q++) { maxMiss = Math.max(maxMiss, h.MISS[q].length); h.MISS[q].forEach(t => missTk.add(t)); missDays++; }
+    i = j;
+  }
+  pfSvg("circle", { cx: xs(s), cy: ys(h.V[s]), r: 3.5, fill: "var(--blue)", stroke: "var(--card)", "stroke-width": 2 }, svg);
+  pfSvg("circle", { cx: xs(e), cy: ys(h.V[e]), r: 5, fill: "var(--blue)", stroke: "var(--card)", "stroke-width": 2 }, svg);
+  const lab = (x, y, txt, anchor) => { pfSvg("text", { x, y, "text-anchor": anchor, fill: "var(--text)", "font-size": 10.5, "font-weight": 600 }, svg).textContent = txt; };
+  const lift = y => y - 9 < pt + 2 ? y + 17 : y - 9;
+  if (e > s) lab(xs(s) + 2, lift(ys(h.V[s])), "期初 " + pfK(h.V[s]).replace("+", ""), "start");
+  lab(xs(e), lift(ys(h.V[e])), "期末 " + pfK(h.V[e]).replace("+", ""), "end");
+  const dl = (x, txt, anchor) => { pfSvg("text", { x, y: Ht - 8, "text-anchor": anchor, fill: "var(--muted)", "font-size": 10 }, svg).textContent = txt; };
+  dl(pl, h.days[s], "start"); if (e > s) dl(W - pr, h.days[e], "end");
+  if (pf.range === "all") pfSvg("text", { x: pl + 2, y: pt + 4, fill: "var(--muted)", "font-size": 10 }, svg).textContent = "从第一笔交易起";
+  // 十字线 + 提示
+  const cross = pfSvg("line", { y1: pt, y2: Ht - pb, stroke: "var(--muted)", "stroke-width": 1, opacity: 0 }, svg);
+  const hot = pfSvg("circle", { r: 4.5, fill: "var(--blue)", stroke: "var(--text)", "stroke-width": 1.5, opacity: 0 }, svg);
+  const hit = pfSvg("rect", { x: pl, y: 0, width: W - pl - pr, height: Ht, fill: "transparent" }, svg);
+  const tip = document.getElementById("pf-trend-tip");
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width * W;
+    const i = e === s ? s : Math.max(s, Math.min(e, Math.round(s + (x - pl) / (W - pl - pr) * (e - s))));
+    cross.setAttribute("x1", xs(i)); cross.setAttribute("x2", xs(i)); cross.setAttribute("opacity", .6);
+    hot.setAttribute("cx", xs(i)); hot.setAttribute("cy", ys(h.V[i])); hot.setAttribute("opacity", 1);
+    const m = h.MISS[i].length ? `<div style="color:var(--pf-warn)">⚠ 没有价：${h.MISS[i].join("、")}</div>` : "";
+    tip.innerHTML = `<div class="t">${h.days[i]}（星期${pfDow(h.days[i])}）</div><div>市值 <b>${pfRm(h.V[i], 0)}</b></div><div class="t">成本 ${pfRm(h.Cp[i], 0)}</div>${m}`;
+    tip.hidden = false;
+    tip.style.left = Math.max(80, Math.min(r.width - 80, xs(i) / W * r.width)) + "px";
+    tip.style.top = Math.max(64, ys(h.V[i]) / Ht * r.height - 10) + "px";
+  };
+  const leave = () => { tip.hidden = true; cross.setAttribute("opacity", 0); hot.setAttribute("opacity", 0); };
+  hit.addEventListener("pointermove", move); hit.addEventListener("pointerdown", move); hit.addEventListener("pointerleave", leave);
+  // 统计 + 说明
+  const plR = h.PL[e] - (sR > 0 ? h.PL[sR - 1] : 0), pct = pfTwr(h, sR, e);
+  let buys = 0, sells = 0; for (let i = sR; i <= e; i++) { buys += h.BUY[i]; sells += h.SELL[i]; }
+  document.getElementById("pf-tstats").innerHTML = `<span class="k">期初市值${sR > 0 ? `（${h.days[s]} 收盘）` : ""}</span><span>${sR > 0 ? pfRm(h.V[s], 0) : "—（从第一笔交易起）"}</span><span class="k">期末市值</span><span>${pfRm(h.V[e], 0)}</span>
+    <span class="k">这段期间盈亏</span><span><span class="pf-pill ${pfPillCls(plR)}">${pfSrm(plR)}（${pfPc(pct)}）</span></span>
+    <span class="k">期间买进</span><span>${buys ? pfRm(buys, 0) : "—"}</span>
+    <span class="k">期间卖出（拿回的钱）</span><span>${sells ? pfRm(sells, 0) : "—"}</span>`;
+  const cap = [`<span>市值变化里有一部分是新买进的钱，所以「这段期间盈亏」已经把买进卖出的钱扣掉，只算涨跌和卖出赚的。</span>`];
+  if (missDays) {
+    const names = [...missTk]; const shown = names.slice(0, 6).join("、") + (names.length > 6 ? ` 等 ${names.length} 支` : "");
+    cap.push(`<span class="w">⚠ 这段期间有 ${missDays} 天有股票没抓到价（最多同时 ${maxMiss} 支：${shown}），那几天它们没算进市值，所以线会偏低。底下的橘色细带就是那几天。</span>`);
+    cap.push(`<span class="w">也因为这样，上面的买进 / 卖出照实列出真正的钱，但没价那几支的市值没算进期初 / 期末，所以「期初 + 盈亏 + 买进 − 卖出」不会刚好等於期末。</span>`);
+  }
+  document.getElementById("pf-tcap").innerHTML = cap.join("");
+}
+
+function pfMonths(h, year) {
+  const out = [], L = h.days.length - 1;
+  for (let m = 1; m <= 12; m++) {
+    const key = `${year}-${String(m).padStart(2, "0")}`;
+    let a = -1, b = -1;
+    for (let i = 0; i <= L; i++) if (h.days[i].startsWith(key)) { if (a < 0) a = i; b = i; }
+    if (a < 0) { out.push({ m, key, empty: true, why: key < h.from.slice(0, 7) ? "还没开始" : "还没到" }); continue; }
+    const pl = h.PL[b] - (a > 0 ? h.PL[a - 1] : 0), dv = h.D[b] - (a > 0 ? h.D[a - 1] : 0), base = a > 0 ? h.V[a - 1] : h.V[b];
+    out.push({ m, key, a, b, pl, pct: pfTwr(h, a, b), dv, dvPct: base > 0 ? dv / base : 0, partial: b === L && h.days[L] < key + "-28" });
+  }
+  return out;
+}
+function pfTint(ms, x) {
+  const live = ms.filter(o => !o.empty);
+  if (pf.mode === "div") { const max = Math.max(...live.map(o => o.dv), 1); return x.dv > 0 ? `color-mix(in srgb, var(--pf-div) ${Math.round(18 + 52 * x.dv / max)}%, var(--card2))` : "var(--card2)"; }
+  const max = Math.max(...live.map(o => Math.abs(o.pl)), 1), share = Math.round(14 + 50 * Math.abs(x.pl) / max);
+  return x.pl > 0 ? `color-mix(in srgb, var(--pf-gain) ${share}%, var(--card2))` : x.pl < 0 ? `color-mix(in srgb, var(--pf-loss) ${share}%, var(--card2))` : "var(--card2)";
+}
+function pfRenderCal() {
+  const h = pf.hist, ms = pfMonths(h, pf.year), cal = document.getElementById("pf-cal"), L = h.days.length - 1;
+  let html = "";
+  for (const x of ms) {
+    if (x.empty) { html += `<button type="button" class="pf-cell empty" disabled><span class="m">${x.m} 月</span><span class="a">—</span><span class="p">${x.why}</span></button>`; continue; }
+    const amt = pf.mode === "div" ? "RM " + pfNf(x.dv, 0) : pfSrm(x.pl);
+    const p = pf.mode === "div" ? (x.dv ? "占市值 " + pfNf(x.dvPct * 100, 2) + "%" : "没有股息") : pfPc(x.pct);
+    html += `<button type="button" class="pf-cell${pf.month === x.key ? " sel" : ""}" data-k="${x.key}" style="background:${pfTint(ms, x)}"><span class="m">${x.m} 月${x.partial ? "（到 " + h.days[L].slice(8) + " 日）" : ""}</span><span class="a num">${amt}</span><span class="p num">${p}</span></button>`;
+  }
+  cal.innerHTML = html;
+  cal.onclick = ev => { const b = ev.target.closest("button[data-k]"); if (!b) return; pf.month = pf.month === b.dataset.k ? null : b.dataset.k; pfRenderCal(); };
+  const sel = ms.find(x => x.key === pf.month);
+  document.getElementById("pf-cdetail").innerHTML = sel
+    ? `<b>${pf.year} 年 ${sel.m} 月</b>：买卖赚的 ${pfSrm(sel.pl)}（${pfPc(sel.pct)}）· 收到股息 ${pfRm(sel.dv, 0)}`
+    : `点一个月份看那个月的买卖盈亏和股息。买卖赚的 = 涨跌 + 卖出赚的（已扣费用），不含股息。`;
+  pfRenderBars(ms);
+  const live = ms.filter(x => !x.empty), yt = document.getElementById("pf-ytotal");
+  if (!live.length) { yt.textContent = ""; return; }
+  const a = live[0].a, b = live[live.length - 1].b, ypl = h.PL[b] - (a > 0 ? h.PL[a - 1] : 0);
+  yt.innerHTML = pf.mode === "div"
+    ? `${pf.year} 年收到股息合计 <b>${pfRm(h.D[b] - (a > 0 ? h.D[a - 1] : 0), 0)}</b>`
+    : `${pf.year} 年买卖赚的合计 <span class="pf-pill ${pfPillCls(ypl)}">${pfSrm(ypl)}（${pfPc(pfTwr(h, a, b))}）</span>`;
+}
+function pfRenderBars(ms) {
+  const svg = document.getElementById("pf-bars"); svg.textContent = "";
+  const W = 360, Ht = 160, pl = 38, pr = 8, pt = 18, pb = 22, slot = (W - pl - pr) / 12, bw = Math.min(16, slot * 0.6);
+  const val = x => x.empty ? 0 : (pf.mode === "div" ? x.dv : x.pl);
+  const vals = ms.map(val), maxP = Math.max(0, ...vals), minN = Math.min(0, ...vals);
+  const span = (maxP - minN) || 1, ys = v => pt + (maxP - v) / span * (Ht - pt - pb), y0 = ys(0);
+  for (const t of pfTicks(minN, maxP, 2)) {
+    if (Math.abs(t) < 1e-9) continue;
+    pfSvg("line", { x1: pl, x2: W - pr, y1: ys(t), y2: ys(t), stroke: "var(--border)", "stroke-width": 1 }, svg);
+    pfSvg("text", { x: pl - 5, y: ys(t) + 3.5, "text-anchor": "end", fill: "var(--muted)", "font-size": 9.5 }, svg).textContent = pfK(t).replace("+", "");
+  }
+  pfSvg("line", { x1: pl, x2: W - pr, y1: y0, y2: y0, stroke: "var(--muted)", "stroke-width": 1 }, svg);
+  const iMax = vals.indexOf(maxP), iMin = vals.indexOf(minN), tip = document.getElementById("pf-bar-tip");
+  ms.forEach((x, i) => {
+    const cx = pl + slot * i + slot / 2, v = val(x);
+    pfSvg("text", { x: cx, y: Ht - 7, "text-anchor": "middle", fill: x.empty ? "var(--border)" : "var(--muted)", "font-size": 9.5 }, svg).textContent = x.m;
+    if (!x.empty && v !== 0) {
+      const top = Math.min(ys(v), y0), hh = Math.max(1.5, Math.abs(ys(v) - y0)), r = Math.min(4, hh), x0 = cx - bw / 2, x1 = cx + bw / 2;
+      const d = v > 0
+        ? `M${x0},${y0} L${x0},${top + r} Q${x0},${top} ${x0 + r},${top} L${x1 - r},${top} Q${x1},${top} ${x1},${top + r} L${x1},${y0} Z`
+        : `M${x0},${y0} L${x0},${y0 + hh - r} Q${x0},${y0 + hh} ${x0 + r},${y0 + hh} L${x1 - r},${y0 + hh} Q${x1},${y0 + hh} ${x1},${y0 + hh - r} L${x1},${y0} Z`;
+      pfSvg("path", { d, fill: pf.mode === "div" ? "var(--pf-div)" : v > 0 ? "var(--pf-gain)" : "var(--pf-loss)", opacity: pf.month && pf.month !== x.key ? .45 : 1 }, svg);
+      if ((i === iMax && maxP > 0) || (i === iMin && minN < 0))
+        pfSvg("text", { x: cx, y: v > 0 ? top - 4 : y0 + hh + 11, "text-anchor": "middle", fill: "var(--text)", "font-size": 9.5, "font-weight": 600 }, svg).textContent = pfK(v);
+    }
+    if (!x.empty) {
+      const hit = pfSvg("rect", { x: pl + slot * i, y: 0, width: slot, height: Ht, fill: "transparent" }, svg);
+      const show = () => {
+        const r = svg.getBoundingClientRect();
+        tip.innerHTML = pf.mode === "div"
+          ? `<div class="t">${pf.year} 年 ${x.m} 月</div><div>股息 <b>${pfRm(x.dv, 0)}</b></div>`
+          : `<div class="t">${pf.year} 年 ${x.m} 月</div><div>买卖赚的 <b>${pfSrm(x.pl)}</b></div><div class="t">${pfPc(x.pct)}</div>`;
+        tip.hidden = false;
+        tip.style.left = Math.max(60, Math.min(r.width - 60, cx / W * r.width)) + "px";
+        tip.style.top = Math.max(50, Math.min(ys(v), y0) / Ht * r.height - 6) + "px";
+      };
+      hit.addEventListener("pointerenter", show); hit.addEventListener("pointerdown", show); hit.addEventListener("pointerleave", () => tip.hidden = true);
+    }
+  });
+}
+
+function pfRenderHolds() {
+  const h = pf.hist, L = h.days.length - 1, by = {};
+  for (const p of Object.values(h.pos)) {
+    if (!(p.qty > 1e-9)) continue;
+    const x = by[p.ticker] || (by[p.ticker] = { tk: p.ticker, qty: 0, cost: 0, accts: new Set() });
+    x.qty += p.qty; x.cost += p.cost; x.accts.add(p.accountId);
+  }
+  const list = Object.values(by).map(x => {
+    const px = pfPrice(x.tk, h.days[L], true), mv = px == null ? null : x.qty * px;
+    return { ...x, px, mv, u: mv == null ? null : mv - x.cost };
+  }).sort((a, b) => (b.mv ?? -1) - (a.mv ?? -1));
+  document.getElementById("pf-hcount").textContent = list.length ? `${list.length} 支` : "";
+  let html = "";
+  for (const x of list) {
+    const code = (db.symbols[x.tk] || "").replace(/\.KL$/i, "");
+    const acct = x.accts.size > 1 ? ` · 来自 ${x.accts.size} 个户口` : "";
+    if (x.px == null) {
+      html += `<div class="pf-card nop"><div class="pf-row"><div><div class="tk">${x.tk}</div><div class="nm">${code || "没有代码"}${acct}</div></div><span class="pf-pill flat"><span style="color:var(--pf-warn)">⚠</span> 抓不到现价</span></div>
+        <div class="g3 num"><div><div class="k">股数</div>${x.qty.toLocaleString()}</div><div><div class="k">平均成本</div>${pfNf(x.cost / x.qty, 4)}</div><div><div class="k">成本</div>${pfRm(x.cost, 0)}</div></div>
+        <div class="pf-note">没算进市值、盈亏和 %。有了现价就会自动补上。</div></div>`;
+    } else {
+      const w = h.V[L] > 0 ? x.mv / h.V[L] : 0, pct = x.cost > 0 ? x.u / x.cost : null;
+      html += `<div class="pf-card"><div class="pf-row"><div><div class="tk">${x.tk}</div><div class="nm">${code}${acct}</div></div>
+          <span class="pf-pill num ${pfPillCls(x.u)}">${pfArrow(x.u)}${pfSrm(x.u)}${pct == null ? "（白拿）" : `（${pfPc(pct)}）`}</span></div>
+        <div class="pf-row num"><span class="pf-note">市值</span><b>${pfRm(x.mv)}</b></div>
+        <div class="g3 num"><div><div class="k">股数</div>${x.qty.toLocaleString()}</div><div><div class="k">平均成本</div>${pfNf(x.cost / x.qty, 4)}</div><div><div class="k">现价</div>${pfNf(x.px, 3)}</div></div>
+        <div class="pf-note num">占组合 ${pfNf(w * 100, 1)}%</div><div class="pf-weight" aria-hidden="true"><i style="width:${(w * 100).toFixed(1)}%"></i></div></div>`;
+    }
+  }
+  document.getElementById("pf-holds").innerHTML = html || `<div class="pf-empty">目前没有持股。</div>`;
+}
+
+// 资料变了（存档、抓到新价）而且这一页开着 -> 稍後重算（用已抓的收盘价，不重抓）
+let pfTimer = null;
+function pfMaybeRefresh() {
+  const tab = document.getElementById("tab-portfolio");
+  if (!tab || !tab.classList.contains("active")) return;
+  clearTimeout(pfTimer);
+  pfTimer = setTimeout(() => { if (tab.classList.contains("active")) pfShow(); }, 400);
+}
+
 // ---------- Tabs & init ----------
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.onclick = () => {
@@ -3758,6 +4261,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "portfolio") pfShow();   // 组合页只在打开时才计算
   };
 });
 /* ============ 通用表格排序 ============
@@ -3876,6 +4380,7 @@ if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注
 // 一定要放在这里（helpers 定义之后），放在 db 那一行会碰到 const 的暂时死区。
 if (ensureAccounts()) localStorage.setItem(STORE_KEY, JSON.stringify(db));
 leaderBeat();   // 先决定这个分页是不是主分页（开机後面的自动存档要靠它决定谁来存）
+if (!PORTFOLIO_FOR_CLIENTS) document.body.classList.add("pf-hide-clients");   // 组合页对账完才开放给投资者
 renderAll();
 autoRefreshExDiv();
 autoRefreshEntitlements();

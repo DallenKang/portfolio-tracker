@@ -3,7 +3,7 @@
 //   GET /api/quotes?symbols=1155.KL,5183.KL  -> Yahoo Finance 最新价/闭市价
 //   GET /api/exdividends                     -> i3investor 未来30天 ex-dividend
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-const WORKER_VERSION = "v20-house-by-shape"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
+const WORKER_VERSION = "v21-closes"; // 每次改 worker 就改这个名字：部署后 /api/ipos 会返回它，一看就知道线上跑的是哪版
 const EXDIV_URLS = [
   "https://klse.i3investor.com/web/entitlement/dividend/latestex", // Ex Date next 30 days
   "https://klse.i3investor.com/web/entitlement/dividend/latest",   // fallback
@@ -326,6 +326,36 @@ async function splitHistory(symbol) {
   })).filter(s => s.factor > 0 && s.factor !== 1).sort((a, b) => a.exDate.localeCompare(b.exDate));
 }
 
+// 每日收盘价（给投资者组合页回推历史市值用）
+// GET /api/closes?symbols=1155.KL,5185.KL&from=2024-11-18 -> { "1155.KL": { d: ["2024-11-18", ...], c: [9.86, ...] } }
+// ⚠️ Yahoo 的 close 是【拆股调整後】的价。实测 5185.KL 2025-04-30 送股 19:18：
+//    除权前的 close 尾数是 2.5578939… = 2.70 ÷ (19/18)，除权後才是 2.65 这种正常价位。
+//    回推历史时用的是「当时的股数」，所以要把除权前的价乘回去，变回当天真正的成交价。
+async function dailyCloses(symbol, from) {
+  const p1 = Math.floor(Date.parse(from + "T00:00:00Z") / 1000) - 7 * 86400;  // 多抓一週，第一天也有前一天的价
+  const p2 = Math.floor(Date.now() / 1000) + 86400;
+  const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${p1}&period2=${p2}&interval=1d&events=split`,
+    { headers: { "User-Agent": UA } });
+  const res = (await r.json()).chart.result[0];
+  const myt = t => new Date((t + 8 * 3600) * 1000).toISOString().slice(0, 10);   // 马来西亚日期
+  const ts = res.timestamp || [];
+  const close = (((res.indicators || {}).quote || [])[0] || {}).close || [];
+  const splits = Object.values((res.events && res.events.splits) || {})
+    .map(e => ({ day: myt(e.date), f: e.numerator / e.denominator }))
+    .filter(x => x.f > 0 && x.f !== 1);
+  const d = [], c = [];
+  for (let i = 0; i < ts.length; i++) {
+    const px = close[i];
+    if (px == null || !(px > 0)) continue;
+    const day = myt(ts[i]);
+    let f = 1;
+    for (const sp of splits) if (sp.day > day) f *= sp.f;   // 这天之後才除权 -> 乘回去
+    d.push(day);
+    c.push(Math.round(px * f * 10000) / 10000);
+  }
+  return { d, c };
+}
+
 // Yahoo 抓不到时的后备：从 KLSE Screener 个股页抓现价（用数字代码）
 async function klseQuote(code) {
   const html = await (await fetch("https://www.klsescreener.com/v2/stocks/view/" + encodeURIComponent(code),
@@ -592,6 +622,20 @@ export default {
           try { out[s] = await divHistory(s); } catch (e) { out[s] = { error: String(e) }; }
         }));
         return json(out);
+      }
+
+      if (url.pathname === "/api/closes") {
+        const from = url.searchParams.get("from") || "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return json({ error: "from=YYYY-MM-DD" }, 400);
+        // 免费方案一次最多 50 个对外请求 -> 一次最多 40 支，网页那边会分批
+        const symbols = (url.searchParams.get("symbols") || "").split(",").slice(0, 40);
+        const out = {};
+        await Promise.all(symbols.map(async raw => {
+          const s = raw.trim().toUpperCase();
+          if (!s) return;
+          try { out[s] = await dailyCloses(s, from); } catch (e) { out[s] = { error: String(e) }; }
+        }));
+        return json({ version: WORKER_VERSION, data: out });
       }
 
       if (url.pathname === "/api/exdividends") {
