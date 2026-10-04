@@ -3834,7 +3834,9 @@ function clearAll() {
 // 走势线 / 日历用「方案 B」（Dallen 10/4 确认）：从交易记录回推每天的持股，配每天的收盘价。
 //   收盘价来自 /api/closes（Worker 已把 Yahoo 的拆股调整乘回去，变回当天真正的成交价）。
 // 盈亏一律沿用 computePortfolio（只是喂它「到某一天为止」的交易）—— 成本 / 已实现跟持仓页同一套算法，引擎一个字没动。
-// 回报率 % 用 B 时间加权（Dallen 10/4 决定）；佣金费用投资者看不到（10/4 决定），盈亏本身已扣费用。
+// 回报率 % 用 C「平均投入」（Modified Dietz，Dallen 10/4 改选）：原本选的 B 时间加权，在进出资金大、次数多的投资者身上
+//   会出现「赚钱却显示负 %」（LIM SZE QI 1 月 +RM 1,187 却是 −9.1%）。C 的正负一定跟赚亏金额一样。
+// 佣金费用投资者看不到（10/4 决定），盈亏本身已扣费用。
 // 只在打开这个分页时计算，不进 renderAll 的平常路径。
 const PORTFOLIO_FOR_CLIENTS = false;   // ⚠️ 对账完、Dallen 点头之前，投资者看不到这一页
 const pf = { clientId: null, range: "ytd", year: null, mode: "trade", month: null, hist: null, busy: false, closes: {} };
@@ -3972,15 +3974,22 @@ function pfBuild(cid) {
   return h;
 }
 
-// B：时间加权（扣掉中途买卖的影响）
-function pfTwr(h, a, b) {
-  let g = 1;
-  for (let d = a; d <= b; d++) {
-    const prev = d > 0 ? h.PL[d - 1] : 0, base = d > 0 && h.V[d - 1] > 0 ? h.V[d - 1] : h.Cp[d];
-    if (base > 0) g *= 1 + (h.PL[d] - prev) / base;
+// C：盈亏 ÷ 这段期间平均放在股票里的钱（Modified Dietz）。
+// 分母 = 期初市值 + 每笔买进 / 卖出的钱 × 「它留在股票里的天数 ÷ 整段天数」：
+//   月初放进来的算整笔，月底才放进来的只算一点点；卖出拿回的钱同样按天数扣掉。
+// 分母是正的，所以 % 的正负一定跟赚亏金额一样。分母不是正数（例如一开头就几乎全卖光）就不显示 %。
+function pfMd(h, a, b) {
+  const pl = h.PL[b] - (a > 0 ? h.PL[a - 1] : 0);
+  const day = d => new Date(d + "T00:00:00Z").getTime();
+  const t0 = day(a > 0 ? h.days[a - 1] : h.days[a]), t1 = day(h.days[b]), T = (t1 - t0) || 1;
+  let den = a > 0 ? h.V[a - 1] : 0;
+  for (let i = a; i <= b; i++) {
+    const f = h.BUY[i] - h.SELL[i];
+    if (f) den += f * (t1 - day(h.days[i])) / T;
   }
-  return g - 1;
+  return den > 0 ? pl / den : null;
 }
+const pfPcN = x => x == null ? "—" : pfPc(x);
 
 function pfRender() {
   const h = pf.hist, root = document.getElementById("pf-root");
@@ -4021,20 +4030,20 @@ function pfRender() {
 
 function pfRenderOverview() {
   const h = pf.hist, L = h.days.length - 1, el = document.getElementById("pf-ov");
-  const unreal = h.V[L] - h.Cp[L], pl = h.PL[L], real = pl - unreal, pct = pfTwr(h, 0, L);
+  const unreal = h.V[L] - h.Cp[L], pl = h.PL[L], real = pl - unreal, pct = pfMd(h, 0, L);
   const miss = h.MISS[L];
   const missCost = miss.length ? Object.values(h.pos).filter(p => p.qty > 1e-9 && miss.includes(p.ticker)).reduce((s, p) => s + p.cost, 0) : 0;
   el.innerHTML = `
     <div class="pf-label">股票组合价值</div>
     <div class="pf-big num">${pfRm(h.V[L])}</div>
-    <div class="pf-row"><span class="pf-label">总盈亏（已实现 + 未实现）</span><span class="pf-pill num ${pfPillCls(pl)}">${pfArrow(pl)}${pfSrm(pl)}（${pfPc(pct)}）</span></div>
+    <div class="pf-row"><span class="pf-label">总盈亏（已实现 + 未实现）</span><span class="pf-pill num ${pfPillCls(pl)}">${pfArrow(pl)}${pfSrm(pl)}（${pfPcN(pct)}）</span></div>
     <div class="pf-split">
       <div><div class="k">已实现</div><div class="v num">${pfSrm(real)}</div></div>
       <div><div class="k">未实现</div><div class="v num">${pfSrm(unreal)}</div></div>
       <div><div class="k"><i class="pf-dot"></i>累计股息</div><div class="v num">${pfRm(h.D[L], 0)}</div></div>
     </div>
     ${miss.length ? `<div class="pf-warn"><span class="i" aria-hidden="true">⚠</span><span><b>${miss.length} 支抓不到现价：${miss.join("、")}</b>。成本 ${pfRm(missCost, 0)} 没算进市值，也没算进盈亏和 %，免得少算成亏钱。</span></div>` : ""}
-    <div class="pf-why">叫「股票组合价值」不叫「净资产」：这里只算股票，不含户口里的现金，所以会比券商 App 的净资产少。% 用时间加权算（跟券商 App 一样，扣掉中途买卖的影响）。</div>`;
+    <div class="pf-why">叫「股票组合价值」不叫「净资产」：这里只算股票，不含户口里的现金，所以会比券商 App 的净资产少。% = 盈亏 ÷ 这段期间平均放在股票里的钱（买进的钱按放了几天来算），所以 % 的正负一定跟赚亏一样。</div>`;
 }
 
 function pfRangeStart(h, r) {
@@ -4116,10 +4125,10 @@ function pfRenderTrend() {
   const leave = () => { tip.hidden = true; cross.setAttribute("opacity", 0); hot.setAttribute("opacity", 0); };
   hit.addEventListener("pointermove", move); hit.addEventListener("pointerdown", move); hit.addEventListener("pointerleave", leave);
   // 统计 + 说明
-  const plR = h.PL[e] - (sR > 0 ? h.PL[sR - 1] : 0), pct = pfTwr(h, sR, e);
+  const plR = h.PL[e] - (sR > 0 ? h.PL[sR - 1] : 0), pct = pfMd(h, sR, e);
   let buys = 0, sells = 0; for (let i = sR; i <= e; i++) { buys += h.BUY[i]; sells += h.SELL[i]; }
   document.getElementById("pf-tstats").innerHTML = `<span class="k">期初市值${sR > 0 ? `（${h.days[s]} 收盘）` : ""}</span><span>${sR > 0 ? pfRm(h.V[s], 0) : "—（从第一笔交易起）"}</span><span class="k">期末市值</span><span>${pfRm(h.V[e], 0)}</span>
-    <span class="k">这段期间盈亏</span><span><span class="pf-pill ${pfPillCls(plR)}">${pfSrm(plR)}（${pfPc(pct)}）</span></span>
+    <span class="k">这段期间盈亏</span><span><span class="pf-pill ${pfPillCls(plR)}">${pfSrm(plR)}（${pfPcN(pct)}）</span></span>
     <span class="k">期间买进</span><span>${buys ? pfRm(buys, 0) : "—"}</span>
     <span class="k">期间卖出（拿回的钱）</span><span>${sells ? pfRm(sells, 0) : "—"}</span>`;
   const cap = [`<span>市值变化里有一部分是新买进的钱，所以「这段期间盈亏」已经把买进卖出的钱扣掉，只算涨跌和卖出赚的。</span>`];
@@ -4139,7 +4148,7 @@ function pfMonths(h, year) {
     for (let i = 0; i <= L; i++) if (h.days[i].startsWith(key)) { if (a < 0) a = i; b = i; }
     if (a < 0) { out.push({ m, key, empty: true, why: key < h.from.slice(0, 7) ? "还没开始" : "还没到" }); continue; }
     const pl = h.PL[b] - (a > 0 ? h.PL[a - 1] : 0), dv = h.D[b] - (a > 0 ? h.D[a - 1] : 0), base = a > 0 ? h.V[a - 1] : h.V[b];
-    out.push({ m, key, a, b, pl, pct: pfTwr(h, a, b), dv, dvPct: base > 0 ? dv / base : 0, partial: b === L && h.days[L] < key + "-28" });
+    out.push({ m, key, a, b, pl, pct: pfMd(h, a, b), dv, dvPct: base > 0 ? dv / base : 0, partial: b === L && h.days[L] < key + "-28" });
   }
   return out;
 }
@@ -4155,14 +4164,14 @@ function pfRenderCal() {
   for (const x of ms) {
     if (x.empty) { html += `<button type="button" class="pf-cell empty" disabled><span class="m">${x.m} 月</span><span class="a">—</span><span class="p">${x.why}</span></button>`; continue; }
     const amt = pf.mode === "div" ? "RM " + pfNf(x.dv, 0) : pfSrm(x.pl);
-    const p = pf.mode === "div" ? (x.dv ? "占市值 " + pfNf(x.dvPct * 100, 2) + "%" : "没有股息") : pfPc(x.pct);
+    const p = pf.mode === "div" ? (x.dv ? "占市值 " + pfNf(x.dvPct * 100, 2) + "%" : "没有股息") : pfPcN(x.pct);
     html += `<button type="button" class="pf-cell${pf.month === x.key ? " sel" : ""}" data-k="${x.key}" style="background:${pfTint(ms, x)}"><span class="m">${x.m} 月${x.partial ? "（到 " + h.days[L].slice(8) + " 日）" : ""}</span><span class="a num">${amt}</span><span class="p num">${p}</span></button>`;
   }
   cal.innerHTML = html;
   cal.onclick = ev => { const b = ev.target.closest("button[data-k]"); if (!b) return; pf.month = pf.month === b.dataset.k ? null : b.dataset.k; pfRenderCal(); };
   const sel = ms.find(x => x.key === pf.month);
   document.getElementById("pf-cdetail").innerHTML = sel
-    ? `<b>${pf.year} 年 ${sel.m} 月</b>：买卖赚的 ${pfSrm(sel.pl)}（${pfPc(sel.pct)}）· 收到股息 ${pfRm(sel.dv, 0)}`
+    ? `<b>${pf.year} 年 ${sel.m} 月</b>：买卖赚的 ${pfSrm(sel.pl)}（${pfPcN(sel.pct)}）· 收到股息 ${pfRm(sel.dv, 0)}`
     : `点一个月份看那个月的买卖盈亏和股息。买卖赚的 = 涨跌 + 卖出赚的（已扣费用），不含股息。`;
   pfRenderBars(ms);
   const live = ms.filter(x => !x.empty), yt = document.getElementById("pf-ytotal");
@@ -4170,7 +4179,7 @@ function pfRenderCal() {
   const a = live[0].a, b = live[live.length - 1].b, ypl = h.PL[b] - (a > 0 ? h.PL[a - 1] : 0);
   yt.innerHTML = pf.mode === "div"
     ? `${pf.year} 年收到股息合计 <b>${pfRm(h.D[b] - (a > 0 ? h.D[a - 1] : 0), 0)}</b>`
-    : `${pf.year} 年买卖赚的合计 <span class="pf-pill ${pfPillCls(ypl)}">${pfSrm(ypl)}（${pfPc(pfTwr(h, a, b))}）</span>`;
+    : `${pf.year} 年买卖赚的合计 <span class="pf-pill ${pfPillCls(ypl)}">${pfSrm(ypl)}（${pfPcN(pfMd(h, a, b))}）</span>`;
 }
 function pfRenderBars(ms) {
   const svg = document.getElementById("pf-bars"); svg.textContent = "";
@@ -4203,7 +4212,7 @@ function pfRenderBars(ms) {
         const r = svg.getBoundingClientRect();
         tip.innerHTML = pf.mode === "div"
           ? `<div class="t">${pf.year} 年 ${x.m} 月</div><div>股息 <b>${pfRm(x.dv, 0)}</b></div>`
-          : `<div class="t">${pf.year} 年 ${x.m} 月</div><div>买卖赚的 <b>${pfSrm(x.pl)}</b></div><div class="t">${pfPc(x.pct)}</div>`;
+          : `<div class="t">${pf.year} 年 ${x.m} 月</div><div>买卖赚的 <b>${pfSrm(x.pl)}</b></div><div class="t">${pfPcN(x.pct)}</div>`;
         tip.hidden = false;
         tip.style.left = Math.max(60, Math.min(r.width - 60, cx / W * r.width)) + "px";
         tip.style.top = Math.max(50, Math.min(ys(v), y0) / Ht * r.height - 6) + "px";
