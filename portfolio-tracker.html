@@ -313,7 +313,7 @@
 <!-- 登入时先显示上次的资料，这条说明云端还在同步（同步完自己会消失） -->
 <div id="sync-banner" style="display:none">
   <span class="sync-dot"></span>
-  <span>正在跟云端同步最新记录…<span class="hint" style="margin-left:6px">现在看到的是上次的资料</span></span>
+  <span>正在跟云端同步最新记录…<span class="hint" style="margin-left:6px">现在看到的是上次的资料，同步好之前先不要新增或修改</span></span>
 </div>
 
 <!-- IPO 抓不到时，最顶端全站可见的红色横幅（提醒投资者来找 Claude） -->
@@ -880,7 +880,19 @@ function load() {
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 let db = load();
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll(); if (viewerRole === "client" || cloud.auto) schedulePush(); } // 投资者一律自动同步
+function save() {
+  // ⚠️ 秒开那几秒（画面是这台电脑上次的资料，云端最新的还没回来）不准存：
+  //    存了会把这台电脑的旧整份推回云端，别台装置在那之後记的交易、快照会被洗掉（10/19 与 auditor 核对过）。
+  if (fastShown) { blockEarlySave(); return; }
+  localStorage.setItem(STORE_KEY, JSON.stringify(db)); renderAll();
+  if (viewerRole === "client" || cloud.auto) schedulePush(); // 投资者一律自动同步
+}
+function blockEarlySave() {
+  // 把刚才那一笔退回去：本机存的还是改之前的样子
+  try { const d = JSON.parse(localStorage.getItem(STORE_KEY)); if (d && Array.isArray(d.transactions)) db = d; } catch (e) {}
+  renderAll();
+  alert("正在跟云端同步最新资料（通常几秒钟）。\n刚才这一笔还没有记下来。请等上方蓝色的「正在同步」横幅消失後再记一次；如果上方是红色横幅，先按里面的「立即重试」。");
+}
 
 // ---------- Google Sheet 云端同步（Gmail 登入认证）----------
 const CLOUD_KEY = "portfolio-cloud-config";
@@ -1370,6 +1382,7 @@ function cloudPayload() {
 }
 async function pushCloud(silent, manual) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
+  if (fastShown) { setCloudStatus("⏳ 还在跟云端同步最新资料，同步好才能存，请等几秒。"); return; }  // 同 save()：旧整份不准推
   await ensureFreshToken(); // 凭证快过期就先换一张，免得存到一半失败
   setCloudStatus("⬆️ 存到云端中…");
   try {
@@ -1418,6 +1431,7 @@ function schedulePush() {
     await pushCloud(true);
     if (!busyRetryPending && !breakerOpen()) pendingPush = false;
     afterPushSettled();
+    setTimeout(runScheduledSnapshot, 300);   // 存完了：马上看一下有没有快照要记
   }, 1500);
 }
 
@@ -1561,6 +1575,7 @@ async function pullCloud(silent, quiet, manual) {
     // 秒开那几秒内他刚好记了一笔？那笔还没推上去，云端资料一盖就没了。
     // 规则跟自动拉一样：本机有未推的改动就不覆盖，让它先推上去，下一轮再同步。
     // （只挡自动的；手动按「从云端载入到本机」= silent 为 false，一定照做。）
+    if (silent && quiet && owesPush()) return;   // 背景拉：请求途中他存了东西 -> 这一轮不换资料，下一轮再同步
     if (silent && pendingPush && fastShown) {
       syncBanner(false);
       setCloudStatus("⬆️ 你刚记的还没存上云端，先存那笔，稍後再同步");
@@ -1694,10 +1709,10 @@ const localToday = () => mytNow().date;
 //   分子分母同一个基础，否则抓不到价的那几支会把报酬率压低（跟「缺价少算」同一个坑）。
 const SNAPSHOT_START = "2026-10-01";   // 这天之前一律不记
 let cloudLoadedOnce = false;           // 云端资料还没拉回来之前，不拿本机旧资料记快照（会记到错的数字）
-function recordSnapshots() {
+function recordSnapshots(forDate) {
   if (viewerRole === "client") return false;   // 投资者本人不写，避开 saveMine 的权限守卫
   if (cloudReady() && !cloudLoadedOnce) return false; // 有云端但还没载入 -> 等载入完那次再记
-  const date = localToday();
+  const date = forDate || localToday();         // 补记上一个交易日时，记在那一天
   if (date < SNAPSHOT_START) return false;
   if (!Array.isArray(db.snapshots)) db.snapshots = [];
   const { pos } = computePortfolio();
@@ -3266,14 +3281,17 @@ async function fetchAllPrices(auto) {
     const r = await fetch(apiUrl("/api/quotes?symbols=" + encodeURIComponent(symbols)));
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
-    let ok = 0, failed = [];
+    let ok = 0, failed = [], maxT = 0;
+    lastQuoteTime = 0;
     for (const tk of mapped) {
       const q = data[db.symbols[tk]];
       if (q && q.price > 0) {
         db.prices[tk] = livePrices[tk] = { price: q.price, updatedAt: today(), source: "bursa" };
+        if (q.time > maxT) maxT = q.time;   // 这批价格是什么时候的成交价（定时快照用来判断是哪一天的价）
         ok++;
       } else failed.push(tk + (q && q.error ? "（代码错误?）" : ""));
     }
+    lastQuoteTime = maxT;
     // ⚠️ 抓价【永远不存档】。以前抓完一定 save()，每 15 分钟整份重写一次後台 —— 10/1 凌晨的风暴就是这个。
     //    价只存在这台电脑（别的分页也会跟着看到）；快照和存档只在 12:45 / 17:15 做，见 runScheduledSnapshot。
     localStorage.setItem(STORE_KEY, JSON.stringify(db));
@@ -3293,6 +3311,7 @@ async function fetchAllPrices(auto) {
 // 抓价走 Cloudflare Worker，很便宜；贵的是存档。所以抓价照抓，只是不存。
 let priceTimer = null;
 const livePrices = {};   // 这次开网页抓到的现价（云端拉回来的可能比较旧，拉完要盖回去）
+let lastQuoteTime = 0;   // 最近一次抓到的价格里，最晚的成交时间（秒）
 function startAutoPrices() {
   if (!document.hidden) fetchAllPrices(true);   // 开网页抓一次：只更新画面
   clearInterval(priceTimer);
@@ -3311,12 +3330,21 @@ function startAutoPrices() {
 const SNAP_SLOTS = [[12 * 60 + 45, 1, "午市"], [17 * 60 + 15, 2, "收盘"]];   // [马来西亚时间(分钟), 等级, 名字]
 function dueSnapSlot() {
   const t = mytNow();
-  if (t.dow === 0 || t.dow === 6) return null;          // 週六、週日休市，价格不会变
   if (t.date < SNAPSHOT_START) return null;
-  let slot = null;
-  for (const [at, level, name] of SNAP_SLOTS) if (t.mins >= at) slot = { date: t.date, level, name };
-  return slot;                                          // 12:45 之前 = null：价格还是昨天的，什么都不记
+  if (t.dow !== 0 && t.dow !== 6) {
+    let slot = null;
+    for (const [at, level, name] of SNAP_SLOTS) if (t.mins >= at) slot = { date: t.date, level, name };
+    if (slot) return slot;
+  }
+  // 週末、或平日 12:45 之前：现价其实还是「上一个交易日」的收盘价 -> 可以补记那一天的收盘。
+  // ⚠️ 10/16（五）晚上 23:55 有开网页，却因为一过 12 点就是星期六而补不到。现在週末、隔天早上开都补得到。
+  // 真正记在哪一天，以抓回来的价格时间为准（见 runScheduledSnapshot），假日也不会记错。
+  let d = addDays(t.date, -1);
+  while ([0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay())) d = addDays(d, -1);
+  if (d < SNAPSHOT_START) return null;
+  return { date: d, level: 2, name: "上个交易日收盘（补记）", catchUp: true };
 }
+const mytDateOf = sec => new Date((sec + 8 * 3600) * 1000).toISOString().slice(0, 10);
 const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 let snapTimer = null, snapBusy = false, snapLastTry = 0, lastPullAt = 0;
 // 这个网页自己做过哪一次。员工（非 super）存档时，後台会丢掉不属于他投资者的设定键，
@@ -3335,25 +3363,45 @@ async function runScheduledSnapshot() {
   if (!due) return;
   const key = "snap:" + due.date;
   if (snapDoneLevel(key) >= due.level) return;                  // 这一次已经做过（可能是别的装置 / 员工做的）
-  if (owesPush()) return;                                        // 本机还有没存上去的，等它存完再说
-  if (Date.now() - snapLastTry < 5 * 60 * 1000) return;          // 失败了不要每分钟猛试
+  if (owesPush()) return;                                        // 本机还有没存上去的：先不拉云端（拉了会盖掉），下一分钟再看
+  if (Date.now() - snapLastTry < 5 * 60 * 1000) return;          // 真的失败过才会卡在这里，不要每分钟猛试
   snapLastTry = Date.now();
   snapBusy = true;
   try {
     if (Date.now() - lastPullAt > 60 * 1000) {                   // 先看云端：别人可能刚做过
       await pullCloud(true, true);
-      if (Date.now() - lastPullAt > 60 * 1000) return;           // 拉不到 -> 不做，5 分钟後再试
-      if (snapDoneLevel(key) >= due.level || owesPush()) return;
+      if (Date.now() - lastPullAt > 60 * 1000) {                 // 这一轮没拉到
+        // ⚠️ 只是因为他刚好在存东西（不是云端坏）-> 不算失败、不退避 5 分钟，下一分钟再试。
+        //    10/16 就是一边存交易一边被延後、一延 5 分钟，还没轮到就过 12 点了。
+        if (owesPush()) snapLastTry = 0;
+        return;
+      }
+      if (snapDoneLevel(key) >= due.level) return;
+      // 这时候他就算刚存了一笔也没关系：下面的 save() 会连同那一笔一起推上去
     }
     if (!(await fetchAllPrices(true))) return;                   // 价格没回来就不记，5 分钟後再试
-    recordSnapshots();
-    db.settings[key] = due.level;
-    snapDoneHere[key] = due.level;
-    const keepFrom = addDays(due.date, -10);                     // 只留最近 10 天的标记，settings 不要越堆越多
+    // 以抓回来的价格时间决定「这是哪一天的价」：週末、清晨、假日开网页都不会记错日子
+    let target = due;
+    const qDate = lastQuoteTime ? mytDateOf(lastQuoteTime) : null;
+    if (!qDate) { if (due.catchUp) return; }                     // 补记一定要知道价格是哪一天的；不知道就不补
+    else if (qDate !== due.date) {
+      if (qDate === mytNow().date) return;                       // 补记模式下拿到的是今天盘中价 -> 不是收盘价，不补
+      if (qDate < SNAPSHOT_START || snapDoneLevel("snap:" + qDate) >= 2) {
+        snapDoneHere[key] = Math.max(snapDoneHere[key] || 0, due.level);   // 这个时段已经没东西要补了，这个网页不用再试
+        return;
+      }
+      target = { date: qDate, level: 2, name: "收盘（补记）" };   // 价格停在更早的交易日（例如那天是假日）-> 记在价格那一天
+    }
+    const tkey = "snap:" + target.date;
+    recordSnapshots(target.date);
+    db.settings[tkey] = Math.max(Number(db.settings[tkey]) || 0, target.level);
+    snapDoneHere[tkey] = Math.max(snapDoneHere[tkey] || 0, target.level);
+    if (tkey !== key) snapDoneHere[key] = Math.max(snapDoneHere[key] || 0, due.level);
+    const keepFrom = addDays(target.date, -10);                  // 只留最近 10 天的标记，settings 不要越堆越多
     for (const k of Object.keys(db.settings)) if (k.startsWith("snap:") && k.slice(5) < keepFrom) delete db.settings[k];
-    save();                                                      // 一天最多两次：12:45、17:15
+    save();                                                      // 一天最多两次：12:45、17:15（补记也算一次）
     const st = document.getElementById("p-status");
-    if (st) st.textContent += ` · 已记${due.name}快照`;
+    if (st) st.textContent += ` · 已记${target.name}快照（${target.date}）`;
   } finally { snapBusy = false; }
 }
 
