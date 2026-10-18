@@ -214,6 +214,21 @@
   .pf-weight i { display: block; height: 100%; background: var(--blue); border-radius: 2px; }
   .pf-empty { text-align: center; color: var(--muted); padding: 30px 10px; }
   .pf-note { font-size: 12px; color: var(--muted); }
+  /* Google 登入按钮：载入中 / 载入不了（V3-07 A） */
+  .gsi-wait { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; padding: 10px 0; }
+  .gsi-spin { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: gsispin .8s linear infinite; flex: none; }
+  @keyframes gsispin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .gsi-spin { animation: none; } }
+  .gsi-fail { text-align: center; font-size: 13.5px; line-height: 1.6; background: rgba(241,196,15,.10); border: 1px solid var(--gold); border-radius: 8px; padding: 10px 12px; max-width: 360px; }
+  .gsi-fail p { margin: 0 0 8px; }
+  /* 存好了：短暂显示一下（V3-07 B） */
+  #sync-ok { background: rgba(46,204,113,.14); border: 1px solid var(--green); color: var(--text); padding: 8px 14px; border-radius: 6px; margin-bottom: 14px; font-size: 14px; }
+  /* 云端失败纪录（V3-07 C） */
+  .cloudlog { font-size: 12.5px; margin-top: 10px; }
+  .cloudlog summary { cursor: pointer; color: var(--muted); }
+  .cloudlog table { width: 100%; border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .cloudlog th, .cloudlog td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .cloudlog .wrap { overflow-x: auto; }
   /* 存云端失败 = 会掉资料，要看得见 */
   #sync-warn {
     background: #5c1f26; border: 1px solid #a83244; color: #ffd6db;
@@ -281,7 +296,7 @@
   .tgt-src { font-weight: 400; color: var(--muted); font-size: 11px; }
   .tgt-none { font-weight: 400; color: var(--muted); }
 </style>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://accounts.google.com/gsi/client" async defer onerror="window.__gsiErr = true"></script>
 </head>
 <body>
 
@@ -315,10 +330,11 @@
 </div>
 
 <div id="sync-warn" style="display:none">
-  ⚠️ <b>刚才的改动还没存到云端。</b>你的记录还在这台电脑上，没有掉。
-  下面「备份与同步」页有详细讯息 —— 多数情况是登入过期，重新登入後会自动补存。
-  <button class="action small" style="margin-left:8px" onclick="pushCloud(false)">立即重试</button>
+  ⚠️ <b id="sync-warn-head">刚才的改动还没存到云端。</b>你的记录还在这台电脑上，没有掉。
+  <span id="sync-warn-why"></span>
+  <button class="action small" id="sync-warn-btn" style="margin-left:8px" onclick="retrySyncWarn()">立即重试</button>
 </div>
+<div id="sync-ok" style="display:none"></div>
 
 <!-- 登入 / 注册页（未登入时显示） -->
 <div id="auth-screen" style="display:none; max-width:460px; margin:6vh auto;">
@@ -334,7 +350,7 @@
 
     <div id="auth-signin" style="display:none">
       <p class="hint" style="margin:0 0 12px">用你注册时的 Gmail 登入</p>
-      <div id="gsi-button-top" style="display:flex; justify-content:center"></div>
+      <div id="gsi-button-top" style="display:flex; justify-content:center"><div class="gsi-wait"><span class="gsi-spin"></span>正在载入 Google 登入…</div></div>
       <p class="net-preview" id="signin-status" style="text-align:center"></p>
       <button class="action ghost small" style="margin-top:10px" onclick="showAuth('choice')">← 返回</button>
     </div>
@@ -348,7 +364,7 @@
         <span>我已阅读并同意 <a href="terms.html" target="_blank" rel="noopener">《使用条款、免责声明与隐私政策》</a><br>
         I have read and agree to the <a href="terms.html" target="_blank" rel="noopener">Terms of Use, Disclaimer &amp; Privacy Policy</a></span>
       </label>
-      <div id="gsi-button-reg" style="display:flex; justify-content:center"></div>
+      <div id="gsi-button-reg" style="display:flex; justify-content:center"><div class="gsi-wait"><span class="gsi-spin"></span>正在载入 Google 登入…</div></div>
       <p class="net-preview" id="reg-status" style="text-align:center"></p>
       <p class="hint" style="text-align:center; margin-top:8px">注册后你的 Google Drive 会自动出现一个「Portfolio」记录表</p>
       <button class="action ghost small" style="margin-top:6px" onclick="showAuth('choice')">← 返回</button>
@@ -791,6 +807,7 @@
       </label>
     </div>
     <p class="net-preview" id="cloud-status">请先用 Gmail 登入。</p>
+    <details class="cloudlog" id="cloud-log"></details>
     <details style="margin-top:8px">
       <summary class="hint" style="cursor:pointer">进阶：手动填链接 + 后备密钥（一般不用）</summary>
       <div class="form-row" style="margin-top:10px">
@@ -887,6 +904,37 @@ function setCloudStatus(msg) {
   if (el) el.classList.toggle("cloud-bad", bad);
   const b = document.getElementById("sync-warn");
   if (b) b.style.display = bad ? "" : "none";
+  if (bad) fillSyncWarn(msg);
+}
+// ⚠️ 10/6 事件：横幅以前一律写「多数情况是登入过期」，那次其实是後台偶发 404。现在照这一次的讯息讲真正的原因。
+let syncWarnIsLoad = false;
+function fillSyncWarn(msg) {
+  syncWarnIsLoad = /^⬇️/.test(msg);                  // 载入失败 vs 存档失败，标题和重试动作不一样
+  let why;
+  if (/过期|unauthorized|重新登入/i.test(msg)) why = "原因：<b>登入过期</b>。重新登入後会自动补存。";
+  else if (/忙|busy/i.test(msg)) why = "原因：<b>云端忙</b>（有人同时在存）。等一下会自动再试，也可以按「立即重试」。";
+  else if (/duplicate|重复|readonly/i.test(msg)) why = "原因：<b>资料有问题</b>（例如两位投资者用了同一个电话或 Gmail），请看「备份与同步」页的讯息。";
+  else if (/网路|Failed to fetch|NetworkError/i.test(msg)) why = "原因：<b>云端暂时连不上</b>。先看一下这台电脑 / 手机有没有网路；网路正常的话，多半是 Google 那边短暂出状况。按「立即重试」，或等一下再试。";
+  else why = "原因：<b>云端暂时连不上</b>（Google 那边短暂出状况，不是你的问题）。按「立即重试」，或等一下再试。";
+  const head = document.getElementById("sync-warn-head"), w = document.getElementById("sync-warn-why");
+  if (head) head.textContent = syncWarnIsLoad ? "从云端载入失败，现在看到的是这台电脑上的资料。" : "刚才的改动还没存到云端。";
+  if (w) w.innerHTML = why;
+}
+let lastCloudOkAt = 0;   // 最近一次跟云端成功存 / 拉的时间（重试成功才收横幅、报好消息）
+async function retrySyncWarn() {
+  const btn = document.getElementById("sync-warn-btn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true; btn.textContent = "重试中…";
+  const before = lastCloudOkAt, wasLoad = syncWarnIsLoad;
+  try { if (wasLoad) await pullCloud(false, false, true); else await pushCloud(false, true); }
+  finally { btn.disabled = false; btn.textContent = "立即重试"; }
+  if (lastCloudOkAt > before) flashSyncOk(wasLoad ? "✓ 已从云端载入最新资料" : "✓ 已存到云端");
+}
+function flashSyncOk(text) {
+  const w = document.getElementById("sync-warn"); if (w) w.style.display = "none";
+  const ok = document.getElementById("sync-ok"); if (!ok) return;
+  ok.textContent = text; ok.style.display = "";
+  clearTimeout(flashSyncOk.t); flashSyncOk.t = setTimeout(() => { ok.style.display = "none"; }, 4000);
 }
 function parseJwt(t) { try { return JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch (e) { return {}; } }
 // Google 的登入凭证大约 1 小时就过期。过期後每次存云端都会失败，
@@ -1137,7 +1185,7 @@ function initGoogleSignIn() {
   if (!gsiInit(localStorage.getItem(CACHE_OWNER_KEY) || null)) return false;
   for (const [id, txt] of [["gsi-button", "signin_with"], ["gsi-button-top", "signin_with"], ["gsi-button-reg", "signup_with"]]) {
     const el = document.getElementById(id);
-    if (el) google.accounts.id.renderButton(el, { theme: "filled_blue", size: "large", text: txt });
+    if (el) { el.innerHTML = ""; google.accounts.id.renderButton(el, { theme: "filled_blue", size: "large", text: txt }); }  // 先清掉「正在载入」
   }
   google.accounts.id.prompt(); // 老投资者：自动登入，不用再点
   return true;
@@ -1220,12 +1268,69 @@ function retryCloudNow() {
   closeBreaker(true);
   if (owesPush()) pushCloud(false, true); else pullCloud(false, false, true);
 }
+// ---------- 云端失败纪录（V3-07 C）：後台偶发 404 先量频率，再决定要不要根治 ----------
+// 每一次打後台都记次数；失败的记一笔（时间、动作、哪一种失败、HTTP 状态、花多久、第几次尝试），本机留最近 50 笔。
+const CLOUD_LOG_KEY = "cloud-fail-log", CLOUD_COUNT_KEY = "cloud-call-count";
+const CLOUD_KIND = { network: "连不上（网路）", html: "Google 错误页", bad: "回应看不懂", unauthorized: "登入凭证被拒", busy: "云端忙（有人在存）", other: "其他" };
+const CLOUD_ACT = { load: "载入", save: "存档", saveMine: "投资者存档" };
+// 每天：打了几次（calls）、其中有问题的几次（fails = 下面表格里记的每一笔，包括登入凭证被拒、云端忙）
+function cloudBump(field) {
+  try {
+    const c = JSON.parse(localStorage.getItem(CLOUD_COUNT_KEY) || "{}"), d = mytNow().date;
+    const x = c[d] || (c[d] = { calls: 0, fails: 0 });
+    x[field]++;
+    const keys = Object.keys(c).sort(); while (keys.length > 21) delete c[keys.shift()];
+    localStorage.setItem(CLOUD_COUNT_KEY, JSON.stringify(c));
+  } catch (e) {}
+  renderCloudLog();
+}
+const cloudCount = () => cloudBump("calls");
+function cloudLogFail(entry) {
+  try {
+    const a = JSON.parse(localStorage.getItem(CLOUD_LOG_KEY) || "[]");
+    a.push(Object.assign({ at: new Date().toISOString() }, entry));
+    while (a.length > 50) a.shift();
+    localStorage.setItem(CLOUD_LOG_KEY, JSON.stringify(a));
+  } catch (e) {}
+  cloudBump("fails");
+}
+function cloudLogText() {
+  let a = [], c = {};
+  try { a = JSON.parse(localStorage.getItem(CLOUD_LOG_KEY) || "[]"); c = JSON.parse(localStorage.getItem(CLOUD_COUNT_KEY) || "{}"); } catch (e) {}
+  const t = iso => new Date(iso).toLocaleString("zh-CN", { timeZone: "Asia/Kuala_Lumpur", hour12: false });
+  const days = Object.keys(c).sort().reverse().map(d => `${d}：打了 ${c[d].calls} 次後台，有问题 ${c[d].fails} 次`);
+  const rows = a.slice().reverse().map(x => `${t(x.at)} | ${CLOUD_ACT[x.action] || x.action || "-"} | ${CLOUD_KIND[x.kind] || x.kind}${x.status ? " " + x.status : ""} | ${x.ms != null ? (x.ms / 1000).toFixed(1) + " 秒" : "-"} | 第 ${(x.attempt || 0) + 1} 次`);
+  return { days, rows, n: a.length };
+}
+function renderCloudLog() {
+  const box = document.getElementById("cloud-log"); if (!box) return;
+  const { days, rows, n } = cloudLogText();
+  box.innerHTML = `<summary>云端连线纪录（本机最近 ${n} 笔失败，给 auditor 看）</summary>
+    <div class="hint" style="margin:6px 0">${days.length ? days.slice(0, 7).join("<br>") : "还没有纪录"}</div>
+    ${rows.length ? `<div class="wrap"><table><thead><tr><th>时间（马来西亚）</th><th>动作</th><th>失败类型</th><th>花了</th><th>第几次</th></tr></thead><tbody>`
+      + rows.map(r => `<tr>${r.split(" | ").map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>` : ""}
+    <button type="button" class="action small ghost" style="margin-top:8px" onclick="copyCloudLog(this)">复制纪录</button>`;
+}
+async function copyCloudLog(btn) {
+  const { days, rows } = cloudLogText();
+  const text = ["每天次数：", ...days, "", "失败纪录（新到旧）：", ...rows].join("\n");
+  try { await navigator.clipboard.writeText(text); btn.textContent = "已复制 ✓"; }
+  catch (e) { btn.textContent = "复制不了，请截图"; }
+  setTimeout(() => { btn.textContent = "复制纪录"; }, 2500);
+}
 async function cloudFetch(body) {
   // authPostFields() 每次重算 —— 中途换过凭证的话要用新的那张
-  const r = await fetch(cloudUrl(), { method: "POST", body: JSON.stringify({ ...body, ...authPostFields() }) });
+  const t0 = Date.now();
+  let r;
+  try { r = await fetch(cloudUrl(), { method: "POST", body: JSON.stringify({ ...body, ...authPostFields() }) }); }
+  catch (e) { const err = new Error("连不上云端（网路）"); err.kind = "network"; err.ms = Date.now() - t0; throw err; }
   const text = await r.text();
-  try { return JSON.parse(text); }
-  catch (e) { throw new Error("後台回的不是资料（多半是跑太久，Google 回了错误页）"); }
+  try { const j = JSON.parse(text); cloudFetch.last = { status: r.status, ms: Date.now() - t0 }; return j; }
+  catch (e) {
+    const err = new Error("後台回的不是资料（多半是跑太久，Google 回了错误页）");
+    err.kind = /<html|<!doctype/i.test(text) ? "html" : "bad"; err.status = r.status; err.ms = Date.now() - t0;
+    throw err;
+  }
 }
 async function cloudCall(body, label, manual) {
   if (breakerOpen() && !manual) throw breakerErr();
@@ -1238,13 +1343,19 @@ async function cloudCall(body, label, manual) {
     }
     try {
       let j = await cloudFetch(body);
+      cloudCount();
       // unauthorized 不一定是真的过期（後台忙的时候会冤枉人）。先换一张凭证再试【一次】，
       // 还是 unauthorized 才交给上层当成「真的要重新登入」—— 不要动不动叫人重新登入。
       if (j.error === "unauthorized" && googleIdToken) {
-        if (await ensureFreshToken(Infinity, true)) j = await cloudFetch(body);
+        cloudLogFail({ action: body.action, kind: "unauthorized", status: (cloudFetch.last || {}).status, ms: (cloudFetch.last || {}).ms, attempt });
+        if (await ensureFreshToken(Infinity, true)) { j = await cloudFetch(body); cloudCount(); }
       }
       return j;
-    } catch (e) { lastErr = e; }                  // 网路断线 / 错误页，值得重试
+    } catch (e) {                                 // 网路断线 / 错误页，值得重试
+      lastErr = e;
+      cloudCount();
+      cloudLogFail({ action: body.action, kind: e.kind || "other", status: e.status || null, ms: e.ms != null ? e.ms : null, attempt });
+    }
   }
   tripBreaker();
   throw lastErr || new Error("云端没有回应");
@@ -1270,6 +1381,7 @@ async function pushCloud(silent, manual) {
     // 後台一次只让一个人写（不排队会静静盖掉别人刚存的）。撞到就等一下再试，
     // 资料还在本机所以不会掉；pendingPush 保持着，自动同步也不会趁这时覆盖。
     if (j.error === "busy") {
+      cloudLogFail({ action: payload.action, kind: "busy", status: (cloudFetch.last || {}).status, ms: (cloudFetch.last || {}).ms, attempt: busyRetries });
       // 忙 = 後台被塞住了。跟网路失败同一套节奏（5/15/45 秒），用完就断路 5 分钟，不要越塞越凶。
       if (busyRetries < CLOUD_RETRY_WAITS.length) {
         const wait = CLOUD_RETRY_WAITS[busyRetries];
@@ -1290,6 +1402,7 @@ async function pushCloud(silent, manual) {
     let msg = `✓ 已存到云端（${new Date().toLocaleString()}）`;
     if (j.keptNewer && j.keptNewer.length) msg += ` · 注意：${j.keptNewer.length} 个投资者刚自己更新过，保留了他们的新记录`;
     pendingRetry = false; // 存成功了，没有欠着的
+    lastCloudOkAt = Date.now();
     setCloudStatus(msg);
   } catch (e) { handleCloudErr(e, "⬆️ 存云端失败", true); }
 }
@@ -1464,6 +1577,7 @@ async function pullCloud(silent, quiet, manual) {
     db.snapshots = d.snapshots || [];   // ⚠️ 少这行，拉回来本机是空的，下次一存就把云端快照洗光
     cloudLoadedOnce = true;             // 资料到齐了，从现在开始记快照才准
     lastPullAt = Date.now();
+    lastCloudOkAt = lastPullAt;
     db.prices = d.prices || {};
     Object.assign(db.prices, livePrices);   // 抓价不再存档 -> 云端的价可能比较旧；这次开网页抓到的比较新，盖回去
     db.symbols = d.symbols || {};
@@ -1501,12 +1615,44 @@ function initCloudUI() {
   if (cloud.url) document.getElementById("cloud-url").value = cloud.url;
   if (cloud.token) document.getElementById("cloud-token").value = cloud.token;
   document.getElementById("cloud-auto").checked = !!cloud.auto;
-  // 等 Google 登入库加载好再初始化
-  (function waitGsi(n) {
-    if (initGoogleSignIn()) return;
-    if (n > 0) setTimeout(() => waitGsi(n - 1), 300);
-    else setCloudStatus("Google 登入库没加载到（检查网络），可改用「进阶」手动填密码。");
-  })(25);
+  startGsiWait();   // 等 Google 登入库载入好再初始化
+}
+// ⚠️ 10/18 事件：Google 的登入库那一次没及时载入，以前等 7.5 秒就放弃，而且只在「备份与同步」页写一行字 ——
+//    登入页上 Google 按钮那一格就一直空白，投资者不知道要按什么。现在等 20 秒；载入中、载入不了都在按钮那一格讲清楚。
+const GSI_WAIT_MS = 20000;
+const GSI_BOXES = ["gsi-button-top", "gsi-button-reg", "gsi-button"];
+function gsiPlaceholder(state) {
+  const html = state === "failed"
+    ? `<div class="gsi-fail"><p>Google 登入按钮载入不了。请按重新整理；如果还是不行，暂停广告拦截扩充功能，或用无痕视窗打开。</p>`
+      + `<button type="button" class="action small" onclick="retryGsi()">重试</button></div>`
+    : `<div class="gsi-wait"><span class="gsi-spin"></span>正在载入 Google 登入…</div>`;
+  for (const id of GSI_BOXES) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
+}
+let gsiWaitToken = 0;
+function startGsiWait() {
+  const me = ++gsiWaitToken, t0 = Date.now();
+  if (!(typeof google !== "undefined" && google.accounts && google.accounts.id)) gsiPlaceholder("loading");
+  (function tick() {
+    if (me !== gsiWaitToken) return;                 // 按了重试：旧的那一轮不用再等
+    if (initGoogleSignIn()) return;                  // 载好了：按钮已经画上去
+    if (window.__gsiErr || Date.now() - t0 > GSI_WAIT_MS) {
+      gsiPlaceholder("failed");
+      setCloudStatus("Google 登入按钮载入不了，请按重新整理（或到登入页按「重试」）。");
+      return;
+    }
+    setTimeout(tick, 300);
+  })();
+}
+// 「重试」：重新载入 Google 登入库再初始化，不用整页重整（他已经填的名字电话不会不见）
+function retryGsi() {
+  window.__gsiErr = false;
+  document.querySelectorAll('script[src^="https://accounts.google.com/gsi/client"]').forEach(x => x.remove());
+  const sc = document.createElement("script");
+  sc.src = "https://accounts.google.com/gsi/client";
+  sc.async = true;
+  sc.onerror = () => { window.__gsiErr = true; };
+  document.head.appendChild(sc);
+  startGsiWait();
 }
 
 // ---------- Helpers ----------
@@ -4389,6 +4535,7 @@ if (!cloud.token) showAuthScreen(); // 没有后备密钥 -> 先显示登入/注
 // 一定要放在这里（helpers 定义之后），放在 db 那一行会碰到 const 的暂时死区。
 if (ensureAccounts()) localStorage.setItem(STORE_KEY, JSON.stringify(db));
 leaderBeat();   // 先决定这个分页是不是主分页（开机後面的自动存档要靠它决定谁来存）
+renderCloudLog();
 if (!PORTFOLIO_FOR_CLIENTS) document.body.classList.add("pf-hide-clients");   // 组合页对账完才开放给投资者
 renderAll();
 autoRefreshExDiv();
