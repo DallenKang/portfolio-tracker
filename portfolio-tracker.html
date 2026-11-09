@@ -150,6 +150,14 @@
   body.not-super .tab-btn[data-tab="staff"], body.client-mode .tab-btn[data-tab="staff"] { display: none; }
   /* ===== 投资者组合页（V3-06）：配色已用 dataviz 验算器跑过（深色底 #1a2129） ===== */
   body.client-mode.pf-hide-clients .tab-btn[data-tab="portfolio"] { display: none; }
+  /* 重查红股 / 股息（V3-09）：列出对不上的，打勾才改 */
+  #recheck-modal { position: fixed; inset: 0; z-index: 1000; display: none; align-items: flex-start; justify-content: center; padding: 48px 12px; overflow-y: auto; background: rgba(0,0,0,.62); }
+  #recheck-modal.show { display: flex; }
+  #recheck-modal .box { width: 100%; max-width: 640px; background: var(--card); border: 1px solid var(--gold); border-radius: 10px; padding: 16px 18px; }
+  #recheck-modal h3 { color: var(--gold); font-size: 16px; margin-bottom: 8px; }
+  #recheck-modal label.rc-item { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13.5px; line-height: 1.55; cursor: pointer; }
+  #recheck-modal label.rc-item input { flex: 0 0 auto; width: auto; min-width: 0; margin: 4px 2px 0; transform: scale(1.2); }
+  #recheck-modal .rc-btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }
   .pf-preview { max-width: 460px; margin: 0 auto 12px; background: rgba(52,152,219,.10); border: 1px solid var(--blue); border-radius: 10px; padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
   .pf-pick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
   .pf-pick label { color: var(--muted); font-size: 12.5px; }
@@ -698,6 +706,19 @@
   </div>
 </div>
 
+<!-- 重查红股 / 股息（V3-09）：按现在的交易重算，跟记录对不上的列出来，打勾才改 -->
+<div id="recheck-modal" role="dialog" aria-modal="true">
+  <div class="box">
+    <h3>🔍 红股 / 股息的股数对不上</h3>
+    <p class="hint" id="recheck-intro" style="margin:0 0 6px;line-height:1.6"></p>
+    <div id="recheck-list"></div>
+    <div class="rc-btns">
+      <button class="action ghost" onclick="closeRecheck()">先不改</button>
+      <button class="action success" onclick="applyRecheck()">照打勾的改</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ EX-DIVIDEND ============ -->
 <div class="tab" id="tab-exdiv">
   <div class="form-card">
@@ -706,6 +727,7 @@
       <button class="action success" onclick="refreshExDiv(); refreshEntitlements(false)">🔄 刷新列表</button>
       <button class="action" onclick="backfillDividends(false)">📥 补记历史股息（近5年）</button>
       <button class="action" onclick="backfillSplits(false).then(() => backfillDividends(true))">🎁 检查红股/拆股（近5年）</button>
+      <button class="action" onclick="openRecheck(null)">🔍 重查红股/股息股数</button>
       <span class="hint" id="x-status" style="margin:0">-</span>
     </div>
     <p class="hint">数据来自 i3investor。打开网页时如果数据超过 12 小时会自动刷新。<span class="gold">金色行</span> = 有投资者持仓的 counter，记得提醒他！</p>
@@ -2320,7 +2342,9 @@ function renderAll() {
       <td class="num"><b>${fmtN(netAmount(t))}</b></td>
       <td class="num">${r !== undefined ? `<span class="${pnlClass(r)}">${pnlFmt(r)}</span>` : "-"}</td>
       <td class="num">${plPct(r, costByTx[t.id])}</td>
-      <td style="white-space:nowrap"><button class="action small ghost" onclick="editTx('${t.id}')">✏️ 编辑</button> <button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
+      <td style="white-space:nowrap">${t.type === "bonus"
+        ? `<button class="action small ghost" onclick="editBonusQty('${t.id}')" title="红股 / 凭单只能改股数">✏️ 改股数</button>`
+        : `<button class="action small ghost" onclick="editTx('${t.id}')">✏️ 编辑</button>`} <button class="action danger small" onclick="delTx('${t.id}')">删除</button></td></tr>`;
   }
   tBody.innerHTML = tBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
 
@@ -3031,6 +3055,8 @@ function addTransaction() {
   if (!clientId || !clientById(clientId)) { alert("请先在「投资者」页添加投资者"); return; }
   if (!accountId || !accountById(accountId)) { alert("请先在「总览」页给这位投资者加一个股票户口（如 APEX / CGS）"); return; }
   if (!date || !ticker || !(qty > 0) || !(price > 0)) { alert("请填完整：日期、股票、股数、价格"); return; }
+  // 类型一定要是买或卖：空类型会被 computePortfolio 当成卖出（红股行以前点 ✏️ 就会变成这样）
+  if (type !== "buy" && type !== "sell") { alert("类型只能是买入或卖出"); return; }
   if (type === "sell") {
     // 修改模式：算持仓时先排除正在修改的这一笔，才不会误判
     const all = db.transactions;
@@ -3045,8 +3071,10 @@ function addTransaction() {
     }
   }
   if (code) db.symbols[ticker] = normalizeSymbol(code); // 存代码给抓价用
+  const touched = [{ clientId, accountId, ticker }];   // 存完要重查红股 / 股息的持仓（改了户口或股票，旧的那个也要查）
   if (editingTxId) {
     const t = db.transactions.find(x => x.id === editingTxId);
+    if (t) touched.push({ clientId: t.clientId, accountId: t.accountId, ticker: t.ticker });
     if (t) Object.assign(t, { clientId, accountId, date, ticker, type, qty, price, brokerage, stamp, clearing });
     cancelEditTx();
     document.getElementById("t-preview").textContent = "已保存修改 ✓";
@@ -3057,12 +3085,14 @@ function addTransaction() {
     document.getElementById("t-preview").textContent = "已添加 ✓";
   }
   save();
+  if (!fastShown) openRecheck(touched);   // 改的是旧交易的话，之後自动记的红股 / 股息可能要跟着改（V3-09）
 }
 // ✏️ 修改交易：载入表单 -> 改 -> 保存（不用删了重记）
 let editingTxId = null;
 function editTx(id) {
   const t = db.transactions.find(x => x.id === id);
   if (!t) return;
+  if (t.type === "bonus") { editBonusQty(id); return; }   // 表单只有买 / 卖，红股进来会变成空类型
   editingTxId = id;
   document.getElementById("t-client").value = t.clientId;
   fillAccountSelects(); // 投资者换了，户口清单要跟着换，才选得到这笔交易的户口
@@ -3161,8 +3191,10 @@ function fmtMoney(el) {
 function delTx(id) {
   if (!confirm("确定删除这笔交易？")) return;
   if (editingTxId === id) cancelEditTx(); // 正在修改的那笔被删了，表单恢复
+  const gone = db.transactions.find(t => t.id === id);
   db.transactions = db.transactions.filter(t => t.id !== id);
   save();
+  if (gone && !fastShown) openRecheck([gone]);   // 删了旧的买卖 / 红股，之後的股息股数可能要跟着改
 }
 // 点栏目标题排序：第1下升序▲，第2下降序▼，第3下恢复默认
 let txSort = null;
@@ -3533,7 +3565,7 @@ function renderEntitlements(pos) {
       who = `<span class="badge div" style="background:rgba(241,196,15,0.15);color:var(--gold)">★ 有投资者持有</span>`;
       for (const h of holders) {
         const c = clientById(h.clientId);
-        const extra = r.factor ? Math.round(h.qty * (r.factor - 1)) : null;
+        const extra = r.factor ? bonusExtra(h.qty, r.factor) : null;
         who += `<div style="font-size:12px;margin-top:3px">${clientLabel(c)}: ${h.qty.toLocaleString()} 股`
              + (extra !== null ? (extra >= 0 ? ` → <b class="gold">+${extra.toLocaleString()} 股</b>` : ` → <b class="neg">${extra.toLocaleString()} 股</b>`) : "")
              + `</div>`;
@@ -3698,7 +3730,7 @@ async function backfillSplits(silent) {
           const oldKey = `autosplit:${cid}|${tk}|${s.exDate}|${s.factor}`;
           const key = `autosplit:${cid}|${acctId}|${tk}|${s.exDate}|${s.factor}`;
           if (db.settings[oldKey] || db.settings[key]) continue;
-          const extra = Math.round(held[hk2] * (s.factor - 1)); // 送股为正；并股为负（股数减少）
+          const extra = bonusExtra(held[hk2], s.factor); // 送股为正；并股为负（股数减少）；零头不计
           if (extra === 0 || held[hk2] + extra <= 0) continue;
           db.settings[key] = 1;
           db.transactions.push({ id: "spl" + uid(), clientId: cid, accountId: acctId, date: s.exDate, ticker: tk,
@@ -3728,6 +3760,146 @@ async function backfillSplits(silent) {
     if (!silent) status.textContent = "红股检查失败：" + e.message + API_HINT;
     return 0;
   }
+}
+
+// 红股 / 拆股 / 并股多出（或少掉）的股数：不足 1 股的零头不计，跟券商、跟免费凭单一样。
+// 以前是四舍五入：AFFIN 1 送 18，7,500 股 -> 416.67，券商给 416，系统记 417。（Dallen 2026-11-09 点头改）
+// 并股也对：新股数 = floor(持股 × 倍数)，所以减少的股数 = floor(持股 × (倍数 - 1))。
+// + 1e-6：浮点数误差（99.9999999 其实是 100）不能被舍掉一股。
+function bonusExtra(held, factor) { return Math.floor(held * (factor - 1) + 1e-6); }
+
+// ---------- 重查自动红股 / 股息（V3-09） ----------
+// 自动记的红股、股息是「记的那一刻」按除权日的持股算的，记完用 settings 键标「做过了」，之後不再看。
+// 所以改了旧交易的日期 / 股数 / 股票、补记更早的交易，它们都不会跟着变（11/9 AFFIN：买入日期打错一年，红股少 277 股、股息少算）。
+// 这里按现在的交易重算，对不上的列出来；对过券商单据、打勾才改，不准默默改。
+// 只管系统自动记的（spl 红股、adv 股息）。手动记的股息、免费凭单不在这里。
+function bonusFixKey(t) { return `bonusfix:${t.clientId}|${t.id}`; }   // 照单据手动改过股数 -> 重查不再动它（键含投资者 id，员工存档才带得上去）
+function splitKeyOf(t) {
+  // 红股记录本身没存倍数；倍数在当初记的 settings 键最後一段（新旧两种键都认）
+  const pre = [`autosplit:${t.clientId}|${t.accountId || ""}|${t.ticker}|${t.date}|`, `autosplit:${t.clientId}|${t.ticker}|${t.date}|`];
+  for (const k in db.settings) for (const p of pre) {
+    if (!k.startsWith(p)) continue;
+    const factor = parseFloat(k.slice(p.length));
+    if (factor > 0) return { key: k, factor };
+  }
+  return null;
+}
+function divKeysOf(d) { return [`autodiv:${d.clientId}|${d.accountId || ""}|${d.ticker}|${d.date}|${d.perShare}`, `autodiv:${d.clientId}|${d.ticker}|${d.date}|${d.perShare}`]; }
+// 这个持仓在某一天之前（不含当天）有多少股，照现在流水上的数字
+function heldBeforeDate(r, date) {
+  let h = 0;
+  for (const t of db.transactions) if (posKey(t) === posKey(r) && t.date < date) h += t.type === "sell" ? -t.qty : t.qty;
+  return h;
+}
+// scope：null = 全部；否则只查这几个持仓 [{clientId, accountId, ticker}]
+function recheckEntitlements(scope) {
+  const inScope = r => !scope || scope.some(x => posKey(x) === posKey(r));
+  const groups = {};
+  for (const t of db.transactions) if (inScope(t)) (groups[posKey(t)] = groups[posKey(t)] || []).push(t);
+  const newQty = {};   // 红股重算後的股数：後面的红股、股息要按这个算
+  const heldBefore = (gk, date) => {
+    let h = 0;
+    for (const t of groups[gk] || []) if (t.date < date) h += t.type === "sell" ? -t.qty : (t.id in newQty ? newQty[t.id] : t.qty);
+    return h;
+  };
+  const changes = [];
+  for (const gk in groups) {
+    const bonuses = groups[gk].filter(t => t.type === "bonus" && /^spl/.test(t.id) && !db.settings[bonusFixKey(t)])
+      .sort((a, b) => a.date.localeCompare(b.date));   // 早的红股先定，後面的才算得对
+    for (const t of bonuses) {
+      const sk = splitKeyOf(t);
+      if (!sk) continue;                                 // 找不到倍数就不猜
+      const held = heldBefore(gk, t.date);
+      let want = held > 0 ? bonusExtra(held, sk.factor) : 0;
+      if (held + want <= 0) want = 0;                    // 跟 backfillSplits 一样：除权前没持股就不该有这笔
+      newQty[t.id] = want;
+      if (want !== t.qty) changes.push({ kind: "bonus", id: t.id, rec: t, held, from: t.qty, to: want, key: sk.key });
+    }
+  }
+  for (const d of db.dividends) {
+    if (!/^adv/.test(d.id) || !inScope(d)) continue;
+    const held = Math.max(0, heldBefore(posKey(d), d.date));
+    if (held !== d.qty) changes.push({ kind: "div", id: d.id, rec: d, held, from: d.qty, to: held, total: r2(held * d.perShare) });
+  }
+  return changes;
+}
+let recheckChanges = [];
+function openRecheck(scope) {
+  if (viewerRole === "client") return;   // 投资者只读，自动记录不归他管
+  const changes = recheckEntitlements(scope);
+  if (!changes.length) {
+    if (!scope) document.getElementById("x-status").textContent = "✓ 重查完：系统自动记的红股、股息股数，跟现在的交易全部对得上";
+    return;
+  }
+  recheckChanges = changes;
+  const who = r => `${clientLabel(clientById(r.clientId))} · ${acctLabel(accountById(r.accountId))}`;
+  document.getElementById("recheck-intro").innerHTML = (scope
+    ? "按现在的交易重算，这个持仓有系统自动记的红股 / 股息对不上（可能是刚改的交易、以前改过或补记的交易，或以前四舍五入）。"
+    : "按现在的交易重算全部系统自动记的红股 / 股息，下面这些对不上（可能是改过或补记过旧交易，或以前四舍五入）。")
+    + "<br><b>请先对券商单据，对得上的才打勾。</b>没打勾的不会动。";
+  let html = "";
+  changes.forEach((c, i) => {
+    const r = c.rec;
+    const head = c.kind === "bonus"
+      ? `🎁 <b>${who(r)}</b> · <b>${r.ticker}</b> 红股（${r.date} 除权${r.note ? "，" + r.note : ""}）`
+      : `💰 <b>${who(r)}</b> · <b>${r.ticker}</b> 股息（${r.date} 除息，每股 RM ${r.perShare}）`;
+    const now = c.kind === "bonus" ? `${c.from.toLocaleString()} 股` : `${c.from.toLocaleString()} 股 = RM ${fmtN(r.total)}`;
+    const want = c.to === 0
+      ? `<b class="neg">删除这笔</b>（${c.kind === "bonus" ? "除权" : "除息"}前没有持股）`
+      : c.kind === "bonus" ? `<b class="gold">${c.to.toLocaleString()} 股</b>` : `<b class="gold">${c.to.toLocaleString()} 股 = RM ${fmtN(c.total)}</b>`;
+    html += `<label class="rc-item"><input type="checkbox" id="rc-${i}"><span>${head}<br>现在记 ${now} → 应该 ${want}`
+      + `<span class="hint" style="display:block;margin:0">${c.kind === "bonus" ? "除权" : "除息"}前持有 ${c.held.toLocaleString()} 股</span></span></label>`;
+  });
+  document.getElementById("recheck-list").innerHTML = html;
+  document.getElementById("recheck-modal").classList.add("show");
+}
+function closeRecheck() {
+  document.getElementById("recheck-modal").classList.remove("show");
+  recheckChanges = [];
+}
+function applyRecheck() {
+  const picked = recheckChanges.filter((c, i) => document.getElementById("rc-" + i).checked);
+  closeRecheck();
+  if (!picked.length) return;
+  let done = 0, skipped = 0;
+  // 先改红股：股息要按改完的红股算
+  for (const c of picked.filter(c => c.kind === "bonus")) {
+    const t = db.transactions.find(x => x.id === c.id);
+    if (!t || t.qty !== c.from) { skipped++; continue; }   // 视窗开着时资料被别处改了 -> 不动
+    if (c.to === 0) { db.transactions = db.transactions.filter(x => x.id !== c.id); delete db.settings[c.key]; }   // 键也删：之後真的有份时才补得回来
+    else t.qty = c.to;
+    done++;
+  }
+  for (const c of picked.filter(c => c.kind === "div")) {
+    const d = db.dividends.find(x => x.id === c.id);
+    // 照流水上「现在」的股数再算一次：要是相关的红股没打勾，这笔跟视窗上的不一样 -> 不动，叫他重查
+    if (!d || d.qty !== c.from || Math.max(0, heldBeforeDate(d, d.date)) !== c.to) { skipped++; continue; }
+    if (c.to === 0) { db.dividends = db.dividends.filter(x => x.id !== c.id); divKeysOf(d).forEach(k => delete db.settings[k]); }
+    else { d.qty = c.to; d.total = c.total; }
+    done++;
+  }
+  if (done) save();
+  const msg = (done ? `✓ 已更新 ${done} 笔红股 / 股息` : "没有改动")
+    + (skipped ? ` · ⚠ ${skipped} 笔没改（资料刚被别处改过，或要跟没打勾的红股一起改），请再按「🔍 重查红股/股息股数」` : "");
+  document.getElementById("x-status").textContent = msg;
+  const tp = document.getElementById("t-preview");
+  if (tp) tp.textContent = msg;
+}
+// 红股 / 拆股 / 免费凭单那一行：一般表单只有买 / 卖，价格 0 会被挡；硬改会变成空类型，computePortfolio 会把它当卖出。
+// 所以不进一般表单，只给改股数（类型、日期、价格都不动）。
+function editBonusQty(id) {
+  const t = db.transactions.find(x => x.id === id);
+  if (!t || t.type !== "bonus") return;
+  const isWarrant = /^wrt/.test(t.id);
+  const raw = prompt(`🎁 ${t.date} ${t.ticker}${t.note ? "（" + t.note + "）" : ""}\n现在记 ${t.qty.toLocaleString()} 股。\n\n照券商单据填正确的股数${isWarrant ? "" : "（并股是股数减少，填负数）"}：`, String(t.qty));
+  if (raw === null) return;
+  const qty = Number(String(raw).replace(/[,\s]/g, ""));
+  if (!Number.isInteger(qty) || qty === 0 || (isWarrant && qty < 0)) { alert("股数要是整数、不能是 0" + (isWarrant ? "，凭单不能是负数" : "")); return; }
+  if (qty === t.qty) return;
+  t.qty = qty;
+  if (/^spl/.test(t.id)) db.settings[bonusFixKey(t)] = 1;   // 照单据改的，之後重查不再动它
+  save();
+  if (!fastShown) openRecheck([t]);   // 红股变了，之後的股息股数可能要跟着改
 }
 
 // 打开网页时，数据超过12小时自动刷新（抓不到就静静用旧的）
