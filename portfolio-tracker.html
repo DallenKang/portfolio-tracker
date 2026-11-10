@@ -63,6 +63,11 @@
   .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
   .field { display: flex; flex-direction: column; gap: 4px; }
   .field label { font-size: 12px; color: var(--muted); }
+  /* 挡下来的那一格框红（V3-12）；他一改那格就自动退掉 */
+  .field-err { border-color: var(--red) !important; box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.35); }
+  /* 户口费率空格：灰字是例子不是值，要淡到一眼看得出是空的（旁边「最低 Brokerage」的 8 是真的值） */
+  .acct-row input, .acct-row select { height: 35px; }   /* 下拉框跟输入框一样高，同一排才对得齐 */
+  #a-rate-flat::placeholder, #a-rate-below::placeholder, #a-rate-above::placeholder { color: var(--muted); opacity: 0.5; font-style: italic; }
   input, select {
     background: var(--card2); border: 1px solid var(--border); color: var(--text);
     padding: 8px 10px; border-radius: 6px; font-size: 14px; min-width: 100px;
@@ -115,6 +120,10 @@
   /* 显示/隐藏是用 JS 直接设 style.display（元素上有 inline display:none，class 盖不过它） */
   #sync-banner { align-items: center; gap: 9px; background: rgba(52, 152, 219, 0.12);
     border: 1px solid rgba(52, 152, 219, 0.35); color: var(--text); padding: 9px 14px;
+    border-radius: 8px; margin-bottom: 12px; font-size: 13.5px; }
+  /* 网站有新版本（V3-12）：分页开着很久、或浏览器卡着旧的一份时提醒重新整理 */
+  #update-banner { align-items: center; gap: 10px; flex-wrap: wrap; background: rgba(46, 204, 113, 0.12);
+    border: 1px solid rgba(46, 204, 113, 0.45); color: var(--text); padding: 9px 14px;
     border-radius: 8px; margin-bottom: 12px; font-size: 13.5px; }
   .sync-dot { width: 13px; height: 13px; flex: none; border: 2px solid rgba(52, 152, 219, 0.3);
     border-top-color: var(--blue); border-radius: 50%; animation: auth-spin 0.8s linear infinite; }
@@ -316,6 +325,11 @@
 </div>
 
 <!-- 登入时先显示上次的资料，这条说明云端还在同步（同步完自己会消失） -->
+<div id="update-banner" style="display:none">
+  <span>🆕 <b>网站有新版本。</b>你现在看到的是旧的一份，按右边就会换成最新的。</span>
+  <button class="action small success" onclick="reloadNewVersion()">按这里重新整理</button>
+</div>
+
 <div id="sync-banner" style="display:none">
   <span class="sync-dot"></span>
   <span>正在跟云端同步最新记录…<span class="hint" style="margin-left:6px">现在看到的是上次的资料，同步好之前先不要新增或修改</span></span>
@@ -427,21 +441,19 @@
   <h2 class="section">股票户口 Stock Accounts</h2>
   <div class="form-card">
     <h3 id="a-form-title">添加股票户口 Add Account</h3>
-    <div class="form-row">
+    <div class="form-row acct-row">
       <div class="field" id="f-acct-client"><label>投资者 Investor</label><select id="a-client"></select></div>
+      <!-- 格子底下不放小字：同一排有的格子多一行字就会变高，标题跟输入框就对不齐了（11/10 截图）。说明统一放在表单下面 -->
       <div class="field"><label>券商 Broker <span style="color:var(--gold)">*</span></label>
         <select id="a-broker" onchange="toggleBrokerOther()"></select>
-        <span class="hint">找不到才选「其他」</span>
       </div>
-      <div class="field" id="f-broker-other" style="display:none"><label>券商名称（自己填）</label>
+      <div class="field" id="f-broker-other" style="display:none"><label>券商名称（自己填） <span style="color:var(--gold)">*</span></label>
         <input type="text" id="a-broker-other" placeholder="如 Phillip Capital">
-        <span class="hint">只会出现在你自己的清单里</span>
       </div>
       <div class="field"><label>账户号码 Account No. <span style="color:var(--gold)">*</span></label>
         <input type="text" id="a-accountno" placeholder="如 3NG20945"></div>
       <div class="field"><label>户口种类 Account Type</label>
         <input type="text" id="a-accttype" placeholder="如 CTA 3 / Cash / Margin">
-        <span class="hint">种类不同，收费通常不同</span>
       </div>
       <div class="field"><label>Brokerage 模式</label>
         <select id="a-mode" onchange="toggleAcctRateFields()">
@@ -449,9 +461,9 @@
           <option value="flat">Flat Rate（统一）</option>
         </select>
       </div>
-      <div class="field" id="f-a-rate-below"><label>&lt; RM100K (%)</label><input type="number" step="any" id="a-rate-below" placeholder="如 0.42"></div>
-      <div class="field" id="f-a-rate-above"><label>≥ RM100K (%)</label><input type="number" step="any" id="a-rate-above" placeholder="如 0.21"></div>
-      <div class="field" id="f-a-rate-flat" style="display:none"><label>Flat Rate (%)</label><input type="number" step="any" id="a-rate-flat" placeholder="如 0.18"></div>
+      <div class="field" id="f-a-rate-below"><label>&lt; RM100K (%) <span style="color:var(--gold)">*</span></label><input type="number" step="any" id="a-rate-below" placeholder="必填，例 0.42"></div>
+      <div class="field" id="f-a-rate-above"><label>≥ RM100K (%) <span style="color:var(--gold)">*</span></label><input type="number" step="any" id="a-rate-above" placeholder="必填，例 0.21"></div>
+      <div class="field" id="f-a-rate-flat" style="display:none"><label>Flat Rate (%) <span style="color:var(--gold)">*</span></label><input type="number" step="any" id="a-rate-flat" placeholder="必填，例 0.18"></div>
       <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="a-min" placeholder="如 8" value="8"></div>
       <div class="field"><label>成本法 Cost Method</label>
         <select id="a-costmethod">
@@ -462,7 +474,8 @@
       <button class="action" id="a-save-btn" onclick="saveAccount()">添加户口</button>
       <button class="action ghost" id="a-cancel-btn" onclick="cancelEditAccount()" style="display:none">取消</button>
     </div>
-    <p class="hint">一个投资者可以有多个股票户口（不同股票行/投行）。<b>每个户口的收费和成本法分开设定</b> —— 不同股票行收费不一样，同一支股票在两个户口也会分开算成本。<br>记交易、股息、出入金的时候，选是哪个户口就好。</p>
+    <p class="net-preview" id="a-result" style="display:none"></p>
+    <p class="hint"><span style="color:var(--gold)">*</span> 必填。券商找不到才选「其他」自己填（只会出现在你自己的清单里）。户口种类不同，收费通常不同。<br>一个投资者可以有多个股票户口（不同股票行/投行）。<b>每个户口的收费和成本法分开设定</b> —— 不同股票行收费不一样，同一支股票在两个户口也会分开算成本。<br>记交易、股息、出入金的时候，选是哪个户口就好。</p>
   </div>
   <div class="table-wrap">
     <table>
@@ -2684,31 +2697,53 @@ function saveAccount() {
   const rateAbove = parseFloat(document.getElementById("a-rate-above").value);
   const min = parseFloat(document.getElementById("a-min").value) || 0;
   const costMethod = document.getElementById("a-costmethod").value;
-  if (!clientId || !clientById(clientId)) { alert("请先选投资者"); return; }
-  if (!broker) { alert("请选券商（或选「其他」自己填）"); return; }
-  if (!accountNo) { alert("请填账户号码 —— 同一间券商底下靠它分辨不同户口"); return; }
-  if (mode === "flat" && !(rateFlat >= 0)) { alert("请填 flat rate"); return; }
-  if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { alert("请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
+  clearFieldErr();
+  if (!clientId || !clientById(clientId)) { acctFail("a-client", "请先选投资者"); return; }
+  if (!broker) { acctFail(brokerSel === "__other" ? "a-broker-other" : "a-broker", "请选券商（或选「其他」自己填）"); return; }
+  if (!accountNo) { acctFail("a-accountno", "请填账户号码 —— 同一间券商底下靠它分辨不同户口"); return; }
+  if (mode === "flat" && !(rateFlat >= 0)) { acctFail("a-rate-flat", "请填 flat rate"); return; }
+  if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { acctFail(!(rateBelow >= 0) ? "a-rate-below" : "a-rate-above", "请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
   // 同一位投资者底下，「券商 + 账号」不能重复 —— 那是一个交易户口的唯一身份
   const wantKey = `${broker.trim().toLowerCase()}|${accountNo.trim().toLowerCase()}`;
   const dupe = db.accounts.some(a => a.clientId === clientId && a.id !== editingAccountId && acctKey(a) === wantKey);
-  if (dupe) { alert(`这位投资者在「${broker}」已经有账号 ${accountNo} 的户口了`); return; }
+  if (dupe) { acctFail("a-accountno", `这位投资者在「${broker}」已经有账号 ${accountNo} 的户口了`); return; }
   const data = { clientId, broker, accountNo, acctType, name, brokerageMode: mode, minBrokerage: min, costMethod,
     rateFlat: mode === "flat" ? rateFlat : undefined,
     rateBelow: mode === "tiered" ? rateBelow : undefined,
     rateAbove: mode === "tiered" ? rateAbove : undefined };
+  const wasEdit = !!editingAccountId;
   if (editingAccountId) {
     const a = accountById(editingAccountId);
     const moved = a.clientId !== clientId && db.transactions.some(t => t.accountId === editingAccountId);
-    if (moved) { alert("这个户口底下已经有交易了，不能换到别的投资者名下。"); return; }
+    if (moved) { acctFail("a-client", "这个户口底下已经有交易了，不能换到别的投资者名下。"); return; }
     Object.assign(a, data);
-    cancelEditAccount();
   } else {
     db.accounts.push({ id: uid(), ...data });
-    ["a-accountno", "a-accttype", "a-broker-other"].forEach(id => document.getElementById(id).value = "");
   }
   save();
+  // 被「正在同步」挡下来（save 已经退回资料、跳了提醒）-> 他打的东西留在表单里，同步完再按一次就好
+  if (fastShown) return;
+  if (wasEdit) cancelEditAccount();
+  else ["a-accountno", "a-accttype", "a-broker-other"].forEach(id => document.getElementById(id).value = "");
+  setAcctResult(`${wasEdit ? "已保存" : "已添加"}：${clientLabel(clientById(clientId))} · ${acctLabel(data)}（${rateLabel(data)}，最低 RM ${min}，${costMethod === "fifo" ? "FIFO" : "Average"}）`, true);
 }
+// 户口表单的结果讯息：以前加成功什么都不显示，只是号码那格变空 —— 分不出「成功了」还是「没反应」（11/10）
+function setAcctResult(msg, ok) {
+  const el = document.getElementById("a-result");
+  if (!el) return;
+  if (!msg) { el.style.display = "none"; return; }
+  el.style.display = "";
+  el.innerHTML = ok ? `<span class="pos">✓ ${msg}</span>` : `<span class="pnl-neg">⚠️ 没有存入 —— ${msg}</span>`;
+}
+// 挡下来：跳讯息 + 那一格框红、光标放进去（他一改那格，红框就退掉）
+function acctFail(id, msg) {
+  alert(msg);
+  setAcctResult(msg, false);
+  const el = document.getElementById(id);
+  if (el) { el.classList.add("field-err"); el.focus(); }
+}
+function clearFieldErr() { document.querySelectorAll(".field-err").forEach(el => el.classList.remove("field-err")); }
+["input", "change"].forEach(ev => document.addEventListener(ev, e => { if (e.target && e.target.classList) e.target.classList.remove("field-err"); }));
 function editAccount(id) {
   const a = accountById(id);
   if (!a) return;
@@ -2731,6 +2766,7 @@ function editAccount(id) {
   document.getElementById("a-min").value = a.minBrokerage || 0;
   document.getElementById("a-costmethod").value = a.costMethod === "fifo" ? "fifo" : "average";
   toggleAcctRateFields();
+  clearFieldErr(); setAcctResult("");
   document.getElementById("a-form-title").textContent = "编辑户口：" + acctLabel(a);
   document.getElementById("a-save-btn").textContent = "保存";
   document.getElementById("a-cancel-btn").style.display = "";
@@ -2738,6 +2774,7 @@ function editAccount(id) {
 }
 function cancelEditAccount() {
   editingAccountId = null;
+  clearFieldErr();
   ["a-accountno", "a-accttype", "a-broker-other", "a-rate-flat", "a-rate-below", "a-rate-above"]
     .forEach(id => document.getElementById(id).value = "");
   toggleBrokerOther();
@@ -4924,6 +4961,42 @@ autoRefreshExDiv();
 autoRefreshEntitlements();
 // PWA：正式网址（https）才注册 service worker；network-first，不会出现旧版卡住
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+
+// ---------- 网站有新版本的提醒（V3-12）----------
+// 分页开着很久没重新整理，或浏览器 / 手机 app 视窗卡着旧的一份（11/10 原网址重新整理好几次还是旧版，
+// 换成 ?v= 的新网址才看到新版），他会以为改好的东西没改好。投资者的手机也可能这样。
+// 比的是网页的「最後修改时间」：这一份载入时的 vs 网站现在的 —— 不用每次上线手动改版本号。
+let updateShown = false;
+function pageLoadedAt() {
+  const m = String(document.lastModified).match(/^(\d\d)\/(\d\d)\/(\d{4}) (\d\d):(\d\d):(\d\d)$/);   // 浏览器给的是本地时间
+  return m ? new Date(+m[3], m[1] - 1, +m[2], +m[4], +m[5], +m[6]).getTime() : Date.parse(document.lastModified);
+}
+async function checkForUpdate() {
+  if (updateShown || document.hidden || !navigator.onLine) return;
+  const mine = pageLoadedAt();
+  if (!mine) return;
+  try {
+    const r = await fetch(location.pathname, { method: "HEAD", cache: "no-store" });
+    const live = Date.parse(r.headers.get("Last-Modified") || "");
+    if (r.ok && live && live - mine > 60 * 1000) {        // 差一分钟以上才算，避免时间误差
+      updateShown = true;
+      document.getElementById("update-banner").style.display = "flex";
+    }
+  } catch (e) {}                                          // 没网路之类：不吵他
+}
+async function reloadNewVersion() {
+  // 还有资料没存上云端就重新整理，载入时云端那份会盖掉这台电脑的 -> 先挡
+  if (owesPush() || fastShown) { alert("还有资料正在跟云端同步 / 存档，等它完成再按一次。"); return; }
+  try { if (window.caches) for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
+  try { if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.update(); } catch (e) {}
+  // 网址带一个新的号码：浏览器、手机 app 视窗都一定去拿新的那一份（11/10 就是靠 ?v= 才看到新版）
+  const u = new URL(location.href);
+  u.searchParams.set("v", Date.now().toString(36));
+  location.replace(u.toString());
+}
+setTimeout(checkForUpdate, 15 * 1000);                    // 开网页 15 秒後看一次
+setInterval(checkForUpdate, 30 * 60 * 1000);              // 之後每 30 分钟
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkForUpdate(); });   // 切回这个分页时
 if (autoRecordDividends() > 0) save(); // 开网页时用现有日历数据补记股息
 startAutoPrices(); // 打开就自动抓价（云端载入后会再抓一次最新的）
 autoRefreshIPO();
