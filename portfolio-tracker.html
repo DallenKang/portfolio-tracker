@@ -67,7 +67,14 @@
   .field-err { border-color: var(--red) !important; box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.35); }
   /* 户口费率空格：灰字是例子不是值，要淡到一眼看得出是空的（旁边「最低 Brokerage」的 8 是真的值） */
   .acct-row input, .acct-row select { height: 35px; }   /* 下拉框跟输入框一样高，同一排才对得齐 */
-  #a-rate-flat::placeholder, #a-rate-below::placeholder, #a-rate-above::placeholder { color: var(--muted); opacity: 0.5; font-style: italic; }
+  #a-rate-flat::placeholder, #a-rate-below::placeholder, #a-rate-above::placeholder,
+  #n-rate-flat::placeholder, #n-rate-below::placeholder, #n-rate-above::placeholder { color: var(--muted); opacity: 0.5; font-style: italic; }
+  /* 投资者页（V3-14）：户口列在每个人底下；刚加 / 刚改的那行亮一下 */
+  tr.acct-sub td { font-size: 13px; background: rgba(255, 255, 255, 0.025); }
+  tr.flash td { animation: row-flash 2.6s ease-out; }
+  @keyframes row-flash { 0%, 35% { background: rgba(46, 204, 113, 0.30); } 100% { background: transparent; } }
+  /* 总览的户口表只给投资者自己登入时用（owner / 员工在投资者页管户口） */
+  body:not(.client-mode) #acct-section { display: none; }
   input, select {
     background: var(--card2); border: 1px solid var(--border); color: var(--text);
     padding: 8px 10px; border-radius: 6px; font-size: 14px; min-width: 100px;
@@ -438,7 +445,9 @@
   <!-- 有股票抓不到现价时，市值/未实现/总回报都会少算 —— 卡片看不出来，所以在这里明讲 -->
   <div id="d-missing-price" class="form-card" style="display:none; border-color:var(--gold); background:rgba(241,196,15,0.06); font-size:14px"></div>
 
-  <h2 class="section">股票户口 Stock Accounts</h2>
+  <!-- 投资者自己登入时用的「我的股票户口」（V3-14 起 owner / 员工改在投资者页管户口，这一区对他们隐藏） -->
+  <div id="acct-section">
+  <h2 class="section">我的股票户口 My Accounts</h2>
   <div class="form-card">
     <h3 id="a-form-title">添加股票户口 Add Account</h3>
     <div class="form-row acct-row">
@@ -447,11 +456,11 @@
       <div class="field"><label>券商 Broker <span style="color:var(--gold)">*</span></label>
         <select id="a-broker" onchange="toggleBrokerOther()"></select>
       </div>
-      <div class="field" id="f-broker-other" style="display:none"><label>券商名称（自己填） <span style="color:var(--gold)">*</span></label>
+      <div class="field" id="f-a-broker-other" style="display:none"><label>券商名称（自己填） <span style="color:var(--gold)">*</span></label>
         <input type="text" id="a-broker-other" placeholder="如 Phillip Capital">
       </div>
       <div class="field"><label>账户号码 Account No. <span style="color:var(--gold)">*</span></label>
-        <input type="text" id="a-accountno" placeholder="如 3NG20945"></div>
+        <input type="text" id="a-accountno" placeholder="如 3AB1234"></div>
       <div class="field"><label>户口种类 Account Type</label>
         <input type="text" id="a-accttype" placeholder="如 CTA 3 / Cash / Margin">
       </div>
@@ -483,6 +492,7 @@
       <tbody id="a-body"></tbody>
     </table>
   </div>
+  </div>
 
   <h2 class="section">各投资者摘要 Investor Summary</h2>
   <div class="table-wrap">
@@ -505,17 +515,52 @@
 <div class="tab" id="tab-clients">
   <div class="form-card">
     <h3 id="c-form-title">添加投资者 Add Investor</h3>
-    <div class="form-row">
-      <div class="field"><label>编号 Code（可空）</label><input type="text" id="c-code" placeholder="如 3TA5182" style="min-width:110px;text-transform:uppercase"></div>
-      <div class="field"><label>姓名 Name</label><input type="text" id="c-name" placeholder="投资者姓名"></div>
-      <div class="field"><label>投资者 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="investor@gmail.com" style="min-width:200px"></div>
+    <!-- 一张表单四种用法（V3-14）：加新顾客（人 + 第一个户口）/ 改人 / 给某人加户口 / 改户口。投资者是谁由那一行决定，不给选，不会挂错人 -->
+    <div class="form-row acct-row" id="inv-person-row">
+      <div class="field"><label>编号 Code（空着就用户口号码）</label><input type="text" id="c-code" placeholder="如 3AB1234" style="min-width:110px;text-transform:uppercase"></div>
+      <div class="field"><label>姓名 Name <span style="color:var(--gold)">*</span></label><input type="text" id="c-name" placeholder="投资者姓名"></div>
       <div class="field"><label>手机号码 Phone</label><input type="tel" id="c-phone" placeholder="012-345 6789" style="min-width:140px"></div>
-      <button class="action" id="c-save-btn" onclick="saveClient()">添加</button>
+      <div class="field"><label>投资者 Gmail（给他登入用，可空）</label><input type="email" id="c-email" placeholder="investor@gmail.com" style="min-width:200px"></div>
+    </div>
+    <div id="inv-acct-block">
+      <p class="hint" id="inv-acct-head" style="margin:14px 0 6px"></p>
+      <div class="form-row acct-row">
+        <div class="field"><label>券商 Broker <span style="color:var(--gold)">*</span></label>
+          <select id="n-broker" onchange="toggleBrokerOther('n')"></select>
+        </div>
+        <div class="field" id="f-n-broker-other" style="display:none"><label>券商名称（自己填） <span style="color:var(--gold)">*</span></label>
+          <input type="text" id="n-broker-other" placeholder="如 Phillip Capital">
+        </div>
+        <div class="field"><label>户口号码 Account No. <span style="color:var(--gold)">*</span></label>
+          <input type="text" id="n-accountno" placeholder="如 3AB1234"></div>
+        <div class="field"><label>户口种类 Account Type</label>
+          <input type="text" id="n-accttype" placeholder="如 CTA 3 / Cash / Margin">
+        </div>
+        <div class="field"><label>Brokerage 模式</label>
+          <select id="n-mode" onchange="toggleAcctRateFields('n')">
+            <option value="tiered">分层 Tiered（按 RM100K）</option>
+            <option value="flat">Flat Rate（统一）</option>
+          </select>
+        </div>
+        <div class="field" id="f-n-rate-below"><label>&lt; RM100K (%) <span style="color:var(--gold)">*</span></label><input type="number" step="any" id="n-rate-below" placeholder="必填，例 0.42"></div>
+        <div class="field" id="f-n-rate-above"><label>≥ RM100K (%) <span style="color:var(--gold)">*</span></label><input type="number" step="any" id="n-rate-above" placeholder="必填，例 0.21"></div>
+        <div class="field" id="f-n-rate-flat" style="display:none"><label>Flat Rate (%) <span style="color:var(--gold)">*</span></label><input type="number" step="any" id="n-rate-flat" placeholder="必填，例 0.18"></div>
+        <div class="field"><label>最低 Brokerage (RM)</label><input type="number" step="any" id="n-min" placeholder="如 8" value="8"></div>
+        <div class="field"><label>成本法 Cost Method</label>
+          <select id="n-costmethod">
+            <option value="average">Average（平均成本）</option>
+            <option value="fifo">FIFO（先进先出）</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="form-row" style="margin-top:12px">
+      <button class="action" id="c-save-btn" onclick="saveClient()">添加投资者 + 户口</button>
       <button class="action ghost" id="c-cancel-btn" onclick="cancelEditClient()" style="display:none">取消</button>
     </div>
     <p class="net-preview" id="c-result" style="display:none"></p>
-    <p class="hint"><b>账户号码、券商、户口种类、费率都在【总览】页那张股票户口表 —— 一个人可以有好几个户口，每个收费不同。</b><span style="display:none">真正算钱是看「总览」页那张股票户口表 —— 他有几个户口就有几组收费，要改去那边改。<br>
-    分层 Tiered：马来西亚标准收法，contract gross ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）。Flat Rate：给 support 你的投资者，不管金额统一一个 rate（如 0.18%）。<br>成本法：Average（平均成本）或 FIFO（先进先出）。两种都会先做 Intraday（同股同日买卖）配对，剩下的过夜持仓才用所选算法。</span></p>
+    <p class="hint"><span style="color:var(--gold)">*</span> 必填。<b>新顾客：人和第一个户口一起填、一起存</b>（有一格不对，两样都不存）。旧顾客要再开户口：在下面他那一行按「＋ 加户口」；改户口按那个户口的「编辑」。<br>
+    券商找不到才选「其他」自己填。每个户口的收费、成本法分开设定 —— 记交易时选哪个户口，就照那个户口算。分层 Tiered：成交额 ≥ RM100K 用低 rate，&lt; RM100K 用高 rate（如 0.21% / 0.42%）；Flat：不管金额统一一个 rate。</p>
   </div>
 
   <!-- 自助注册但一笔记录都没有 = 很可能是既有客户重复注册（他原本那份在另一行） -->
@@ -535,7 +580,7 @@
 
   <div class="table-wrap">
     <table>
-      <thead><tr><th>编号 Code</th><th>姓名</th><th>Gmail（投资者登入）</th><th>电话</th><th>股票户口</th><th class="num">交易笔数</th><th></th></tr></thead>
+      <thead><tr><th>编号 Code</th><th>姓名 / 户口</th><th>Gmail（投资者登入）</th><th>电话</th><th>收费</th><th class="num">交易笔数</th><th></th></tr></thead>
       <tbody id="c-body"></tbody>
     </table>
   </div>
@@ -2203,6 +2248,7 @@ function renderAll() {
       : "成本按户口分开算（点券商那一行可以折叠）";
   }
   fillBrokerSelect();
+  fillBrokerSelect("n");
   fillAccountSelects();
   renderAccountsTable();
 
@@ -2215,15 +2261,36 @@ function renderAll() {
   db.transactions.forEach(t => txCount[t.clientId] = (txCount[t.clientId] || 0) + 1);
   const cBody = document.getElementById("c-body");
   let cBodyHtml = db.clients.length ? "" : `<tr><td class="empty" colspan="7">还没有投资者，先在上面添加</td></tr>`;
+  const acctTx = {};
+  db.transactions.forEach(t => acctTx[t.accountId] = (acctTx[t.accountId] || 0) + 1);
   for (const c of db.clients) {
+    const accts = accountsForClient(c.id);
     cBodyHtml += `<tr><td><b>${c.code || "-"}</b></td><td><b>${c.name}</b></td><td>${c.email || "-"}</td><td>${c.phone || "-"}</td>
-      <td>${accountsForClient(c.id).map(a => `<span class="acct-tag" title="${acctLabel(a)}">${acctShort(a)}</span>`).join(" ") || `<span class="hint">未设定</span>`}</td>
+      <td>${accts.length ? `<span class="hint">${accts.length} 个户口</span>` : `<span class="hint" style="color:var(--gold)">还没有户口</span>`}</td>
       <td class="num">${txCount[c.id] || 0}</td>
-      <td><button class="action small ghost" onclick="editClient('${c.id}')">编辑</button>
+      <td style="white-space:nowrap"><button class="action small ghost" onclick="editClient('${c.id}')">编辑</button>
+          <button class="action small ghost" onclick="openAddAccount('${c.id}')">＋ 加户口</button>
           ${looksDuplicate(c) ? `<button class="action small" style="background:var(--gold);color:#1a1a1a" onclick="startMerge('${c.id}')" title="他可能是既有客户重复注册 —— 并回他原本那一位">🔗 合并</button>` : ""}
           <button class="action danger small" onclick="delClient('${c.id}')">删除</button></td></tr>`;
+    // 他的户口一个一行，就在他名字底下（以前在总览另一张表、新的排最底，加了看不到）
+    for (const a of accts) {
+      const incomplete = !String(a.broker || "").trim() || !String(a.accountNo || "").trim();
+      cBodyHtml += `<tr class="acct-sub${a.id === flashAcctId ? " flash" : ""}" id="acctrow-${a.id}"><td></td>
+        <td colspan="3" style="padding-left:18px">🏦 <span class="acct-tag">${acctLabel(a)}</span>${incomplete ? ` <span class="hint" style="color:var(--gold)">← 资料不全</span>` : ""}</td>
+        <td>${rateLabel(a)} · 最低 ${fmt(a.minBrokerage || 0)} · ${a.costMethod === "fifo" ? "FIFO" : "Average"}</td>
+        <td class="num">${acctTx[a.id] || 0}</td>
+        <td style="white-space:nowrap">${incomplete
+          ? `<button class="action small" style="background:var(--gold);color:#1a1a1a" onclick="openEditAccount('${a.id}')">⚠️ 补资料</button>`
+          : `<button class="action small ghost" onclick="openEditAccount('${a.id}')">编辑</button>`}
+          <button class="action danger small" onclick="delAccount('${a.id}')">删除</button></td></tr>`;
+    }
   }
   cBody.innerHTML = cBodyHtml; // 整串组好再一次放进去（+= 每加一行都会把整张表重新解析一次）
+  if (flashAcctId) {   // 刚加 / 刚改的户口：滑过去给他看（那行会亮一下）
+    const row = document.getElementById("acctrow-" + flashAcctId);
+    flashAcctId = null;
+    if (row && document.getElementById("tab-clients").classList.contains("active")) setTimeout(() => row.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+  }
   // 顶上提醒：有人自助注册了却一笔记录都没有，很可能是旧客户认不出自己
   const dupWarn = document.getElementById("dup-warn");
   const suspects = db.clients.filter(looksDuplicate);
@@ -2659,19 +2726,20 @@ function renderStaffTable() {
 
 // ---------- 股票户口 CRUD（投资者自己也能开，费率他自己填）----------
 let editingAccountId = null;
-function toggleAcctRateFields() {
-  const tiered = document.getElementById("a-mode").value === "tiered";
-  document.getElementById("f-a-rate-below").style.display = tiered ? "" : "none";
-  document.getElementById("f-a-rate-above").style.display = tiered ? "" : "none";
-  document.getElementById("f-a-rate-flat").style.display = tiered ? "none" : "";
+// 两份户口表单：总览的 a-（投资者自己登入时）、投资者页的 n-（owner / 员工）。格子一样、规矩一样
+function toggleAcctRateFields(p = "a") {
+  const tiered = document.getElementById(p + "-mode").value === "tiered";
+  document.getElementById(`f-${p}-rate-below`).style.display = tiered ? "" : "none";
+  document.getElementById(`f-${p}-rate-above`).style.display = tiered ? "" : "none";
+  document.getElementById(`f-${p}-rate-flat`).style.display = tiered ? "none" : "";
 }
 // 券商下拉选「其他」才出现自由输入栏
-function toggleBrokerOther() {
-  const other = document.getElementById("a-broker").value === "__other";
-  document.getElementById("f-broker-other").style.display = other ? "" : "none";
+function toggleBrokerOther(p = "a") {
+  const other = document.getElementById(p + "-broker").value === "__other";
+  document.getElementById(`f-${p}-broker-other`).style.display = other ? "" : "none";
 }
-function fillBrokerSelect() {
-  const sel = document.getElementById("a-broker");
+function fillBrokerSelect(p = "a") {
+  const sel = document.getElementById(p + "-broker");
   if (!sel) return;
   const prev = sel.value;
   // 他自己填过的券商也要在清单里（只属于他自己，不回流给别人）
@@ -2680,37 +2748,67 @@ function fillBrokerSelect() {
   sel.innerHTML = list.map(b => `<option value="${b}">${b}</option>`).join("")
     + `<option value="__other">其他 Others…</option>`;
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
-  toggleBrokerOther();
+  toggleBrokerOther(p);
+}
+function readAcctForm(p) {
+  const g = id => document.getElementById(`${p}-${id}`);
+  const brokerSel = g("broker").value;
+  return { brokerSel, broker: (brokerSel === "__other" ? g("broker-other").value : brokerSel).trim(),
+    accountNo: g("accountno").value.trim(), acctType: g("accttype").value.trim(), mode: g("mode").value,
+    rateFlat: parseFloat(g("rate-flat").value), rateBelow: parseFloat(g("rate-below").value), rateAbove: parseFloat(g("rate-above").value),
+    min: parseFloat(g("min").value) || 0, costMethod: g("costmethod").value };
+}
+// 户口的检查（两份表单共用，一条都不准放宽）：过了回传要存的资料；不过就 fail(那一格, 讯息)、回传 null
+function checkAcctForm(p, v, clientId, editingId, fail) {
+  if (!v.broker) { fail(v.brokerSel === "__other" ? `${p}-broker-other` : `${p}-broker`, "请选券商（或选「其他」自己填）"); return null; }
+  if (!v.accountNo) { fail(`${p}-accountno`, "请填账户号码 —— 同一间券商底下靠它分辨不同户口"); return null; }
+  if (v.mode === "flat" && !(v.rateFlat >= 0)) { fail(`${p}-rate-flat`, "请填 flat rate"); return null; }
+  if (v.mode === "tiered" && (!(v.rateBelow >= 0) || !(v.rateAbove >= 0))) { fail(!(v.rateBelow >= 0) ? `${p}-rate-below` : `${p}-rate-above`, "请填两个 rate：< RM100K 和 ≥ RM100K"); return null; }
+  // 同一位投资者底下，「券商 + 账号」不能重复 —— 那是一个交易户口的唯一身份
+  const wantKey = `${v.broker.toLowerCase()}|${v.accountNo.toLowerCase()}`;
+  if (clientId && db.accounts.some(a => a.clientId === clientId && a.id !== editingId && acctKey(a) === wantKey)) {
+    fail(`${p}-accountno`, `这位投资者在「${v.broker}」已经有账号 ${v.accountNo} 的户口了`); return null;
+  }
+  return { clientId, broker: v.broker, accountNo: v.accountNo, acctType: v.acctType, name: "",   // name 退役：显示改用 broker + acctType + accountNo
+    brokerageMode: v.mode, minBrokerage: v.min, costMethod: v.costMethod,
+    rateFlat: v.mode === "flat" ? v.rateFlat : undefined,
+    rateBelow: v.mode === "tiered" ? v.rateBelow : undefined,
+    rateAbove: v.mode === "tiered" ? v.rateAbove : undefined };
+}
+function fillAcctForm(p, a) {
+  const g = id => document.getElementById(`${p}-${id}`);
+  fillBrokerSelect(p);
+  const b = a.broker || a.name || "";
+  const sel = g("broker");
+  if (b && ![...sel.options].some(o => o.value === b)) sel.insertBefore(new Option(b, b), sel.lastChild);   // 自己填过的券商
+  sel.value = b || sel.value;
+  toggleBrokerOther(p);
+  g("broker-other").value = "";
+  g("accountno").value = a.accountNo || "";
+  g("accttype").value = a.acctType || "";
+  g("mode").value = a.brokerageMode || "flat";
+  g("rate-flat").value = a.rateFlat ?? "";
+  g("rate-below").value = a.rateBelow ?? "";
+  g("rate-above").value = a.rateAbove ?? "";
+  g("min").value = a.minBrokerage || 0;
+  g("costmethod").value = a.costMethod === "fifo" ? "fifo" : "average";
+  toggleAcctRateFields(p);
+}
+function resetAcctForm(p) {   // 费率一律清空：不准沿用上一位的费率（收费要他自己决定）
+  ["accountno", "accttype", "broker-other", "rate-flat", "rate-below", "rate-above"].forEach(id => document.getElementById(`${p}-${id}`).value = "");
+  document.getElementById(`${p}-min`).value = 8;
+  document.getElementById(`${p}-mode`).value = "tiered";
+  document.getElementById(`${p}-costmethod`).value = "average";
+  toggleBrokerOther(p);
+  toggleAcctRateFields(p);
 }
 
 function saveAccount() {
   const clientId = document.getElementById("a-client").value;
-  const brokerSel = document.getElementById("a-broker").value;
-  const broker = (brokerSel === "__other"
-    ? document.getElementById("a-broker-other").value : brokerSel).trim();
-  const accountNo = document.getElementById("a-accountno").value.trim();
-  const acctType = document.getElementById("a-accttype").value.trim();
-  const name = "";   // 退役：显示改用 broker + acctType + accountNo 组出来
-  const mode = document.getElementById("a-mode").value;
-  const rateFlat = parseFloat(document.getElementById("a-rate-flat").value);
-  const rateBelow = parseFloat(document.getElementById("a-rate-below").value);
-  const rateAbove = parseFloat(document.getElementById("a-rate-above").value);
-  const min = parseFloat(document.getElementById("a-min").value) || 0;
-  const costMethod = document.getElementById("a-costmethod").value;
   clearFieldErr();
   if (!clientId || !clientById(clientId)) { acctFail("a-client", "请先选投资者"); return; }
-  if (!broker) { acctFail(brokerSel === "__other" ? "a-broker-other" : "a-broker", "请选券商（或选「其他」自己填）"); return; }
-  if (!accountNo) { acctFail("a-accountno", "请填账户号码 —— 同一间券商底下靠它分辨不同户口"); return; }
-  if (mode === "flat" && !(rateFlat >= 0)) { acctFail("a-rate-flat", "请填 flat rate"); return; }
-  if (mode === "tiered" && (!(rateBelow >= 0) || !(rateAbove >= 0))) { acctFail(!(rateBelow >= 0) ? "a-rate-below" : "a-rate-above", "请填两个 rate：< RM100K 和 ≥ RM100K"); return; }
-  // 同一位投资者底下，「券商 + 账号」不能重复 —— 那是一个交易户口的唯一身份
-  const wantKey = `${broker.trim().toLowerCase()}|${accountNo.trim().toLowerCase()}`;
-  const dupe = db.accounts.some(a => a.clientId === clientId && a.id !== editingAccountId && acctKey(a) === wantKey);
-  if (dupe) { acctFail("a-accountno", `这位投资者在「${broker}」已经有账号 ${accountNo} 的户口了`); return; }
-  const data = { clientId, broker, accountNo, acctType, name, brokerageMode: mode, minBrokerage: min, costMethod,
-    rateFlat: mode === "flat" ? rateFlat : undefined,
-    rateBelow: mode === "tiered" ? rateBelow : undefined,
-    rateAbove: mode === "tiered" ? rateAbove : undefined };
+  const data = checkAcctForm("a", readAcctForm("a"), clientId, editingAccountId, acctFail);
+  if (!data) return;
   const wasEdit = !!editingAccountId;
   if (editingAccountId) {
     const a = accountById(editingAccountId);
@@ -2725,7 +2823,7 @@ function saveAccount() {
   if (fastShown) return;
   if (wasEdit) cancelEditAccount();
   else ["a-accountno", "a-accttype", "a-broker-other"].forEach(id => document.getElementById(id).value = "");
-  setAcctResult(`${wasEdit ? "已保存" : "已添加"}：${clientLabel(clientById(clientId))} · ${acctLabel(data)}（${rateLabel(data)}，最低 RM ${min}，${costMethod === "fifo" ? "FIFO" : "Average"}）`, true);
+  setAcctResult(`${wasEdit ? "已保存" : "已添加"}：${clientLabel(clientById(clientId))} · ${acctSummary(data)}`, true);
 }
 // 户口表单的结果讯息：以前加成功什么都不显示，只是号码那格变空 —— 分不出「成功了」还是「没反应」（11/10）
 function setAcctResult(msg, ok) {
@@ -2742,6 +2840,7 @@ function acctFail(id, msg) {
   const el = document.getElementById(id);
   if (el) { el.classList.add("field-err"); el.focus(); }
 }
+function acctSummary(a) { return `${acctLabel(a)}（${rateLabel(a)}，最低 RM ${a.minBrokerage || 0}，${a.costMethod === "fifo" ? "FIFO" : "Average"}）`; }
 function clearFieldErr() { document.querySelectorAll(".field-err").forEach(el => el.classList.remove("field-err")); }
 ["input", "change"].forEach(ev => document.addEventListener(ev, e => { if (e.target && e.target.classList) e.target.classList.remove("field-err"); }));
 function editAccount(id) {
@@ -2749,23 +2848,7 @@ function editAccount(id) {
   if (!a) return;
   editingAccountId = id;
   document.getElementById("a-client").value = a.clientId;
-  fillBrokerSelect();
-  const b = a.broker || a.name || "";
-  const sel = document.getElementById("a-broker");
-  if (b && ![...sel.options].some(o => o.value === b)) {          // 自己填过的券商
-    sel.insertBefore(new Option(b, b), sel.lastChild);
-  }
-  sel.value = b || sel.value;
-  toggleBrokerOther();
-  document.getElementById("a-accountno").value = a.accountNo || "";
-  document.getElementById("a-accttype").value = a.acctType || "";
-  document.getElementById("a-mode").value = a.brokerageMode || "flat";
-  document.getElementById("a-rate-flat").value = a.rateFlat ?? "";
-  document.getElementById("a-rate-below").value = a.rateBelow ?? "";
-  document.getElementById("a-rate-above").value = a.rateAbove ?? "";
-  document.getElementById("a-min").value = a.minBrokerage || 0;
-  document.getElementById("a-costmethod").value = a.costMethod === "fifo" ? "fifo" : "average";
-  toggleAcctRateFields();
+  fillAcctForm("a", a);
   clearFieldErr(); setAcctResult("");
   document.getElementById("a-form-title").textContent = "编辑户口：" + acctLabel(a);
   document.getElementById("a-save-btn").textContent = "保存";
@@ -2791,10 +2874,11 @@ function delAccount(id) {
   const used = db.transactions.filter(t => t.accountId === id).length
              + db.dividends.filter(d => d.accountId === id).length
              + db.cashflows.filter(cf => cf.accountId === id).length;
-  if (used) { alert(`「${a.name}」底下还有 ${used} 笔记录，不能删。要删的话先把那些记录改到别的户口。`); return; }
-  if (!confirm(`删除户口「${a.name}」？`)) return;
+  if (used) { alert(`「${acctLabel(a)}」底下还有 ${used} 笔记录，不能删。要删的话先把那些记录改到别的户口。`); return; }
+  if (!confirm(`删除户口「${acctLabel(a)}」？\n（${clientLabel(clientById(a.clientId))}）`)) return;
   db.accounts = db.accounts.filter(x => x.id !== id);
   if (editingAccountId === id) cancelEditAccount();
+  if (invAcctId === id) cancelEditClient();
   save();
 }
 function renderAccountsTable() {
@@ -2822,8 +2906,8 @@ function fillAccountSelects() {
     if (!sel) continue;
     const prev = sel.value;
     const list = accountsForClient(cid);
-    sel.innerHTML = list.length ? list.map(a => `<option value="${a.id}">${a.name}</option>`).join("")
-                                : `<option value="">（请先在总览加户口）</option>`;
+    sel.innerHTML = list.length ? list.map(a => `<option value="${a.id}">${acctLabel(a)}</option>`).join("")
+                                : `<option value="">${viewerRole === "client" ? "（请先在总览加户口）" : "（请先在投资者页按「＋ 加户口」）"}</option>`;
     if (list.some(a => a.id === prev)) sel.value = prev;
   }
 }
@@ -2947,69 +3031,145 @@ function doMergeClient() {
   save();
 }
 
-// 8/27 起费率、户口种类都搬到股票户口（总览那张表），投资者表单只剩 编号 / 姓名 / Gmail / 电话。
-// ⚠️ 那次拿掉格子时程式还在读它们 -> 「添加」「编辑」一按就出错、什么都不显示，坏了两个半月才发现。
-//    所以这里只读画面上真的有的格子；编辑只改这四项，其他（旧的费率那组、mirrorId…）原样留着。
-//    出错一定要跳讯息，不准再静静不动。
+// 投资者页表单（V3-14）：一张表单四种用法 —— 投资者是谁由按的那一行决定，不给选。
+//   newClient  加新顾客：人 + 第一个户口，两样都检查过才一起存（以前先存人、系统开空白户口，再去总览补 -> 留下 5 个空白户口）
+//   editClient 改人：只改 编号 / 姓名 / Gmail / 电话，其他（旧费率那组、mirrorId…）原样留着（V3-11）
+//   addAcct    给某位加户口（他那一行的「＋ 加户口」）
+//   editAcct   改户口（户口那一行的「编辑」/「⚠️ 补资料」）
+// 出错一定跳讯息，不准静静不动（V3-11）。
+let invMode = "newClient", invAcctId = null, invAcctClient = null;
+let flashAcctId = null;   // 刚加 / 刚改的户口：表格重画後亮一下、滑过去
 function clientFormFail(what, e) {
   console.error(e);
   failClient(`${what}失败（程式出错：${(e && e.message) || e}）。这次没有存进去，请截图给我。`);
 }
-function saveClient() {
-  try { saveClientNow(); } catch (e) { clientFormFail(editingClientId ? "保存投资者" : "添加投资者", e); }
+function invFail(id, msg) {   // 挡下来：讯息 + 那一格框红、光标放进去
+  failClient(msg);
+  const el = document.getElementById(id);
+  if (el) { el.classList.add("field-err"); el.focus(); }
 }
-function saveClientNow() {
+function setInvMode(mode, title) {
+  invMode = mode;
+  document.getElementById("inv-person-row").style.display = (mode === "newClient" || mode === "editClient") ? "" : "none";
+  document.getElementById("inv-acct-block").style.display = mode === "editClient" ? "none" : "";
+  document.getElementById("inv-acct-head").innerHTML = mode === "newClient"
+    ? "<b>第一个股票户口</b>（以後要再开户口，在他那一行按「＋ 加户口」）" : "<b>股票户口</b>";
+  document.getElementById("c-form-title").textContent = title;
+  document.getElementById("c-save-btn").textContent = { newClient: "添加投资者 + 户口", editClient: "保存", addAcct: "加这个户口", editAcct: "保存户口" }[mode];
+  document.getElementById("c-cancel-btn").style.display = mode === "newClient" ? "none" : "";
+}
+function saveClient() {
+  const what = { newClient: "添加投资者", editClient: "保存投资者", addAcct: "加户口", editAcct: "保存户口" }[invMode];
+  try {
+    clearFieldErr();
+    if (invMode === "editClient") saveClientNow();
+    else if (invMode === "newClient") saveNewInvestor();
+    else saveInvAccount();
+  } catch (e) { clientFormFail(what, e); }
+}
+// 人那四格的检查（新增、编辑共用）：过了回传资料；不过就框红 + 讯息、回传 null
+function checkPerson(excludeId) {
   const code = document.getElementById("c-code").value.trim().toUpperCase();
   const name = document.getElementById("c-name").value.trim();
   const email = document.getElementById("c-email").value.trim().toLowerCase();
   const phone = document.getElementById("c-phone").value.trim();
-  if (!name) { failClient("请填姓名"); return; }
+  if (!name) { invFail("c-name", "请填姓名"); return null; }
   // 第二防线：email / 电话不能跟别的投资者重复
   const normPhone = v => { let d = String(v || "").replace(/[^0-9]/g, ""); if (d.startsWith("60") && d.length >= 11) d = "0" + d.slice(2); return d; };
-  const others = db.clients.filter(c => c.id !== editingClientId);
-  if (email && others.some(c => (c.email || "").toLowerCase() === email)) { failClient(`这个 Gmail 已经登记给别的投资者了：【${others.find(c => (c.email || "").toLowerCase() === email).name}】。同一个 Gmail 不能属于两位投资者。如果那是同一个人重复注册，请在下面那一行按【🔗 合并】。`); return; }
-  if (phone && others.some(c => normPhone(c.phone) && normPhone(c.phone) === normPhone(phone))) { failClient(`这个电话号码已经登记给别的投资者了：【${others.find(c => normPhone(c.phone) === normPhone(phone)).name}】。如果那是同一个人重复注册，请在下面那一行按【🔗 合并】。`); return; }
-  const data = { code, name, email, phone };   // 只改这四项 —— clientId、户口、交易全部不动
-  let note = "";
-  if (editingClientId) {
-    const c = clientById(editingClientId);
-    if (!c) { failClient("找不到这位投资者（可能刚被别处删除了），请重新整理再试"); return; }
-    Object.assign(c, data);
-    cancelEditClient();
-  } else {
-    // 跟自助注册一样：先给标准收费的空白户口，不然他连交易都记不了；券商、账号、真正的费率到总览去填
-    const std = { brokerageMode: "tiered", rateBelow: 0.42, rateAbove: 0.21, minBrokerage: 8, costMethod: "average" };
-    const nc = { id: uid(), ...data, account: "", mirrorId: "", ...std };
-    db.clients.push(nc);
-    db.accounts.push({ id: uid(), clientId: nc.id, broker: "", accountNo: "", acctType: "", name: "", ...std });
-    ["c-code", "c-name", "c-email", "c-phone"].forEach(id => document.getElementById(id).value = "");
-    note = " · 已先开一个空白股票户口（标准收费 0.42% / 0.21%，最低 RM 8）—— 请到「总览」的股票户口表按「编辑」，填上券商、账号和他真正的收费";
-  }
-  setClientResult(`已保存：${code ? `[${code}] ` : ""}${name}` + (email ? `（Gmail ${email}）` : "") + (phone ? `（电话 ${phone}）` : "") + note, true);
-  save();
+  const others = db.clients.filter(c => c.id !== excludeId);
+  if (email && others.some(c => (c.email || "").toLowerCase() === email)) { invFail("c-email", `这个 Gmail 已经登记给别的投资者了：【${others.find(c => (c.email || "").toLowerCase() === email).name}】。同一个 Gmail 不能属于两位投资者。如果那是同一个人重复注册，请在下面那一行按【🔗 合并】。`); return null; }
+  if (phone && others.some(c => normPhone(c.phone) && normPhone(c.phone) === normPhone(phone))) { invFail("c-phone", `这个电话号码已经登记给别的投资者了：【${others.find(c => normPhone(c.phone) === normPhone(phone)).name}】。如果那是同一个人重复注册，请在下面那一行按【🔗 合并】。`); return null; }
+  return { code, name, email, phone };
 }
+function saveClientNow() {   // 改人
+  const c = clientById(editingClientId);
+  if (!c) { failClient("找不到这位投资者（可能刚被别处删除了），请重新整理再试"); return; }
+  const data = checkPerson(editingClientId);
+  if (!data) return;
+  Object.assign(c, data);   // 只改这四项 —— clientId、户口、交易全部不动
+  save();
+  if (fastShown) return;    // 被「正在同步」挡下（资料已退回、跳了提醒）：表单留着，同步完再按
+  cancelEditClient();
+  setClientResult(`已保存：${data.code ? `[${data.code}] ` : ""}${data.name}` + (data.email ? `（Gmail ${data.email}）` : "") + (data.phone ? `（电话 ${data.phone}）` : ""), true);
+}
+function saveNewInvestor() {   // 新顾客：人 + 第一个户口
+  const person = checkPerson(null);
+  if (!person) return;
+  const acct = checkAcctForm("n", readAcctForm("n"), null, null, invFail);
+  if (!acct) return;           // 户口有一格不对 -> 人也不存（不准留下没户口、或空白户口的人）
+  if (!person.code) person.code = acct.accountNo.toUpperCase();   // 编号空着 -> 用户口号码
+  const cid = uid(), aid = uid();
+  // 投资者身上那组旧费率只在户口不见时当退路（acctCfg），跟第一个户口一样
+  const legacy = { brokerageMode: acct.brokerageMode, rateFlat: acct.rateFlat, rateBelow: acct.rateBelow, rateAbove: acct.rateAbove,
+                   minBrokerage: acct.minBrokerage, costMethod: acct.costMethod };
+  db.clients.push({ id: cid, ...person, account: "", mirrorId: "", ...legacy });
+  db.accounts.push({ id: aid, ...acct, clientId: cid });
+  flashAcctId = aid;
+  save();
+  if (fastShown) return;       // 被「正在同步」挡下：两样都退回了，他打的留在表单里
+  ["c-code", "c-name", "c-email", "c-phone"].forEach(id => document.getElementById(id).value = "");
+  resetAcctForm("n");
+  setClientResult(`已添加：[${person.code}] ${person.name} · ${acctSummary(acct)}`, true);
+}
+function saveInvAccount() {    // 给某位加户口 / 改户口
+  const cid = invAcctClient;
+  if (!cid || !clientById(cid)) { failClient("找不到这位投资者（可能刚被别处删除了），请重新整理再试"); return; }
+  const editingId = invMode === "editAcct" ? invAcctId : null;
+  if (editingId && !accountById(editingId)) { failClient("找不到这个户口（可能刚被别处删除了），请重新整理再试"); return; }
+  const data = checkAcctForm("n", readAcctForm("n"), cid, editingId, invFail);
+  if (!data) return;
+  let aid = editingId;
+  if (editingId) Object.assign(accountById(editingId), data);
+  else { aid = uid(); db.accounts.push({ id: aid, ...data }); }
+  flashAcctId = aid;
+  save();
+  if (fastShown) return;
+  cancelEditClient();
+  setClientResult(`${editingId ? "已保存" : "已添加"}：${clientLabel(clientById(cid))} · ${acctSummary(data)}`, true);
+}
+function invFormIntoView() { document.getElementById("c-form-title").scrollIntoView({ behavior: "smooth", block: "center" }); }
 function editClient(id) {
   try {
     const c = clientById(id);
     if (!c) { failClient("找不到这位投资者（可能刚被别处删除了），请重新整理再试"); return; }
-    editingClientId = id;
+    editingClientId = id; invAcctId = null; invAcctClient = null;
     document.getElementById("c-code").value = c.code || "";
     document.getElementById("c-name").value = c.name || "";
     document.getElementById("c-email").value = c.email || "";
     document.getElementById("c-phone").value = c.phone || "";
-    setClientResult("");
-    document.getElementById("c-form-title").textContent = "编辑投资者：" + (c.name || "");
-    document.getElementById("c-save-btn").textContent = "保存";
-    document.getElementById("c-cancel-btn").style.display = "";
-    document.getElementById("c-form-title").scrollIntoView({ behavior: "smooth", block: "center" });
+    clearFieldErr(); setClientResult("");
+    setInvMode("editClient", "编辑投资者：" + (c.name || ""));
+    invFormIntoView();
   } catch (e) { clientFormFail("打开编辑", e); }
 }
+function openAddAccount(cid) {
+  try {
+    const c = clientById(cid);
+    if (!c) { failClient("找不到这位投资者（可能刚被别处删除了），请重新整理再试"); return; }
+    editingClientId = null; invAcctId = null; invAcctClient = cid;
+    clearFieldErr(); setClientResult("");
+    fillBrokerSelect("n"); resetAcctForm("n");
+    setInvMode("addAcct", `＋ 加户口：${clientLabel(c)}`);
+    invFormIntoView();
+  } catch (e) { clientFormFail("打开加户口", e); }
+}
+function openEditAccount(id) {
+  try {
+    const a = accountById(id);
+    if (!a) { failClient("找不到这个户口（可能刚被别处删除了），请重新整理再试"); return; }
+    editingClientId = null; invAcctId = id; invAcctClient = a.clientId;
+    clearFieldErr(); setClientResult("");
+    fillAcctForm("n", a);
+    setInvMode("editAcct", `编辑户口：${clientLabel(clientById(a.clientId))} · ${acctLabel(a)}`);
+    invFormIntoView();
+  } catch (e) { clientFormFail("打开编辑户口", e); }
+}
 function cancelEditClient() {
-  editingClientId = null;
+  editingClientId = null; invAcctId = null; invAcctClient = null;
+  clearFieldErr();
   ["c-code", "c-name", "c-email", "c-phone"].forEach(id => document.getElementById(id).value = "");
-  document.getElementById("c-form-title").textContent = "添加投资者 Add Investor";
-  document.getElementById("c-save-btn").textContent = "添加";
-  document.getElementById("c-cancel-btn").style.display = "none";
+  resetAcctForm("n");
+  setInvMode("newClient", "添加投资者 Add Investor");
 }
 function delClient(id) {
   // 不挡：删不删是 Dallen 的决定（他有 Excel 另存）。但要讲清楚会删掉什么，然後连带删干净。
@@ -3092,7 +3252,7 @@ function addTransaction() {
   const stamp = parseFloat(document.getElementById("t-stamp").value) || 0;
   const clearing = parseFloat(document.getElementById("t-clearing").value) || 0;
   if (!clientId || !clientById(clientId)) { alert("请先在「投资者」页添加投资者"); return; }
-  if (!accountId || !accountById(accountId)) { alert("请先在「总览」页给这位投资者加一个股票户口（如 APEX / CGS）"); return; }
+  if (!accountId || !accountById(accountId)) { alert(viewerRole === "client" ? "请先在「总览」的「我的股票户口」加一个户口（如 APEX / CGS）" : "这位投资者还没有股票户口 —— 请先到「投资者」页，在他那一行按「＋ 加户口」"); return; }
   if (!date || !ticker || !(qty > 0) || !(price > 0)) { alert("请填完整：日期、股票、股数、价格"); return; }
   // 类型一定要是买或卖：空类型会被 computePortfolio 当成卖出（红股行以前点 ✏️ 就会变成这样）
   if (type !== "buy" && type !== "sell") { alert("类型只能是买入或卖出"); return; }
@@ -4014,7 +4174,7 @@ function openTransfer(srcKey, pair) {
     src = { clientId, accountId, ticker };
   }
   const others = db.accounts.filter(a => a.clientId === src.clientId && a.id !== src.accountId);
-  if (!others.length) { alert("这位投资者只有一个户口。先在「总览」帮他开新户口，再来转仓。"); return; }
+  if (!others.length) { alert("这位投资者只有一个户口。先到「投资者」页，在他那一行按「＋ 加户口」开新户口，再来转仓。"); return; }
   xferEdit = pair || null; xferSrc = src;
   const p = computePortfolio().pos[posKey(src)];
   const sel = document.getElementById("xfer-to");
@@ -4997,6 +5157,7 @@ async function reloadNewVersion() {
 setTimeout(checkForUpdate, 15 * 1000);                    // 开网页 15 秒後看一次
 setInterval(checkForUpdate, 30 * 60 * 1000);              // 之後每 30 分钟
 document.addEventListener("visibilitychange", () => { if (!document.hidden) checkForUpdate(); });   // 切回这个分页时
+setInvMode("newClient", "添加投资者 Add Investor");   // 投资者页表单一开始是「加新顾客」
 if (autoRecordDividends() > 0) save(); // 开网页时用现有日历数据补记股息
 startAutoPrices(); // 打开就自动抓价（云端载入后会再抓一次最新的）
 autoRefreshIPO();
