@@ -73,6 +73,11 @@
   tr.acct-sub td { font-size: 13px; background: rgba(255, 255, 255, 0.025); }
   tr.flash td { animation: row-flash 2.6s ease-out; }
   @keyframes row-flash { 0%, 35% { background: rgba(46, 204, 113, 0.30); } 100% { background: transparent; } }
+  /* 上传 APEX 成交单（V3-15）：只有 owner 看得到 */
+  body.not-super .apex-only, body.client-mode .apex-only { display: none !important; }
+  #apex-modal .box { max-width: 1000px; }
+  #apex-body td { font-size: 13px; vertical-align: middle; }
+  #apex-body select, #apex-body input[type=text] { min-width: 0; font-size: 12.5px; padding: 3px 5px; height: auto; }
   /* 总览的户口表只给投资者自己登入时用（owner / 员工在投资者页管户口） */
   body:not(.client-mode) #acct-section { display: none; }
   input, select {
@@ -666,6 +671,14 @@
     </div>
     <p class="net-preview" id="t-preview">输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。</p>
   </div>
+  <!-- 上传 APEX 成交单（V3-15）：只有 owner 看得到；PDF 只在这台电脑读，不上传、不存档 -->
+  <div class="form-card apex-only">
+    <div class="form-row" style="align-items:center">
+      <button class="action" onclick="document.getElementById('apex-file').click()">📄 上传 APEX 成交单（CON064R）</button>
+      <input type="file" id="apex-file" accept="application/pdf,.pdf" style="display:none" onchange="apexPicked(this)">
+      <span class="hint" id="apex-status" style="margin:0">APEX 每天的「Daily Business Done By Trader/Client」。只记 Ptracker 里有的顾客，佣金照单据；先给你看、打勾才存。PDF 只在这台电脑读，不会上传。</span>
+    </div>
+  </div>
   <div class="filter-bar">
     <label>视图:</label>
     <button class="action small" id="btn-view-journal" onclick="setTxView('journal')">📃 流水</button>
@@ -786,6 +799,26 @@
     <div class="rc-btns">
       <button class="action ghost" onclick="closeTransfer()">取消</button>
       <button class="action success" id="xfer-ok" onclick="saveTransfer()">确定转仓</button>
+    </div>
+  </div>
+</div>
+
+<!-- 上传 APEX 成交单（V3-15）：先列出来给 Dallen 看，打勾才存 -->
+<div id="apex-modal" class="ic-modal" role="dialog" aria-modal="true">
+  <div class="box">
+    <h3 id="apex-title">📄 APEX 成交单</h3>
+    <p class="hint" id="apex-summary" style="margin:0 0 8px;line-height:1.6"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th>户口</th><th>投资者</th><th>买 / 卖</th><th>股票</th><th class="num">股数</th><th class="num">价格</th>
+          <th class="num">佣金</th><th class="num">印花</th><th class="num">清算</th><th>状态</th></tr></thead>
+        <tbody id="apex-body"></tbody>
+      </table>
+    </div>
+    <div id="apex-skipped" class="hint" style="margin-top:8px"></div>
+    <div class="rc-btns">
+      <button class="action ghost" onclick="closeApex()">取消</button>
+      <button class="action success" id="apex-ok" onclick="importApex()">导入打勾的 0 笔</button>
     </div>
   </div>
 </div>
@@ -4986,6 +5019,267 @@ function pfMaybeRefresh() {
   if (!tab || !tab.classList.contains("active")) return;
   clearTimeout(pfTimer);
   pfTimer = setTimeout(() => { if (tab.classList.contains("active")) pfShow(); }, 400);
+}
+
+// ---------- 上传 APEX 成交单（V3-15）----------
+// APEX 每天的「Daily Business Done By Trader/Client」（CON064R）：读出交易，只记 Ptracker 里有的顾客。
+// 佣金照单据（经纪下单比网上贵、特别费率的顾客 —— 户口只能设一个费率，手打会记错）；清算照 Ptracker 规则；
+// 印花从单据的 Net 倒算（结构性凭单 APEX 不收印花）；SST 不记（Dallen 11/24）。calcFees 一个字都没改。
+// PDF 只在浏览器里读，不上传、不存档。读到「Total By Trader」总计就停：後面是 Dallen 自己的佣金统计，不读、不显示、不存。
+// 每个小计、总计都要对得上才收（对不上 = 读错了，例如 APEX 改了格式）—— 整份拒绝，不准只导入一部分。
+const PDFJS_VER = "4.10.38";   // ⚠️ 4.2.67 以前有漏洞（CVE-2024-4367：特制的 PDF 能在网页里跑程序），不准降级；isEvalSupported 一定关掉
+let pdfjsLib = null;
+async function loadPdfJs() {   // 按了上传才载入，平常开网页不拖慢
+  if (pdfjsLib) return pdfjsLib;
+  const base = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}/`;
+  const lib = await import(base + "pdf.min.mjs");
+  lib.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.mjs";
+  return (pdfjsLib = lib);
+}
+const APEX_TRAN = /^[BS]\d{11}-\d+$/;   // B = 买、S = 卖；中间 6 位 = 交易日 yymmdd；每笔独一无二
+const apexIsNum = x => /^-?[\d,]+(\.\d+)?$/.test(x);
+const apexNum = x => Number(String(x).replace(/,/g, ""));
+async function parseCon064r(buf) {
+  const lib = await loadPdfJs();
+  let doc;
+  try { doc = await lib.getDocument({ data: buf, isEvalSupported: false }).promise; }
+  catch (e) { throw new Error("这个档案打不开，不是正常的 PDF"); }
+  // 每一页的字按高度排成一行一行（同一行的字由左到右）
+  const rows = [];
+  for (let pn = 1; pn <= doc.numPages; pn++) {
+    const tc = await (await doc.getPage(pn)).getTextContent();
+    const byY = {};
+    for (const it of tc.items) {
+      const str = String(it.str || "").trim();
+      if (!str) continue;
+      const y = Math.round(it.transform[5]);
+      (byY[y] = byY[y] || []).push({ x: it.transform[4], s: str });
+    }
+    for (const y of Object.keys(byY).map(Number).sort((a, b) => b - a)) rows.push(byY[y].sort((a, b) => a.x - b.x));
+  }
+  if (!rows.length) throw new Error("读不到文字 —— 可能是扫描档或照片。请用 APEX 系统直接下载的 PDF");
+  const flat = rows.map(r => r.map(t => t.s).join(" ")).join("\n");
+  if (!/CON064R/.test(flat) || !/Daily Business Done By Trader\/Client/i.test(flat)) throw new Error("这不是 APEX 的 CON064R 成交单（Daily Business Done By Trader/Client）");
+  const dm = flat.match(/Date Selected\s*:\s*(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2})\b/);
+  const mon = dm && ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(dm[2].toLowerCase());
+  if (!dm || mon < 0) throw new Error("找不到单据日期（Date Selected）");
+  const date = `20${dm[3]}-${String(mon + 1).padStart(2, "0")}-${String(dm[1]).padStart(2, "0")}`;
+  const trades = [], blocks = [];
+  let cur = null, block = [], grand = null;
+  for (const r of rows) {
+    const toks = r.map(t => t.s);
+    const ti = toks.findIndex(t => APEX_TRAN.test(t));
+    if (ti >= 0) {
+      if (ti > 0 && r[0].x < 50) cur = toks[0].replace(/\s+/g, "").toUpperCase();   // 每位顾客第一笔，最左边是户口号码
+      if (!cur) throw new Error("第一笔交易前面找不到户口号码，看不懂这份单据的格式");
+      const rest = toks.slice(ti + 1), nums = rest.slice(1).filter(apexIsNum).map(apexNum);
+      if (rest.length < 2 || nums.length < 5) throw new Error(`单号 ${toks[ti]} 那一行看不懂（栏位不齐）`);
+      const t = { client: cur, tran: toks[ti], type: toks[ti][0] === "B" ? "buy" : "sell", stock: rest[0],
+        qty: nums.at(-5), price: nums.at(-4), sst: nums.at(-3), net: nums.at(-2), brokerage: nums.at(-1),
+        ictr: rest.find(x => x === "B" || x === "I") || "" };   // I = 网上下单、B = 经纪下单（只是参考）
+      if (!(t.qty > 0) || !(t.price > 0) || !(t.net > 0) || t.brokerage < 0 || t.sst < 0 || !Number.isInteger(t.qty))
+        throw new Error(`单号 ${t.tran} 的数字不对（股数 / 价格 / 金额）`);
+      if (t.tran.slice(1, 7) !== date.slice(2).replace(/-/g, "")) throw new Error(`单号 ${t.tran} 的日期跟单据日期 ${date} 不一样`);
+      trades.push(t); block.push(t);
+    } else if (toks.some(t => /^Total Buy\s*:$/i.test(t))) {
+      const nums = toks.filter(apexIsNum).map(apexNum);
+      if (nums.length !== 6) throw new Error("小计那一行看不懂（栏位不齐）");
+      if (toks.some(t => /Total By/i.test(t))) { grand = nums; break; }   // 总计：後面是佣金统计，不读
+      if (!block.length) throw new Error("有一行小计上面没有交易，看不懂这份单据的格式");
+      blocks.push({ rows: block, tot: nums }); block = [];
+    }
+  }
+  if (!trades.length) throw new Error("一行交易都没有");
+  if (!grand) throw new Error("找不到最後的总计（Total By Trader），可能不是完整的单据");
+  if (block.length) throw new Error("最後几笔交易没有小计，看不懂这份单据的格式");
+  // 对总数：每位顾客的小计、全部的总计，都要跟一笔一笔加起来一样
+  const c2 = x => Math.round(x * 100);
+  const sumOf = (list, f) => list.reduce((a, t) => a + c2(f(t)), 0);
+  const agree = (list, tot) => {
+    const [tb, ts, tq, tsst, tnet, tbrk] = tot;
+    const buys = list.filter(t => t.type === "buy"), sells = list.filter(t => t.type === "sell");
+    return sumOf(buys, t => t.net) === c2(tb) && sumOf(sells, t => t.net) === c2(ts) && list.reduce((a, t) => a + t.qty, 0) === tq
+      && sumOf(list, t => t.sst) === c2(tsst) && sumOf(list, t => t.net) === c2(tnet) && sumOf(list, t => t.brokerage) === c2(tbrk);
+  };
+  if (!blocks.every(b => agree(b.rows, b.tot)) || !agree(trades, grand))
+    throw new Error("单据的小计 / 总计跟一笔一笔加起来对不上（可能 APEX 改了格式，或这份单据被改过）");
+  return { date, trades };
+}
+
+let apexState = null;   // { date, rows, skipped, names }
+function apexAcctMatches(clientNo) {
+  const norm = x => String(x || "").replace(/\s+/g, "").toUpperCase();
+  return db.accounts.filter(a => norm(a.accountNo) === norm(clientNo) && /^APEX/i.test(acctBroker(a)));
+}
+function apexKnownTicker(name) {   // 单据只有简称：Ptracker 已经有这个名字，或之前配对过
+  if (db.symbols[name] || db.transactions.some(t => t.ticker === name)) return name;
+  const pre = `apexname:${name}|`;   // settings 的值只能是数字 -> 配对放在键里：apexname:<单据名字>|<Ptracker 股票名>
+  const k = Object.keys(db.settings).find(x => x.startsWith(pre));
+  return k ? k.slice(pre.length) : null;
+}
+async function apexPicked(input) {
+  const file = input.files && input.files[0];
+  input.value = "";   // 同一份再选一次也要有反应
+  if (!file || !isSuper || viewerRole === "client") return;
+  const st = document.getElementById("apex-status");
+  st.textContent = "读取中…";
+  try { await loadPdfJs(); }
+  catch (e) { st.textContent = "⚠️ 读 PDF 的工具载不到，请检查网络再试（什么都没存）"; alert("读 PDF 的工具载不到，请检查网络再试。什么都没存。"); return; }
+  let parsed;
+  try { parsed = await parseCon064r(await file.arrayBuffer()); }
+  catch (e) { st.textContent = "⚠️ 整份不导入，什么都没存：" + e.message; alert("整份不导入，什么都没存：\n" + e.message); return; }
+  st.textContent = "";
+  const rows = [], skipped = [];
+  for (const t of parsed.trades) {
+    const m = apexAcctMatches(t.client);
+    if (!m.length) { skipped.push(t.client); continue; }   // 不是 Ptracker 的顾客：不记（只显示号码，不显示名字）
+    rows.push({ ...t, accts: m, acct: m.length === 1 ? m[0] : null });
+  }
+  apexState = { date: parsed.date, rows, skipped, total: parsed.trades.length, map: {} };
+  apexEval();
+  document.getElementById("apex-modal").classList.add("show");
+}
+// 每一笔的状态（配对股名、勾选会改变结果，所以每次都重算）
+function apexEval() {
+  const S = apexState, date = S.date, usedManual = new Set();
+  const pos = computePortfolio().pos;
+  for (const r of S.rows) {
+    r.ticker = null; r.state = ""; r.note = ""; r.manualId = null;
+    if (!r.acct) { r.state = "dupacct"; continue; }
+    r.ticker = apexKnownTicker(r.stock) || (S.map[r.stock] && S.map[r.stock].ticker) || null;
+    // 费用：佣金照单据；清算照 Ptracker 规则；印花 = 单据 Net 倒算
+    const gross = r.qty * r.price;
+    const f = calcFees(gross, r.acct);
+    r.clearing = f.clearing;
+    const stamp = r2(r.type === "buy" ? r.net - gross - r.brokerage - r.clearing - r.sst : gross - r.net - r.brokerage - r.clearing - r.sst);
+    r.feeOk = Math.abs(stamp - f.stamp) < 0.005 || Math.abs(stamp) < 0.005;   // 跟规则一样，或 0（结构性凭单免印花）
+    r.stamp = Math.abs(stamp - f.stamp) < 0.005 ? f.stamp : Math.abs(stamp) < 0.005 ? 0 : stamp;
+    if (db.transactions.some(x => x.note === `APEX ${r.tran}`)) { r.state = "done"; continue; }
+    if (!r.ticker) { r.state = "needname"; continue; }
+    const man = db.transactions.find(x => !usedManual.has(x.id) && x.accountId === r.acct.id && x.date === date && x.ticker === r.ticker
+      && x.type === r.type && x.qty === r.qty && Math.abs(x.price - r.price) < 1e-9 && !String(x.note || "").startsWith("APEX "));
+    if (man) { usedManual.add(man.id); r.state = "manual"; r.manualId = man.id; continue; }
+    r.state = r.feeOk ? "ok" : "fee";
+  }
+  // 卖出检查（跟手动记交易一样）：同一份单据同一天先买後卖的，先把买的算进去
+  const extra = {};
+  const pk = r => posKeyOf(r.acct.clientId, r.acct.id, r.ticker);
+  for (const r of S.rows) if (r.state === "ok" && r.type === "buy") extra[pk(r)] = (extra[pk(r)] || 0) + r.qty;
+  for (const r of S.rows) if ((r.state === "ok" || r.state === "fee") && r.type === "sell") {
+    const have = ((pos[pk(r)] || {}).qty || 0) + (extra[pk(r)] || 0);
+    if (r.qty > have + 1e-9) { r.state = "short"; r.note = `目前只有 ${have.toLocaleString()} 股`; }
+    else extra[pk(r)] = (extra[pk(r)] || 0) - r.qty;
+  }
+  apexRender();
+}
+const APEX_STATE_TEXT = {
+  ok: `<span class="pos">✓ 可导入</span>`,
+  done: `<span class="hint">已导入过</span>`,
+  manual: `<span class="gold">可能已手动记过</span>`,
+  needname: `<span class="gold">要配对股名</span>`,
+  short: `<span class="neg">持仓不够</span>`,
+  fee: `<span class="neg">费用对不上，请对单据</span>`,
+  dupacct: `<span class="neg">Ptracker 有两个户口是这个号码，请先整理</span>`,
+};
+function apexRender() {
+  const S = apexState;
+  const esc = x => String(x).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+  const tickers = [...new Set([...Object.keys(db.symbols), ...db.transactions.map(t => t.ticker)])].sort();
+  S.names = [...new Set(S.rows.filter(r => r.state === "needname" || (S.map[r.stock] && !apexKnownTicker(r.stock))).map(r => r.stock))];
+  let html = S.rows.length ? "" : `<tr><td class="empty" colspan="11">这份单据里没有 Ptracker 的顾客</td></tr>`;
+  S.rows.forEach((r, i) => {
+    const pickable = r.state === "ok" || r.state === "fee" || r.state === "manual";
+    const box = pickable ? `<input type="checkbox" id="apx-${i}" ${r.state === "ok" ? "checked" : ""} onchange="apexCount()">` : "";
+    let stock = esc(r.ticker || r.stock);
+    const ni = S.names.indexOf(r.stock);
+    if (ni >= 0) {   // 单据的简称 Ptracker 没有：配对一次，下次不再问
+      const m = S.map[r.stock] || {};
+      stock = `<div style="min-width:150px"><b>${esc(r.stock)}</b> →<br><select onchange="apexMapPick(${ni}, this.value)">
+          <option value="">— 选 Ptracker 的股票 —</option>
+          ${tickers.map(t => `<option value="${esc(t)}" ${m.ticker === t && !m.isNew ? "selected" : ""}>${esc(t)}</option>`).join("")}
+          <option value="__new" ${m.isNew ? "selected" : ""}>＋ 新股票（就叫 ${esc(r.stock)}）</option></select>
+          ${m.isNew ? `<input type="text" placeholder="Bursa 代码，如 5185" value="${esc(m.code || "")}" style="width:110px" onchange="apexMapCode(${ni}, this.value)">` : ""}</div>`;
+    }
+    const st = APEX_STATE_TEXT[r.state] + (r.state === "manual" ? `<br><span class="hint">打勾 = 用单据的费用更新那一笔（不会多一笔）</span>` : "")
+      + (r.note ? `<br><span class="hint">${esc(r.note)}</span>` : "");
+    html += `<tr><td>${box}</td><td>${esc(r.client)}</td><td>${r.acct ? clientLabel(clientById(r.acct.clientId)) : "-"}</td>
+      <td>${r.type === "buy" ? `<span class="badge buy">买入</span>` : `<span class="badge sell">卖出</span>`}</td><td>${stock}</td>
+      <td class="num">${r.qty.toLocaleString()}</td><td class="num">${r.price.toFixed(4)}</td>
+      <td class="num">${fmtN(r.brokerage)}</td><td class="num">${r.acct ? fmtN(r.stamp) : "-"}</td><td class="num">${r.acct ? fmtN(r.clearing) : "-"}</td><td>${st}</td></tr>`;
+  });
+  document.getElementById("apex-body").innerHTML = html;
+  document.getElementById("apex-title").textContent = `📄 APEX 成交单 · ${S.date}`;
+  const n = k => S.rows.filter(r => r.state === k).length;
+  document.getElementById("apex-summary").innerHTML = `单据共 ${S.total} 笔，其中 <b>${S.rows.length} 笔是 Ptracker 的顾客</b>`
+    + `（可导入 ${n("ok")}、已导入过 ${n("done")}、可能已手动记过 ${n("manual")}、要配对股名 ${n("needname")}、持仓不够 ${n("short")}、费用对不上 ${n("fee")}）。`
+    + `<br>佣金照单据；清算照 Ptracker 规则；印花从单据倒算；SST 不记，所以存进去的净额可能跟单据差几仙。`;
+  document.getElementById("apex-skipped").innerHTML = S.skipped.length
+    ? `<details><summary>另有 ${S.skipped.length} 笔不是 Ptracker 的顾客，已略过</summary>户口号码：${[...new Set(S.skipped)].map(esc).join("、")}</details>` : "";
+  apexCount();
+}
+function apexCount() {
+  const n = apexState.rows.filter((r, i) => { const b = document.getElementById("apx-" + i); return b && b.checked; }).length;
+  document.getElementById("apex-ok").textContent = `导入打勾的 ${n} 笔`;
+}
+function apexMapPick(ni, v) {
+  const name = apexState.names[ni];
+  if (!v) delete apexState.map[name];
+  else if (v === "__new") apexState.map[name] = { isNew: true, ticker: null, code: "" };
+  else apexState.map[name] = { ticker: v };
+  apexEval();
+}
+function apexMapCode(ni, code) {
+  const name = apexState.names[ni];
+  const c = String(code || "").trim().toUpperCase();
+  apexState.map[name] = { isNew: true, code: c, ticker: c ? name : null };   // 新股票：名字用单据的简称，代码存进 db.symbols 才抓得到价
+  apexEval();
+}
+function closeApex() { document.getElementById("apex-modal").classList.remove("show"); apexState = null; }
+function importApex() {
+  const S = apexState;
+  if (!S) return;
+  if (fastShown) { alert("正在跟云端同步最新资料（通常几秒钟），同步好再按一次。这次什么都没存。"); return; }
+  const picked = S.rows.filter((r, i) => { const b = document.getElementById("apx-" + i); return b && b.checked; });
+  if (!picked.length) { alert("没有打勾的"); return; }
+  // 再检查一次卖出够不够（只算真的要导入的：先买後卖）
+  const pos = computePortfolio().pos, extra = {};
+  const pk = r => posKeyOf(r.acct.clientId, r.acct.id, r.ticker);
+  for (const r of picked) if (r.state !== "manual" && r.type === "buy") extra[pk(r)] = (extra[pk(r)] || 0) + r.qty;
+  for (const r of picked) if (r.state !== "manual" && r.type === "sell") {
+    const have = ((pos[pk(r)] || {}).qty || 0) + (extra[pk(r)] || 0);
+    if (r.qty > have + 1e-9) { alert(`${r.client} 卖 ${r.ticker} ${r.qty.toLocaleString()} 股：持仓不够（打勾的买入算进去也只有 ${have.toLocaleString()} 股）。这次什么都没存。`); return; }
+    extra[pk(r)] = (extra[pk(r)] || 0) - r.qty;
+  }
+  let added = 0, updated = 0;
+  const touched = [], lines = [];
+  for (const r of picked) {
+    const fees = { brokerage: r.brokerage, stamp: r.stamp, clearing: r.clearing };
+    if (r.state === "manual") {
+      const x = db.transactions.find(t => t.id === r.manualId);
+      if (!x) continue;
+      Object.assign(x, fees, { note: `APEX ${r.tran}` });   // 只更新费用 + 补单号，不新增
+      updated++;
+    } else {
+      db.transactions.push({ id: uid(), clientId: r.acct.clientId, accountId: r.acct.id, date: S.date, ticker: r.ticker, type: r.type,
+        qty: r.qty, price: r.price, ...fees, createdAt: nowStamp(), note: `APEX ${r.tran}` });
+      added++;
+    }
+    touched.push({ clientId: r.acct.clientId, accountId: r.acct.id, ticker: r.ticker });
+    lines.push(`${r.type === "buy" ? "买" : "卖"} ${r.ticker} ${r.qty.toLocaleString()}`);
+  }
+  // 记住股名配对（下次不再问）；新股票的代码存进 db.symbols，不然抓不到价
+  for (const [name, m] of Object.entries(S.map)) {
+    if (!m.ticker || !picked.some(r => r.stock === name)) continue;
+    if (m.isNew) { if (m.code) db.symbols[name] = normalizeSymbol(m.code); }
+    else if (m.ticker !== name) db.settings[`apexname:${name}|${m.ticker}`] = 1;
+  }
+  save();
+  if (fastShown) return;
+  closeApex();
+  const msg = `✓ ${added ? `已导入 ${added} 笔` : ""}${added && updated ? "、" : ""}${updated ? `已更新 ${updated} 笔的费用` : ""}：${lines.join("、")}`;
+  document.getElementById("apex-status").textContent = msg;
+  document.getElementById("t-preview").textContent = msg;
+  if (!fastShown) openRecheck(touched);   // 补记的是旧日期的话，红股 / 股息可能要跟着改（V3-09）
 }
 
 // ---------- Tabs & init ----------
