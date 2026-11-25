@@ -2802,6 +2802,9 @@ function checkAcctForm(p, v, clientId, editingId, fail) {
   if (clientId && db.accounts.some(a => a.clientId === clientId && a.id !== editingId && acctKey(a) === wantKey)) {
     fail(`${p}-accountno`, `这位投资者在「${v.broker}」已经有账号 ${v.accountNo} 的户口了`); return null;
   }
+  // 同一间券商的号码也不能挂在别的投资者名下（V3-16）：上传成交单靠号码认人，两位都有就认不出是谁
+  const owner = db.accounts.find(a => a.clientId !== clientId && a.id !== editingId && acctKey(a) === wantKey);
+  if (owner) { fail(`${p}-accountno`, `这个号码已经是【${clientLabel(clientById(owner.clientId))}】在「${v.broker}」的户口了 —— 同一间券商的号码不能挂在两位投资者名下`); return null; }
   return { clientId, broker: v.broker, accountNo: v.accountNo, acctType: v.acctType, name: "",   // name 退役：显示改用 broker + acctType + accountNo
     brokerageMode: v.mode, minBrokerage: v.min, costMethod: v.costMethod,
     rateFlat: v.mode === "flat" ? v.rateFlat : undefined,
@@ -5066,12 +5069,20 @@ async function parseCon064r(buf) {
   const date = `20${dm[3]}-${String(mon + 1).padStart(2, "0")}-${String(dm[1]).padStart(2, "0")}`;
   const trades = [], blocks = [];
   let cur = null, block = [], grand = null;
+  const seenNos = new Set();
   for (const r of rows) {
     const toks = r.map(t => t.s);
     const ti = toks.findIndex(t => APEX_TRAN.test(t));
     if (ti >= 0) {
-      if (ti > 0 && r[0].x < 50) cur = toks[0].replace(/\s+/g, "").toUpperCase();   // 每位顾客第一笔，最左边是户口号码
-      if (!cur) throw new Error("第一笔交易前面找不到户口号码，看不懂这份单据的格式");
+      // 每一段（到小计为止）的第一笔交易，同一行最左边一定要读到他的户口号码（V3-16）。
+      // 以前读不到就沿用上一位：APEX 排版一动，别人的交易就算进 Ptracker 顾客的户口，小计 / 总计照样对得上，挡不到
+      const hasNo = ti > 0 && r[0].x < 50;
+      if (!block.length) {
+        if (!hasNo) throw new Error("看不出某几笔交易是哪位顾客的（户口号码跟交易不在同一行），整份不导入");
+        cur = toks[0].replace(/\s+/g, "").toUpperCase();
+        if (seenNos.has(cur)) throw new Error(`户口号码 ${cur} 出现在两段，看不懂这份单据，整份不导入`);
+        seenNos.add(cur);
+      } else if (hasNo) throw new Error("一段交易中间换了户口号码却没有小计，看不懂这份单据，整份不导入");
       const rest = toks.slice(ti + 1), nums = rest.slice(1).filter(apexIsNum).map(apexNum);
       if (rest.length < 2 || nums.length < 5) throw new Error(`单号 ${toks[ti]} 那一行看不懂（栏位不齐）`);
       const t = { client: cur, tran: toks[ti], type: toks[ti][0] === "B" ? "buy" : "sell", stock: rest[0],
@@ -5161,6 +5172,28 @@ function apexEval() {
     if (man) { usedManual.add(man.id); r.state = "manual"; r.manualId = man.id; continue; }
     r.state = r.feeOk ? "ok" : "fee";
   }
+  // V3-16：白天照成交一笔一笔手打（50,000 @ 0.57 + 12,500 @ 0.575），晚上单据合成一笔平均价（62,500 @ 0.5702）->
+  // 股数、价格都对不上，以前会当新的、预设打勾 -> 同一笔记两次。现在同户口、同日期、同股票、同买卖算一组，
+  // 只要有没单号的手打交易就预设不导入；手打的股数加起来 = 单据这一组的股数，才给「用单据取代手打的」
+  const groups = {};
+  for (const r of S.rows) if (r.state === "ok" || r.state === "fee") {
+    const gk = [r.acct.id, r.ticker, r.type].join("|");
+    (groups[gk] = groups[gk] || []).push(r);
+  }
+  for (const gk in groups) {
+    const rows = groups[gk], r0 = rows[0];
+    const hands = db.transactions.filter(x => !usedManual.has(x.id) && x.accountId === r0.acct.id && x.date === date && x.ticker === r0.ticker
+      && x.type === r0.type && !String(x.note || "").startsWith("APEX "));
+    if (!hands.length) continue;
+    const hq = hands.reduce((a, x) => a + x.qty, 0), hv = hands.reduce((a, x) => a + x.qty * x.price, 0);
+    const sq = rows.reduce((a, x) => a + x.qty, 0);
+    for (const r of rows) {
+      r.state = "hand"; r.group = gk; r.handIds = hands.map(x => x.id); r.canReplace = hq === sq;
+      r.note = `这天已经手打过这支：${hands.length} 笔、共 ${hq.toLocaleString()} 股 @ 平均 ${(hv / hq).toFixed(4)}`
+        + (rows.length > 1 ? `（单据这一组 ${rows.length} 笔、共 ${sq.toLocaleString()} 股，要一起取代）` : "")
+        + (r.canReplace ? "" : " —— 股数跟单据不一样，不能导入，请先对单据");
+    }
+  }
   // 卖出检查（跟手动记交易一样）：同一份单据同一天先买後卖的，先把买的算进去
   const extra = {};
   const pk = r => posKeyOf(r.acct.clientId, r.acct.id, r.ticker);
@@ -5176,6 +5209,7 @@ const APEX_STATE_TEXT = {
   ok: `<span class="pos">✓ 可导入</span>`,
   done: `<span class="hint">已导入过</span>`,
   manual: `<span class="gold">可能已手动记过</span>`,
+  hand: `<span class="gold">这天已经手打过这支</span>`,
   needname: `<span class="gold">要配对股名</span>`,
   short: `<span class="neg">持仓不够</span>`,
   fee: `<span class="neg">费用对不上，请对单据</span>`,
@@ -5188,7 +5222,7 @@ function apexRender() {
   S.names = [...new Set(S.rows.filter(r => r.state === "needname" || (S.map[r.stock] && !apexKnownTicker(r.stock))).map(r => r.stock))];
   let html = S.rows.length ? "" : `<tr><td class="empty" colspan="11">这份单据里没有 Ptracker 的顾客</td></tr>`;
   S.rows.forEach((r, i) => {
-    const pickable = r.state === "ok" || r.state === "fee" || r.state === "manual";
+    const pickable = r.state === "ok" || r.state === "fee" || r.state === "manual" || (r.state === "hand" && r.canReplace);
     const box = pickable ? `<input type="checkbox" id="apx-${i}" ${r.state === "ok" ? "checked" : ""} onchange="apexCount()">` : "";
     let stock = esc(r.ticker || r.stock);
     const ni = S.names.indexOf(r.stock);
@@ -5201,6 +5235,7 @@ function apexRender() {
           ${m.isNew ? `<input type="text" placeholder="Bursa 代码，如 5185" value="${esc(m.code || "")}" style="width:110px" onchange="apexMapCode(${ni}, this.value)">` : ""}</div>`;
     }
     const st = APEX_STATE_TEXT[r.state] + (r.state === "manual" ? `<br><span class="hint">打勾 = 用单据的费用更新那一笔（不会多一笔）</span>` : "")
+      + (r.state === "hand" && r.canReplace ? `<br><span class="hint">打勾 = 用单据这一笔取代手打的（删掉手打的、记单据这笔，带单号）</span>` : "")
       + (r.note ? `<br><span class="hint">${esc(r.note)}</span>` : "");
     html += `<tr><td>${box}</td><td>${esc(r.client)}</td><td>${r.acct ? clientLabel(clientById(r.acct.clientId)) : "-"}</td>
       <td>${r.type === "buy" ? `<span class="badge buy">买入</span>` : `<span class="badge sell">卖出</span>`}</td><td>${stock}</td>
@@ -5211,7 +5246,7 @@ function apexRender() {
   document.getElementById("apex-title").textContent = `📄 APEX 成交单 · ${S.date}`;
   const n = k => S.rows.filter(r => r.state === k).length;
   document.getElementById("apex-summary").innerHTML = `单据共 ${S.total} 笔，其中 <b>${S.rows.length} 笔是 Ptracker 的顾客</b>`
-    + `（可导入 ${n("ok")}、已导入过 ${n("done")}、可能已手动记过 ${n("manual")}、要配对股名 ${n("needname")}、持仓不够 ${n("short")}、费用对不上 ${n("fee")}）。`
+    + `（可导入 ${n("ok")}、已导入过 ${n("done")}、可能已手动记过 ${n("manual")}、这天已经手打过 ${n("hand")}、要配对股名 ${n("needname")}、持仓不够 ${n("short")}、费用对不上 ${n("fee")}）。`
     + `<br>佣金照单据；清算照 Ptracker 规则；印花从单据倒算；SST 不记，所以存进去的净额可能跟单据差几仙。`;
   document.getElementById("apex-skipped").innerHTML = S.skipped.length
     ? `<details><summary>另有 ${S.skipped.length} 笔不是 Ptracker 的顾客，已略过</summary>户口号码：${[...new Set(S.skipped)].map(esc).join("、")}</details>` : "";
@@ -5241,17 +5276,25 @@ function importApex() {
   if (fastShown) { alert("正在跟云端同步最新资料（通常几秒钟），同步好再按一次。这次什么都没存。"); return; }
   const picked = S.rows.filter((r, i) => { const b = document.getElementById("apx-" + i); return b && b.checked; });
   if (!picked.length) { alert("没有打勾的"); return; }
-  // 再检查一次卖出够不够（只算真的要导入的：先买後卖）
+  // 取代手打的：同一组要一起勾（只勾一半，手打的删掉了、单据只记一部分，股数就不对了）
+  for (const g of new Set(picked.filter(r => r.state === "hand").map(r => r.group))) {
+    const all = S.rows.filter(r => r.group === g && r.state === "hand");
+    if (all.some(r => !picked.includes(r))) { alert(`${all[0].client} ${all[0].ticker} 这天单据有 ${all.length} 笔，要一起取代手打的（不能只勾一部分）。这次什么都没存。`); return; }
+  }
+  // 再检查一次卖出够不够（只算真的要导入的：先买後卖；取代手打的股数一样，不影响持仓）
   const pos = computePortfolio().pos, extra = {};
   const pk = r => posKeyOf(r.acct.clientId, r.acct.id, r.ticker);
-  for (const r of picked) if (r.state !== "manual" && r.type === "buy") extra[pk(r)] = (extra[pk(r)] || 0) + r.qty;
-  for (const r of picked) if (r.state !== "manual" && r.type === "sell") {
+  for (const r of picked) if (r.state !== "manual" && r.state !== "hand" && r.type === "buy") extra[pk(r)] = (extra[pk(r)] || 0) + r.qty;
+  for (const r of picked) if (r.state !== "manual" && r.state !== "hand" && r.type === "sell") {
     const have = ((pos[pk(r)] || {}).qty || 0) + (extra[pk(r)] || 0);
     if (r.qty > have + 1e-9) { alert(`${r.client} 卖 ${r.ticker} ${r.qty.toLocaleString()} 股：持仓不够（打勾的买入算进去也只有 ${have.toLocaleString()} 股）。这次什么都没存。`); return; }
     extra[pk(r)] = (extra[pk(r)] || 0) - r.qty;
   }
-  let added = 0, updated = 0;
+  let added = 0, updated = 0, replaced = 0;
   const touched = [], lines = [];
+  // 取代：先删掉那几笔手打的（每组删一次），下面再把单据这几笔记进去
+  const dropIds = new Set(picked.filter(r => r.state === "hand").flatMap(r => r.handIds));
+  if (dropIds.size) { replaced = dropIds.size; db.transactions = db.transactions.filter(t => !dropIds.has(t.id)); }
   for (const r of picked) {
     const fees = { brokerage: r.brokerage, stamp: r.stamp, clearing: r.clearing };
     if (r.state === "manual") {
@@ -5276,7 +5319,7 @@ function importApex() {
   save();
   if (fastShown) return;
   closeApex();
-  const msg = `✓ ${added ? `已导入 ${added} 笔` : ""}${added && updated ? "、" : ""}${updated ? `已更新 ${updated} 笔的费用` : ""}：${lines.join("、")}`;
+  const msg = `✓ ${added ? `已导入 ${added} 笔` : ""}${replaced ? `（其中取代了 ${replaced} 笔手打的）` : ""}${added && updated ? "、" : ""}${updated ? `已更新 ${updated} 笔的费用` : ""}：${lines.join("、")}`;
   document.getElementById("apex-status").textContent = msg;
   document.getElementById("t-preview").textContent = msg;
   if (!fastShown) openRecheck(touched);   // 补记的是旧日期的话，红股 / 股息可能要跟着改（V3-09）
