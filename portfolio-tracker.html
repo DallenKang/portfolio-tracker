@@ -1548,10 +1548,20 @@ function buildOps(base, cur) {
       dels.push({ tab, op: "del", id: k, before: old });
     }
   }
+  // 後台一定会挡的不送（规则跟 apps-script 的 opAllowed 一样，V3-17）——送了只会被挡、跳「没有存进去」吓人：
+  //   员工（不是 super）：设定只送「键里有他管的顾客 id」的；snap:日期、费率这些全域设定只有 super 能改
+  //   投资者：股票代码只准新增，不改已有的
+  // 本机也不会去产生这些改动（员工网页不写 snap: 记号、员工不能存费率、投资者不盖已有的代码），所以不会每次存档都重算出同一批
+  const mine = (cur.clients || []).map(c => c.id);   // 员工拿到的就是他管的顾客（含这次新开的）
+  const mapOk = (tab, k, isNew) => {
+    if (viewerRole === "client") return tab === "symbols" && isNew;
+    if (isSuper || tab !== "settings") return true;
+    return k.includes(":") && mine.some(id => k.includes(id));
+  };
   for (const tab of maps) {
     const b = base[tab] || {}, c = cur[tab] || {};
-    for (const k of Object.keys(c)) if (!(k in b) || !sameMapVal(b[k], c[k])) puts.push({ tab, op: "put", key: k, value: c[k], before: k in b ? b[k] : null });
-    if (viewerRole !== "client") for (const k of Object.keys(b)) if (!(k in c)) dels.push({ tab, op: "del", key: k, before: b[k] });
+    for (const k of Object.keys(c)) if ((!(k in b) || !sameMapVal(b[k], c[k])) && mapOk(tab, k, !(k in b))) puts.push({ tab, op: "put", key: k, value: c[k], before: k in b ? b[k] : null });
+    if (viewerRole !== "client") for (const k of Object.keys(b)) if (!(k in c) && mapOk(tab, k, false)) dels.push({ tab, op: "del", key: k, before: b[k] });
   }
   const order = { clients: 0, staff: 0, accounts: 1, transactions: 2, dividends: 2, cashflows: 2, snapshots: 2, settings: 3, symbols: 3, prices: 3 };
   puts.sort((x, y) => order[x.tab] - order[y.tab]);   // 先人、再户口、再记录（新户口的记录才挂得上）
@@ -1587,13 +1597,17 @@ function opLabel(o) {
     : o.tab === "dividends" ? `${r.date || ""} ${r.ticker || ""}` : o.tab === "clients" ? (r.name || "") : o.tab === "accounts" ? acctLabel(r) : (o.key || "");
   return `${what}${who ? "（" + who + "）" : ""} ${detail}`.trim();
 }
-function conflictText(bad, ops) {
-  const why = { changed: "刚被别处改过", deleted: "刚被别处删掉了", exists: "云端已经有同一笔", duplicate_email: "Gmail 跟别的投资者重复", duplicate_phone: "电话跟别的投资者重复", no_permission: "你没有权限改这一笔" };
-  const lines = bad.slice(0, 8).map(x => {
+function conflictText(conflicts, denied, ops) {
+  const why = { changed: "刚被别处改过", deleted: "刚被别处删掉了", exists: "云端已经有同一笔", duplicate_email: "Gmail 跟别的投资者重复", duplicate_phone: "电话跟别的投资者重复",
+                no_permission: "你没有权限改", unknown_tab: "後台不认得", unknown_op: "後台不认得", no_id: "缺编号", bad_row: "资料不完整" };
+  const lines = list => list.slice(0, 8).map(x => {
     const o = ops.find(y => y.tab === x.tab && y.op === x.op && String(y.id !== undefined ? y.id : y.key) === String(x.id)) || { tab: x.tab, key: x.id };
     return `• ${opLabel(o)}：${why[x.why] || x.why}`;
-  });
-  return `有 ${bad.length} 笔没有存进去，已经载入云端最新的资料：\n\n${lines.join("\n")}${bad.length > 8 ? `\n…还有 ${bad.length - 8} 笔` : ""}\n\n请看一下最新的样子，需要的话再改一次。`;
+  }).join("\n") + (list.length > 8 ? `\n…还有 ${list.length - 8} 笔` : "");
+  const parts = [];
+  if (conflicts.length) parts.push(`【别处刚改过，没有存进去】\n${lines(conflicts)}\n请看一下最新的样子，需要的话再改一次。`);
+  if (denied.length) parts.push(`【你没有权限改，没有存进去】\n${lines(denied)}\n这几笔要请 Dallen 改。`);
+  return `有 ${conflicts.length + denied.length} 笔没有存进去，已经载入云端最新的资料：\n\n${parts.join("\n\n")}`;
 }
 async function pushCloud(silent, manual) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
@@ -1636,15 +1650,21 @@ async function pushCloud(silent, manual) {
     if (!j.opsOk) { backendTooOld = true; throw new Error("云端後台还是旧版（没有逐笔存档），这次没有存进去 —— 资料还在这台电脑上，後台更新後会自动补存"); }
     backendTooOld = false;
     busyRetries = 0; busyRetryPending = false;
-    const bad = [...(j.conflicts || []), ...(j.denied || [])];
-    applyToBase(base, ops, bad);
+    const conflicts = j.conflicts || [], denied = j.denied || [];
+    applyToBase(base, ops, [...conflicts, ...denied]);
     pendingRetry = false; // 存成功了，没有欠着的
     lastCloudOkAt = Date.now();
-    if (bad.length) {
-      // 同一笔被两边改：不默默以後到的为准 —— 载入云端最新的，告诉他哪几笔没存
-      setCloudStatus(`⚠️ 有 ${bad.length} 笔没存进去（别处刚改过同一笔），已载入云端最新的`);
+    // 没有权限的分两种：他改的资料（交易、户口…）要讲；系统自己记的设定 / 代码 / 价格被挡，只写状态列，不跳窗吓人（V3-17）
+    const deniedRows = denied.filter(x => !SYNC_MAPS.includes(x.tab)), deniedMaps = denied.filter(x => SYNC_MAPS.includes(x.tab));
+    const okCount = ops.length - conflicts.length - denied.length;
+    if (conflicts.length || deniedRows.length) {
+      // 同一笔被两边改：不默默以後到的为准 —— 载入云端最新的，告诉他哪几笔、为什么
+      const why = [conflicts.length ? `${conflicts.length} 笔别处刚改过` : "", denied.length ? `${denied.length} 笔你没有权限改` : ""].filter(Boolean).join("、");
+      setCloudStatus(`⚠️ ${why} —— 已载入云端最新的（其余 ${okCount} 笔已存好）`);
       setTimeout(() => pullCloud(true, true, true), 50);
-      alert(conflictText(bad, ops));
+      alert(conflictText(conflicts, denied, ops));
+    } else if (deniedMaps.length) {
+      setCloudStatus(`✓ 已存到云端（${okCount} 笔改动，${new Date().toLocaleString()}）· 另有 ${deniedMaps.length} 笔设定你没有权限改，留在这台电脑（不影响你的资料）`);
     } else setCloudStatus(`✓ 已存到云端（${ops.length} 笔改动，${new Date().toLocaleString()}）`);
   } catch (e) { handleCloudErr(e, "⬆️ 存云端失败", true); }
 }
@@ -3337,6 +3357,11 @@ function delClient(id) {
   save();
 }
 function saveSettings() {
+  if (viewerRole !== "client" && !isSuper) {   // 全域设定只有 super 能改（後台也挡）；不讲的话存了等於没存
+    alert("费用规则（清算费、印花税）是全部顾客共用的，只有 Dallen 能改。这次没有改。");
+    renderAll();
+    return;
+  }
   db.settings.clearingRate = parseFloat(document.getElementById("s-clearing-rate").value) || 0;
   db.settings.clearingCap = parseFloat(document.getElementById("s-clearing-cap").value) || 0;
   db.settings.stampPer1000 = parseFloat(document.getElementById("s-stamp-rate").value) || 0;
@@ -3413,7 +3438,8 @@ function addTransaction() {
       alert(`这个投资者在【${an}】户口的 ${ticker} 持仓不够：目前只有 ${have.toLocaleString()} 股`); return;
     }
   }
-  if (code) db.symbols[ticker] = normalizeSymbol(code); // 存代码给抓价用
+  // 存代码给抓价用。投资者只能新增代码，不能改已有的（後台只准新增，V3-17）
+  if (code && !(viewerRole === "client" && db.symbols[ticker])) db.symbols[ticker] = normalizeSymbol(code);
   const touched = [{ clientId, accountId, ticker }];   // 存完要重查红股 / 股息的持仓（改了户口或股票，旧的那个也要查）
   if (editingTxId) {
     const t = db.transactions.find(x => x.id === editingTxId);
@@ -3779,11 +3805,12 @@ async function runScheduledSnapshot() {
     }
     const tkey = "snap:" + target.date;
     recordSnapshots(target.date);
-    db.settings[tkey] = Math.max(Number(db.settings[tkey]) || 0, target.level);
+    // 「snap:日期」是全域设定，只有 super 改得了（员工送上去会被後台挡，V3-17）-> 员工网页只记在这个网页里，快照那几列照样存
+    if (isSuper) db.settings[tkey] = Math.max(Number(db.settings[tkey]) || 0, target.level);
     snapDoneHere[tkey] = Math.max(snapDoneHere[tkey] || 0, target.level);
     if (tkey !== key) snapDoneHere[key] = Math.max(snapDoneHere[key] || 0, due.level);
     const keepFrom = addDays(target.date, -10);                  // 只留最近 10 天的标记，settings 不要越堆越多
-    for (const k of Object.keys(db.settings)) if (k.startsWith("snap:") && k.slice(5) < keepFrom) delete db.settings[k];
+    if (isSuper) for (const k of Object.keys(db.settings)) if (k.startsWith("snap:") && k.slice(5) < keepFrom) delete db.settings[k];
     save();                                                      // 一天最多两次：12:45、17:15（补记也算一次）
     const st = document.getElementById("p-status");
     if (st) st.textContent += ` · 已记${target.name}快照（${target.date}）`;
