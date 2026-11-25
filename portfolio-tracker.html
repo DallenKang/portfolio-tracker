@@ -75,6 +75,8 @@
   @keyframes row-flash { 0%, 35% { background: rgba(46, 204, 113, 0.30); } 100% { background: transparent; } }
   /* 上传 APEX 成交单（V3-15）：只有 owner 看得到 */
   body.not-super .apex-only, body.client-mode .apex-only { display: none !important; }
+  #apex-drop.dragging { outline: 2px dashed var(--blue); outline-offset: -2px; background: rgba(52, 152, 219, 0.08); }
+  #apex-drop.dragging::after { content: "放开就读这份单据"; display: block; margin-top: 8px; color: var(--blue); font-weight: 600; }
   #apex-modal .box { max-width: 1000px; }
   #apex-body td { font-size: 13px; vertical-align: middle; }
   #apex-body select, #apex-body input[type=text] { min-width: 0; font-size: 12.5px; padding: 3px 5px; height: auto; }
@@ -672,7 +674,7 @@
     <p class="net-preview" id="t-preview">输入股数和价格后，三项费用会自动计算（黄框的可以手动改）。</p>
   </div>
   <!-- 上传 APEX 成交单（V3-15）：只有 owner 看得到；PDF 只在这台电脑读，不上传、不存档 -->
-  <div class="form-card apex-only">
+  <div class="form-card apex-only" id="apex-drop" ondragenter="apexDragIn(event)" ondragover="apexDragOver(event)" ondragleave="apexDragOut(event)" ondrop="apexDrop(event)">
     <div class="form-row" style="align-items:center">
       <button class="action" onclick="document.getElementById('apex-file').click()">📄 Brokerage Upload</button>
       <input type="file" id="apex-file" accept="application/pdf,.pdf" style="display:none" onchange="apexPicked(this)">
@@ -5296,6 +5298,47 @@ async function apexPicked(input) {
   apexLog(apexEntry("预览中"));   // 关掉网页没按导入 / 取消 -> 记录停在「预览中」，Marry 就知道上传了、没导入
   document.getElementById("apex-modal").classList.add("show");
 }
+// 拖 PDF 进「Brokerage Upload」那一格也能上传（Dallen 11/25「我要把文件拖进来，都拖不进来」）。
+// 放开後跟按按钮选档案完全一样（apexPicked）：一样只在这台电脑读、一样留上传记录。
+let apexDragDepth = 0;
+function apexDragHasFile(e) { return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")); }
+function apexDragIn(e) {
+  if (!apexDragHasFile(e)) return;
+  e.preventDefault();
+  apexDragDepth++;
+  document.getElementById("apex-drop").classList.add("dragging");
+}
+function apexDragOver(e) {
+  if (!apexDragHasFile(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+}
+function apexDragOut(e) {
+  if (!apexDragHasFile(e)) return;
+  apexDragDepth = Math.max(0, apexDragDepth - 1);
+  if (!apexDragDepth) document.getElementById("apex-drop").classList.remove("dragging");
+}
+function apexDrop(e) {
+  if (!apexDragHasFile(e)) return;
+  e.preventDefault();
+  apexDragDepth = 0;
+  document.getElementById("apex-drop").classList.remove("dragging");
+  const files = Array.from(e.dataTransfer.files || []);
+  const pdfs = files.filter(f => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+  const st = document.getElementById("apex-status");
+  if (!pdfs.length) { st.textContent = "⚠️ 只收 APEX 的 PDF 单据，这份不是 PDF（什么都没存）"; return; }
+  if (files.length > 1) { st.textContent = `⚠️ 一次只能放一份单据（你放了 ${files.length} 份，什么都没存）`; return; }
+  apexPicked({ files: pdfs, value: "" });
+}
+// 档案拖到别的地方放开：浏览器会直接打开那份 PDF、离开 Ptracker -> 挡掉（那里显示「不能放」）
+window.addEventListener("dragover", e => {
+  if (!apexDragHasFile(e)) return;
+  e.preventDefault();
+  const t = e.target instanceof Element ? e.target : e.target && e.target.parentElement;
+  if (!(t && t.closest && t.closest("#apex-drop"))) e.dataTransfer.dropEffect = "none";
+});
+window.addEventListener("drop", e => { if (apexDragHasFile(e)) e.preventDefault(); });
+
 // 每一笔的状态（配对股名、勾选会改变结果，所以每次都重算）
 function apexEval() {
   const S = apexState, date = S.date, usedManual = new Set();
