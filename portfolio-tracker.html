@@ -1410,7 +1410,7 @@ function retryCloudNow() {
 // 每一次打後台都记次数；失败的记一笔（时间、动作、哪一种失败、HTTP 状态、花多久、第几次尝试），本机留最近 50 笔。
 const CLOUD_LOG_KEY = "cloud-fail-log", CLOUD_COUNT_KEY = "cloud-call-count";
 const CLOUD_KIND = { network: "连不上（网路）", html: "Google 错误页", bad: "回应看不懂", unauthorized: "登入凭证被拒", busy: "云端忙（有人在存）", other: "其他" };
-const CLOUD_ACT = { load: "载入", save: "存档", saveMine: "投资者存档" };
+const CLOUD_ACT = { load: "载入", save: "存档（旧）", saveMine: "投资者存档（旧）", ops: "存档" };
 // 每天：打了几次（calls）、其中有问题的几次（fails = 下面表格里记的每一笔，包括登入凭证被拒、云端忙）
 function cloudBump(field) {
   try {
@@ -1499,23 +1499,119 @@ async function cloudCall(body, label, manual) {
   throw lastErr || new Error("云端没有回应");
 }
 
-function cloudPayload() {
-  const p = { clients: db.clients, accounts: db.accounts, settings: db.settings, transactions: db.transactions,
-              dividends: db.dividends, cashflows: db.cashflows, snapshots: db.snapshots || [], prices: db.prices, symbols: db.symbols };
-  // 员工名单只有 super 能送。非 super 送空的 -> 後台会沿用服务器版，不会被洗掉。
-  if (isSuper) p.staff = db.staff;
-  return p;
+// ---------- 逐笔存档（V3-05）----------
+// 以前存档 = 整份资料送上去、後台整张表清空重写：手机记一笔、3 分钟内电脑存别的，电脑那份旧拷贝就把那一笔删掉，没有提示。
+// 现在只送「跟上次从云端拿到的比，改了哪几笔」(ops)，每笔附上当时的样子(before)；
+// 後台在锁里比对：Sheet 上跟 before 一样才改，不一样 = 别处刚改过 -> 回「冲突」，这边载入最新的再告诉他。
+// cloudBase = 上次跟云端对齐的资料（载入、或存档成功後），放 localStorage 让同一台装置的分页共用。
+const BASE_KEY = "cloud-base-v1";
+const NEED_BACKEND = 11;   // 後台 ic-v11 起才有逐笔存档。旧後台会把 ops 当成「载入」—— 回 ok 却什么都没存，所以一定要挡
+let backendTooOld = false;
+const SYNC_FIELDS = {      // 跟後台 TABS 一样；clients 的 mirrorId 是後台管的，不比
+  clients: ["id", "code", "name", "account", "email", "phone", "brokerageMode", "costMethod", "rateFlat", "rateBelow", "rateAbove", "minBrokerage"],
+  accounts: ["id", "clientId", "broker", "accountNo", "acctType", "name", "brokerageMode", "costMethod", "rateFlat", "rateBelow", "rateAbove", "minBrokerage"],
+  transactions: ["id", "clientId", "accountId", "date", "ticker", "type", "qty", "price", "brokerage", "stamp", "clearing", "createdAt", "note"],
+  dividends: ["id", "clientId", "accountId", "date", "ticker", "perShare", "qty", "total"],
+  cashflows: ["id", "clientId", "accountId", "date", "type", "amount", "note"],
+  snapshots: ["id", "clientId", "accountId", "date", "cost", "pricedCost", "value", "missing", "at"],
+  staff: ["id", "email", "name", "role", "clients"],
+};
+const SYNC_MAPS = ["settings", "symbols", "prices"];
+function readBase() { try { return JSON.parse(localStorage.getItem(BASE_KEY) || "null"); } catch (e) { return null; } }
+function writeBase(b) { try { localStorage.setItem(BASE_KEY, JSON.stringify(b)); } catch (e) {} }
+function setBaseFrom(d) {   // 刚从云端拿到的（套预设设定，跟 db 一样，预设值才不会每次都被当成改动）
+  writeBase(JSON.parse(JSON.stringify({ clients: d.clients || [], accounts: d.accounts || [], transactions: d.transactions || [],
+    dividends: d.dividends || [], cashflows: d.cashflows || [], snapshots: d.snapshots || [], staff: d.staff || [],
+    settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) }, symbols: d.symbols || {}, prices: d.prices || {} })));
+}
+const syncKey = (tab, r) => tab === "staff" ? String(r.email || "").toLowerCase() : r.id;
+const syncVal = v => v === undefined || v === null ? "" : String(v);
+const sameSyncRow = (tab, a, b) => SYNC_FIELDS[tab].every(f => syncVal(a[f]) === syncVal(b[f]));
+const sameMapVal = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+function syncTabs() {
+  if (viewerRole === "client") return { rows: ["accounts", "transactions", "dividends", "cashflows"], maps: ["symbols"] };   // 投资者只送自己的记录
+  return { rows: ["clients", "accounts", "transactions", "dividends", "cashflows", "snapshots"].concat(isSuper ? ["staff"] : []), maps: SYNC_MAPS };
+}
+function buildOps(base, cur) {
+  const { rows, maps } = syncTabs();
+  const puts = [], dels = [], delClients = [];
+  const gone = new Set();   // 整位删掉的投资者：一笔 delClient，後台只清他的户口 / 交易 / 股息 / 出入金 / 快照
+  if (rows.includes("clients")) for (const c of base.clients || []) if (!(cur.clients || []).some(x => x.id === c.id)) gone.add(c.id);
+  for (const tab of rows) {
+    const b = new Map((base[tab] || []).filter(r => r && syncKey(tab, r)).map(r => [syncKey(tab, r), r]));
+    const c = new Map((cur[tab] || []).filter(r => r && syncKey(tab, r)).map(r => [syncKey(tab, r), r]));
+    for (const [k, r] of c) { const old = b.get(k); if (!old || !sameSyncRow(tab, old, r)) puts.push({ tab, op: "put", id: k, row: r, before: old || null }); }
+    for (const [k, old] of b) {
+      if (c.has(k)) continue;
+      if (tab === "clients") { delClients.push({ tab, op: "delClient", id: k }); continue; }
+      if (old.clientId && gone.has(old.clientId)) continue;
+      dels.push({ tab, op: "del", id: k, before: old });
+    }
+  }
+  for (const tab of maps) {
+    const b = base[tab] || {}, c = cur[tab] || {};
+    for (const k of Object.keys(c)) if (!(k in b) || !sameMapVal(b[k], c[k])) puts.push({ tab, op: "put", key: k, value: c[k], before: k in b ? b[k] : null });
+    if (viewerRole !== "client") for (const k of Object.keys(b)) if (!(k in c)) dels.push({ tab, op: "del", key: k, before: b[k] });
+  }
+  const order = { clients: 0, staff: 0, accounts: 1, transactions: 2, dividends: 2, cashflows: 2, snapshots: 2, settings: 3, symbols: 3, prices: 3 };
+  puts.sort((x, y) => order[x.tab] - order[y.tab]);   // 先人、再户口、再记录（新户口的记录才挂得上）
+  dels.sort((x, y) => order[y.tab] - order[x.tab]);   // 先删记录、再删户口
+  return [...puts, ...dels, ...delClients];
+}
+// 存成功的那几笔套进 cloudBase（冲突 / 没权限的不套：等一下会载入云端最新的）
+function applyToBase(base, ops, bad) {
+  const skip = new Set((bad || []).map(x => `${x.tab}|${x.op}|${x.id}`));
+  for (const o of ops) {
+    const id = o.id !== undefined ? o.id : o.key;
+    if (skip.has(`${o.tab}|${o.op}|${id}`)) continue;
+    if (o.op === "delClient") {
+      base.clients = (base.clients || []).filter(c => c.id !== id);
+      for (const tab of ["accounts", "transactions", "dividends", "cashflows", "snapshots"]) base[tab] = (base[tab] || []).filter(r => r.clientId !== id);
+    } else if (SYNC_MAPS.includes(o.tab)) {
+      base[o.tab] = base[o.tab] || {};
+      if (o.op === "del") delete base[o.tab][id]; else base[o.tab][id] = JSON.parse(JSON.stringify(o.value ?? null));
+    } else {
+      const list = (base[o.tab] || []).filter(r => syncKey(o.tab, r) !== id);
+      if (o.op === "put") list.push(JSON.parse(JSON.stringify(o.row)));
+      base[o.tab] = list;
+    }
+  }
+  writeBase(base);
+}
+// 冲突讲人话：哪一笔、为什么没存
+function opLabel(o) {
+  const r = o.row || o.before || {};
+  const who = r.clientId ? clientLabel(clientById(r.clientId)) : "";
+  const what = { clients: "投资者", accounts: "股票户口", transactions: "交易", dividends: "股息", cashflows: "出入金", snapshots: "快照", staff: "员工", settings: "设定", symbols: "股票代码", prices: "价格" }[o.tab] || o.tab;
+  const detail = o.tab === "transactions" ? `${r.date || ""} ${r.ticker || ""} ${r.qty ? r.qty.toLocaleString() + " 股" : ""}`
+    : o.tab === "dividends" ? `${r.date || ""} ${r.ticker || ""}` : o.tab === "clients" ? (r.name || "") : o.tab === "accounts" ? acctLabel(r) : (o.key || "");
+  return `${what}${who ? "（" + who + "）" : ""} ${detail}`.trim();
+}
+function conflictText(bad, ops) {
+  const why = { changed: "刚被别处改过", deleted: "刚被别处删掉了", exists: "云端已经有同一笔", duplicate_email: "Gmail 跟别的投资者重复", duplicate_phone: "电话跟别的投资者重复", no_permission: "你没有权限改这一笔" };
+  const lines = bad.slice(0, 8).map(x => {
+    const o = ops.find(y => y.tab === x.tab && y.op === x.op && String(y.id !== undefined ? y.id : y.key) === String(x.id)) || { tab: x.tab, key: x.id };
+    return `• ${opLabel(o)}：${why[x.why] || x.why}`;
+  });
+  return `有 ${bad.length} 笔没有存进去，已经载入云端最新的资料：\n\n${lines.join("\n")}${bad.length > 8 ? `\n…还有 ${bad.length - 8} 笔` : ""}\n\n请看一下最新的样子，需要的话再改一次。`;
 }
 async function pushCloud(silent, manual) {
   if (!cloudReady()) { if (!silent) alert("请先用 Gmail 登入（或在进阶里填密码）"); return; }
   if (fastShown) { setCloudStatus("⏳ 还在跟云端同步最新资料，同步好才能存，请等几秒。"); return; }  // 同 save()：旧整份不准推
+  const base = readBase();
+  if (!base) {   // 还没跟云端对过（不知道哪些是改动）-> 不存，先载入
+    pendingRetry = true;
+    setCloudStatus("⏳ 这台电脑还没跟云端对过资料，先载入一次再存（你的资料还在这台电脑上）");
+    return;
+  }
+  const ops = buildOps(base, db);
+  if (!ops.length) { pendingRetry = false; lastCloudOkAt = Date.now(); setCloudStatus(`✓ 云端已是最新（${new Date().toLocaleString()}）`); return; }
   await ensureFreshToken(); // 凭证快过期就先换一张，免得存到一半失败
-  setCloudStatus("⬆️ 存到云端中…");
+  setCloudStatus(`⬆️ 存到云端中…（${ops.length} 笔改动）`);
   try {
-    // 投资者用 saveMine：后台只更新他自己的记录（安全隔离）；Owner 用完整 save
-    const payload = viewerRole === "client"
-      ? { action: "saveMine", data: { accounts: db.accounts, transactions: db.transactions, dividends: db.dividends, cashflows: db.cashflows, symbols: db.symbols } }
-      : { action: "save", data: cloudPayload() };
+    // 只送改了的那几笔；投资者的後台只准动他自己的记录（安全隔离）。
+    // 後台是旧版也照送：旧版会把 ops 当成「载入」、不会写任何东西，下面看回传有没有 opsOk 就知道（後台更新後自己会恢复，不用重新整理）
+    const payload = { action: "ops", proto: 2, ops };
     const j = await cloudCall(payload, "⬆️ 存云端", manual || !silent);
     // 後台一次只让一个人写（不排队会静静盖掉别人刚存的）。撞到就等一下再试，
     // 资料还在本机所以不会掉；pendingPush 保持着，自动同步也不会趁这时覆盖。
@@ -1537,12 +1633,19 @@ async function pushCloud(silent, manual) {
       return;
     }
     if (j.error) throw new Error(j.error);
+    if (!j.opsOk) { backendTooOld = true; throw new Error("云端後台还是旧版（没有逐笔存档），这次没有存进去 —— 资料还在这台电脑上，後台更新後会自动补存"); }
+    backendTooOld = false;
     busyRetries = 0; busyRetryPending = false;
-    let msg = `✓ 已存到云端（${new Date().toLocaleString()}）`;
-    if (j.keptNewer && j.keptNewer.length) msg += ` · 注意：${j.keptNewer.length} 个投资者刚自己更新过，保留了他们的新记录`;
+    const bad = [...(j.conflicts || []), ...(j.denied || [])];
+    applyToBase(base, ops, bad);
     pendingRetry = false; // 存成功了，没有欠着的
     lastCloudOkAt = Date.now();
-    setCloudStatus(msg);
+    if (bad.length) {
+      // 同一笔被两边改：不默默以後到的为准 —— 载入云端最新的，告诉他哪几笔没存
+      setCloudStatus(`⚠️ 有 ${bad.length} 笔没存进去（别处刚改过同一笔），已载入云端最新的`);
+      setTimeout(() => pullCloud(true, true, true), 50);
+      alert(conflictText(bad, ops));
+    } else setCloudStatus(`✓ 已存到云端（${ops.length} 笔改动，${new Date().toLocaleString()}）`);
   } catch (e) { handleCloudErr(e, "⬆️ 存云端失败", true); }
 }
 function schedulePush() {
@@ -1708,6 +1811,11 @@ async function pullCloud(silent, quiet, manual) {
       return;
     }
     const d = j.data || {};
+    // 後台版本：ic-v11 起才有逐笔存档。对不上就不存档（资料留在本机），免得「看起来存了、其实没存」
+    const bv = parseInt((String(j.version || "").match(/ic-v(\d+)/) || [])[1] || "0", 10);
+    backendTooOld = bv < NEED_BACKEND;
+    if (backendTooOld) setCloudStatus("⚠️ 云端後台还是旧版（" + (j.version || "没有版本号") + "），新改的资料暂时只存在这台电脑 —— 请先部署新版後台");
+    setBaseFrom(d);   // 跟云端对齐的那一份：之後存档只送跟它比改了的
     setSuper(j.isSuper === true); // 後台说了算：只有 super 看得到员工页
     db.staff = d.staff || [];
     db.clients = d.clients || [];
@@ -1736,7 +1844,7 @@ async function pullCloud(silent, quiet, manual) {
     renderAll();
     if (quiet) return; // 背景自动拉：资料已更新，画面已重画，其余的开页时做过了
     // 後台版本号：改了 apps-script 之後靠这个确认「新版本」真的部署上去了（储存 ≠ 上线）
-    const backendVer = j.version ? ` · 後台 ${j.version}` : "";
+    const backendVer = (j.version ? ` · 後台 ${j.version}` : "") + (backendTooOld ? " · ⚠️ 後台还是旧版：存档会被挡，资料先留在这台电脑" : "");
     setCloudStatus(j.role === "client"
       ? `✓ 已载入你的投资组合（${db.transactions.length} 笔交易）· 只读`
       : `✓ 已从云端载入（${db.clients.length} 个投资者、${db.transactions.length} 笔交易）${backendVer}`);
