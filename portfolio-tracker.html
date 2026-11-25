@@ -817,7 +817,7 @@
     </div>
     <div id="apex-skipped" class="hint" style="margin-top:8px"></div>
     <div class="rc-btns">
-      <button class="action ghost" onclick="closeApex()">取消</button>
+      <button class="action ghost" onclick="apexCancel()">取消</button>
       <button class="action success" id="apex-ok" onclick="importApex()">导入打勾的 0 笔</button>
     </div>
   </div>
@@ -1666,6 +1666,7 @@ async function pushCloud(silent, manual) {
     } else if (deniedMaps.length) {
       setCloudStatus(`✓ 已存到云端（${okCount} 笔改动，${new Date().toLocaleString()}）· 另有 ${deniedMaps.length} 笔设定你没有权限改，留在这台电脑（不影响你的资料）`);
     } else setCloudStatus(`✓ 已存到云端（${ops.length} 笔改动，${new Date().toLocaleString()}）`);
+    apexLogFlush();   // 上传记录之前没送到的，顺便补送（V3-18）
   } catch (e) { handleCloudErr(e, "⬆️ 存云端失败", true); }
 }
 function schedulePush() {
@@ -5178,6 +5179,7 @@ const APEX_TRAN = /^[BS]\d{11}-\d+$/;   // B = 买、S = 卖；中间 6 位 = �
 const apexIsNum = x => /^-?[\d,]+(\.\d+)?$/.test(x);
 const apexNum = x => Number(String(x).replace(/,/g, ""));
 async function parseCon064r(buf) {
+  parseCon064r.lastDate = "";
   const lib = await loadPdfJs();
   let doc;
   try { doc = await lib.getDocument({ data: buf, isEvalSupported: false }).promise; }
@@ -5202,6 +5204,7 @@ async function parseCon064r(buf) {
   const mon = dm && ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(dm[2].toLowerCase());
   if (!dm || mon < 0) throw new Error("找不到单据日期（Date Selected）");
   const date = `20${dm[3]}-${String(mon + 1).padStart(2, "0")}-${String(dm[1]).padStart(2, "0")}`;
+  parseCon064r.lastDate = date;   // 上传记录用（V3-18）：後面整份被拒，也知道是哪一天的单据
   const trades = [], blocks = [];
   let cur = null, block = [], grand = null;
   const seenNos = new Set();
@@ -5269,11 +5272,18 @@ async function apexPicked(input) {
   if (!file || !isSuper || viewerRole === "client") return;
   const st = document.getElementById("apex-status");
   st.textContent = "读取中…";
+  apexLogFlush();   // 之前没送到的上传记录，先补送
   try { await loadPdfJs(); }
   catch (e) { st.textContent = "⚠️ 读 PDF 的工具载不到，请检查网络再试（什么都没存）"; alert("读 PDF 的工具载不到，请检查网络再试。什么都没存。"); return; }
   let parsed;
   try { parsed = await parseCon064r(await file.arrayBuffer()); }
-  catch (e) { st.textContent = "⚠️ 整份不导入，什么都没存：" + e.message; alert("整份不导入，什么都没存：\n" + e.message); return; }
+  catch (e) {
+    st.textContent = "⚠️ 整份不导入，什么都没存：" + e.message;
+    apexLog({ id: uid(), at: new Date().toISOString(), slipDate: parseCon064r.lastDate || "", status: "整份拒绝", reason: e.message,
+              total: null, notOurs: null, imported: 0, replaced: 0, updated: 0, rows: [] });
+    alert("整份不导入，什么都没存：\n" + e.message);
+    return;
+  }
   st.textContent = "";
   const rows = [], skipped = [];
   for (const t of parsed.trades) {
@@ -5281,8 +5291,9 @@ async function apexPicked(input) {
     if (!m.length) { skipped.push(t.client); continue; }   // 不是 Ptracker 的顾客：不记（只显示号码，不显示名字）
     rows.push({ ...t, accts: m, acct: m.length === 1 ? m[0] : null });
   }
-  apexState = { date: parsed.date, rows, skipped, total: parsed.trades.length, map: {} };
+  apexState = { date: parsed.date, rows, skipped, total: parsed.trades.length, map: {}, logId: uid(), at: new Date().toISOString() };
   apexEval();
+  apexLog(apexEntry("预览中"));   // 关掉网页没按导入 / 取消 -> 记录停在「预览中」，Marry 就知道上传了、没导入
   document.getElementById("apex-modal").classList.add("show");
 }
 // 每一笔的状态（配对股名、勾选会改变结果，所以每次都重算）
@@ -5405,6 +5416,7 @@ function apexMapCode(ni, code) {
   apexEval();
 }
 function closeApex() { document.getElementById("apex-modal").classList.remove("show"); apexState = null; }
+function apexCancel() { if (apexState) apexLog(apexEntry("取消")); closeApex(); }
 function importApex() {
   const S = apexState;
   if (!S) return;
@@ -5453,11 +5465,68 @@ function importApex() {
   }
   save();
   if (fastShown) return;
+  apexLog(apexEntry("已导入", { picked, added, replaced, updated }));
   closeApex();
   const msg = `✓ ${added ? `已导入 ${added} 笔` : ""}${replaced ? `（其中取代了 ${replaced} 笔手打的）` : ""}${added && updated ? "、" : ""}${updated ? `已更新 ${updated} 笔的费用` : ""}：${lines.join("、")}`;
   document.getElementById("apex-status").textContent = msg;
   document.getElementById("t-preview").textContent = msg;
   if (!fastShown) openRecheck(touched);   // 补记的是旧日期的话，红股 / 股息可能要跟着改（V3-09）
+}
+
+// ---------- 上传记录（V3-18）----------
+// 每次上传 APEX 单据，後台留一份记录 7 天，给 Marry 隔天核对：单据上有、网站漏记的；佣金跟单据一不一样。
+// 只记号码、单号、股名、数字、结果 —— 不记顾客名字、不记非 Ptracker 顾客的明细（只记笔数）。
+// 记录失败不挡导入：先存在这台电脑，下次存档 / 下次上传时补送。只有 super（Dallen）的网页会送。
+const APEX_LOG_KEY = "apex-log-pending";
+const APEX_STATE_LABEL = { ok: "可导入", done: "已导入过", manual: "可能已手动记过", hand: "这天已经手打过", needname: "要配对股名", short: "持仓不够", fee: "费用对不上", dupacct: "Ptracker 有两个户口是这个号码" };
+function apexPickable(r) { return r.state === "ok" || r.state === "fee" || r.state === "manual" || (r.state === "hand" && r.canReplace); }
+function apexEntry(status, done) {
+  const S = apexState;
+  const picked = done ? new Set(done.picked) : null;
+  const resultOf = r => {
+    if (status === "预览中") return "预览中";
+    if (picked && picked.has(r)) return r.state === "manual" ? "已更新费用" : r.state === "hand" ? "已取代手打" : "已导入";
+    if (apexPickable(r)) return "没导入：没有打勾";
+    if (r.state === "hand") return "没导入：这天已经手打过（股数跟单据不一样）";
+    return "没导入：" + (APEX_STATE_LABEL[r.state] || r.state);
+  };
+  return { id: S.logId, at: S.at, slipDate: S.date, status, reason: "", total: S.total, notOurs: S.skipped.length,
+    imported: done ? done.added : 0, replaced: done ? done.replaced : 0, updated: done ? done.updated : 0,
+    rows: S.rows.map(r => ({ acct: r.client, tran: r.tran, slipStock: r.stock, ticker: r.ticker || "", side: r.type === "buy" ? "买" : "卖",
+      qty: r.qty, price: r.price, brokerage: r.brokerage, sst: r.sst, net: r.net,
+      stamp: r.acct ? r.stamp : null, clearing: r.acct ? r.clearing : null,
+      state: APEX_STATE_LABEL[r.state] || r.state, result: resultOf(r) })) };
+}
+function apexLogQueue() { try { return JSON.parse(localStorage.getItem(APEX_LOG_KEY) || "[]"); } catch (e) { return []; } }
+function apexLog(entry) {
+  const q = apexLogQueue().filter(x => x.id !== entry.id);   // 同一次上传只留最新的结果
+  q.push(entry);
+  try { localStorage.setItem(APEX_LOG_KEY, JSON.stringify(q.slice(-20))); } catch (e) {}
+  apexLogFlush();
+}
+let apexLogBusy = false;
+async function apexLogFlush() {
+  if (apexLogBusy || !isSuper || viewerRole === "client" || !cloudReady() || fastShown) return;
+  if (!apexLogQueue().length) return;
+  apexLogBusy = true;
+  let allOk = true;
+  try {
+    for (const entry of apexLogQueue()) {
+      let ok = false;
+      try { const j = await cloudFetch({ action: "logImport", entry }); ok = !!(j && j.logOk === true); } catch (e) {}
+      if (!ok) {   // 後台还是旧版（没有 logOk）或连不上：留着，下次再送；不挡任何东西
+        const st = document.getElementById("apex-status");
+        const warn = "⚠️ 上传记录没存到云端，Marry 明天会查不到这份（下次存档或上传时会再补送）";
+        if (st && !st.textContent.includes(warn)) st.textContent = (st.textContent ? st.textContent + " · " : "") + warn;
+        allOk = false;
+        return;
+      }
+      try { localStorage.setItem(APEX_LOG_KEY, JSON.stringify(apexLogQueue().filter(x => !(x.id === entry.id && JSON.stringify(x) === JSON.stringify(entry))))); } catch (e) {}
+    }
+  } finally {
+    apexLogBusy = false;
+    if (allOk && apexLogQueue().length) setTimeout(apexLogFlush, 300);   // 送的途中又多了一份（例如刚按了导入）-> 接着送
+  }
 }
 
 // ---------- Tabs & init ----------
