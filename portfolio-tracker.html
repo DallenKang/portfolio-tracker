@@ -674,9 +674,9 @@
   <!-- 上传 APEX 成交单（V3-15）：只有 owner 看得到；PDF 只在这台电脑读，不上传、不存档 -->
   <div class="form-card apex-only">
     <div class="form-row" style="align-items:center">
-      <button class="action" onclick="document.getElementById('apex-file').click()">📄 上传 APEX 成交单（CON064R）</button>
+      <button class="action" onclick="document.getElementById('apex-file').click()">📄 Brokerage Upload</button>
       <input type="file" id="apex-file" accept="application/pdf,.pdf" style="display:none" onchange="apexPicked(this)">
-      <span class="hint" id="apex-status" style="margin:0">APEX 每天的「Daily Business Done By Trader/Client」。只记 Ptracker 里有的顾客，佣金照单据；先给你看、打勾才存。PDF 只在这台电脑读，不会上传。</span>
+      <span class="hint" id="apex-status" style="margin:0"></span>   <!-- 平常空着；读取中 / 整份拒绝的原因 / 已导入几笔 才显示（Dallen 11/25 要拿掉说明字） -->
     </div>
   </div>
   <div class="filter-bar">
